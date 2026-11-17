@@ -1,0 +1,18 @@
+{
+  "armor_level": 1,
+  "armor_name": "Scrap Plating",
+  "gender": "male",
+  "hp": 90,
+  "kind": "robot",
+  "level": 1,
+  "losses": 0,
+  "max_hp": 100,
+  "name": "Freddy",
+  "points": 15,
+  "repair_until": 0,
+  "upgrade": null,
+  "weapon_level": 1,
+  "weapon_name": "Laser Blaster",
+  "wins": 1,
+  "xp": 25
+}
