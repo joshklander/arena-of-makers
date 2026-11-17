@@ -26,9 +26,12 @@ they create their fighter, and can change it later in Settings. Speech
 never blocks the game: lines are made in the background and only the
 newest one is spoken. If edge-tts is not installed, or the voice
 service cannot be reached, the game carries on with text only and
-writes one plain line to arena_log.txt saying why. Sound effects are
-still to come, only from Pixabay and freesound.org, using material
-marked free to use.
+writes one plain line to arena_log.txt saying why. For diagnosis the
+game also logs every speak attempt there: which Python is running it,
+whether edge-tts is installed, which voice and volume are set, whether
+each line's sound file was made and how big it was, and whether the
+player started playing it. Sound effects are still to come, only from
+Pixabay and freesound.org, using material marked free to use.
 """
 
 import logging
@@ -312,7 +315,23 @@ class MainFrame(wx.Frame):
 
     def _setup_voice(self):
         """Start the Edge voice, or stay text-only with one log line
-        saying why. Returns the voice, or None when it is off."""
+        saying why. Returns the voice, or None when it is off. The
+        startup line in the log records everything a diagnosis needs:
+        which Python is running the game, whether edge-tts is
+        installed, whether this computer can play voice at all, which
+        voice is picked, and the volume."""
+        voice_name = voice_engine.voice_for_gender(
+            self.fighter.get("gender", "male")
+        )
+        logging.info(
+            "Voice startup: Python %s; edge-tts %s; wx.media %s; "
+            "voice %s; volume %d percent.",
+            sys.executable,
+            "installed" if voice_engine.edge_tts is not None else "not installed",
+            "available" if wx.media is not None else "missing",
+            voice_name,
+            self.volume,
+        )
         if wx.media is None:
             logging.warning(
                 "Edge voice is off: this computer has no wx.media to "
@@ -329,10 +348,7 @@ class MainFrame(wx.Frame):
                 error,
             )
             return None
-        voice = voice_engine.EdgeVoice(
-            voice_engine.voice_for_gender(self.fighter.get("gender", "male")),
-            self._on_voice_file,
-        )
+        voice = voice_engine.EdgeVoice(voice_name, self._on_voice_file)
         if not voice.start():
             return None
         self._media = media
@@ -345,8 +361,15 @@ class MainFrame(wx.Frame):
 
     def _play_voice_file(self, path):
         """Play one spoken line, at the game's volume. The previous
-        line's file is deleted first, so old files never pile up."""
+        line's file is deleted first, so old files never pile up.
+        Every outcome is logged: a file that loads but will not play
+        used to fail silently, because only the Load result was ever
+        checked."""
         if self._media is None:
+            logging.warning(
+                "Voice: the player is missing, so a finished line "
+                "could not be played. The game keeps going with text only."
+            )
             return
         try:
             self._media.Stop()
@@ -361,20 +384,37 @@ class MainFrame(wx.Frame):
         self._voice_file = path
         try:
             self._media.SetVolume(self.volume / 100.0)
-            if self._media.Load(path):
-                self._media.Play()
+            try:
+                size = os.path.getsize(path)
+            except OSError:
+                size = 0
+            if not self._media.Load(path):
+                if not self._voice_play_failed:
+                    self._voice_play_failed = True
+                    logging.warning(
+                        "Edge voice is off: the voice file could not be "
+                        "played (%d bytes). The game keeps going with "
+                        "text only.",
+                        size,
+                    )
+            elif self._media.Play():
+                self._voice_play_failed = False
+                logging.info("Voice: playing voice file (%d bytes).", size)
             elif not self._voice_play_failed:
                 self._voice_play_failed = True
                 logging.warning(
-                    "Edge voice is off: the voice file could not be "
-                    "played. The game keeps going with text only."
+                    "Edge voice is off: the voice file loaded but would "
+                    "not play (%d bytes). The game keeps going with "
+                    "text only.",
+                    size,
                 )
         except Exception as error:
             if not self._voice_play_failed:
                 self._voice_play_failed = True
                 logging.warning(
                     "Edge voice is off: the voice file could not be "
-                    "played (%s). The game keeps going with text only.",
+                    "played (%s: %s). The game keeps going with text only.",
+                    type(error).__name__,
                     error,
                 )
 

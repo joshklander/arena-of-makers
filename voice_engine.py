@@ -15,6 +15,13 @@ If edge-tts is not installed, or the voice service cannot be reached,
 the engine reports itself unavailable and the game carries on with
 text only. One plain line about why is written to the log file.
 No secrets of any kind live here: the service needs no key.
+
+For diagnosis, the engine also logs every speak attempt to the same
+log file: the line it tried to speak and the voice it used, whether
+the sound file was made and how big it was, and whether the player
+took it. Nothing about the voice is allowed to fail silently: a dead
+background thread, a dropped line, and a failed handover to the
+player all get a plain line of their own.
 """
 
 import asyncio
@@ -40,6 +47,14 @@ def voice_for_gender(gender):
     return VOICES.get(gender, MALE_VOICE)
 
 
+def _preview(text, length=40):
+    """Short one-line preview of a spoken line, for the log file."""
+    one_line = " ".join((text or "").split())
+    if len(one_line) > length:
+        return one_line[:length] + "..."
+    return one_line
+
+
 class EdgeVoice:
     """One background voice. Give it text, it hands back MP3 files.
 
@@ -56,6 +71,7 @@ class EdgeVoice:
         self._thread = None
         self._dead = False
         self._made_files = []
+        self._dropped_logged = False
 
     @property
     def available(self):
@@ -71,19 +87,48 @@ class EdgeVoice:
                 "Run: pip install edge-tts"
             )
             return False
-        if self._thread is None or not self._thread.is_alive():
+        if self._thread is not None and self._thread.is_alive():
+            return True
+        self._dropped_logged = False
+        try:
             self._thread = threading.Thread(
                 target=self._worker, name="arena-voice", daemon=True
             )
             self._thread.start()
+        except Exception as error:
+            logging.warning(
+                "Edge voice is off: the voice thread could not start "
+                "(%s: %s). The game keeps going with text only.",
+                type(error).__name__,
+                error,
+            )
+            return False
+        logging.info("Voice: engine started, voice %s.", self.voice)
         return True
 
     def speak(self, text):
         """Queue one line to speak. Drops any line still waiting, so
         only the newest message is ever spoken. Returns False when
-        the voice is off."""
+        the voice is off. Every attempt is logged, and a line that is
+        dropped because the voice is off is logged once, so a dead
+        voice never fails silently and never floods the log either."""
         text = (text or "").strip()
-        if not text or not self.available:
+        if not text:
+            return False
+        if not self.available:
+            if not self._dropped_logged:
+                self._dropped_logged = True
+                reason = (
+                    "the edge-tts package is not installed"
+                    if edge_tts is None
+                    else "the voice service could not be reached"
+                )
+                logging.warning(
+                    'Voice: not spoken, the voice is off (%s). '
+                    'Line was: "%s".',
+                    reason,
+                    _preview(text),
+                )
             return False
         try:
             while True:
@@ -94,6 +139,9 @@ class EdgeVoice:
             self._queue.put_nowait(text)
         except queue.Full:
             pass
+        logging.info(
+            'Voice: speaking "%s" with %s.', _preview(text), self.voice
+        )
         return True
 
     def set_voice(self, voice):
@@ -117,38 +165,89 @@ class EdgeVoice:
         self._made_files = []
 
     def _worker(self):
-        while not self._stop.is_set():
-            try:
-                text = self._queue.get(timeout=0.2)
-            except queue.Empty:
-                continue
-            # A newer line may have arrived while this one waited:
-            # speak the newest and drop the rest.
-            try:
-                while True:
-                    text = self._queue.get_nowait()
-            except queue.Empty:
-                pass
-            try:
-                path = asyncio.run(self._synthesize(text))
-            except Exception as error:
-                logging.warning(
-                    "Edge voice is off: could not reach the voice "
-                    "service (%s). The game keeps going with text only.",
-                    error,
+        """Make sound files for queued lines, one at a time. A thread
+        that dies without a word would leave the game silent with no
+        clue, so the whole loop is watched: any unexpected error is
+        logged in plain words and the voice is marked dead."""
+        try:
+            while not self._stop.is_set():
+                try:
+                    text = self._queue.get(timeout=0.2)
+                except queue.Empty:
+                    continue
+                # A newer line may have arrived while this one waited:
+                # speak the newest and drop the rest.
+                try:
+                    while True:
+                        text = self._queue.get_nowait()
+                except queue.Empty:
+                    pass
+                try:
+                    path = asyncio.run(self._synthesize(text))
+                except Exception as error:
+                    logging.warning(
+                        "Edge voice is off: the voice service failed "
+                        "(%s: %s). The game keeps going with text only.",
+                        type(error).__name__,
+                        error,
+                    )
+                    self._dead = True
+                    continue
+                try:
+                    size = os.path.getsize(path)
+                except OSError:
+                    size = 0
+                self._made_files.append(path)
+                logging.info(
+                    'Voice: made "%s" with %s (%d bytes).',
+                    _preview(text),
+                    self.voice,
+                    size,
                 )
-                self._dead = True
-                continue
-            self._made_files.append(path)
-            try:
-                self._play(path)
-            except Exception:
-                pass
+                try:
+                    self._play(path)
+                except Exception as error:
+                    logging.warning(
+                        "Voice: the finished line could not be handed "
+                        "to the player (%s: %s).",
+                        type(error).__name__,
+                        error,
+                    )
+        except Exception as error:
+            logging.warning(
+                "Voice thread stopped unexpectedly (%s: %s). The game "
+                "keeps going with text only.",
+                type(error).__name__,
+                error,
+            )
+            self._dead = True
+        finally:
+            logging.info("Voice thread stopped.")
 
     async def _synthesize(self, text):
-        """Turn one line into an MP3 file. Returns its path."""
+        """Turn one line into an MP3 file. Returns its path. An empty
+        file is not a sound, so it counts as a failure: the half-made
+        file is thrown away and the error is raised for the worker to
+        log in plain words."""
         communicate = edge_tts.Communicate(text, self.voice)
         handle, path = tempfile.mkstemp(suffix=".mp3", prefix="arena-voice-")
         os.close(handle)
-        await communicate.save(path)
+        try:
+            await communicate.save(path)
+        except Exception:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+            raise
+        try:
+            size = os.path.getsize(path)
+        except OSError:
+            size = 0
+        if size == 0:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+            raise ValueError("the voice service returned an empty sound file")
         return path

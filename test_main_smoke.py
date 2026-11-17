@@ -15,14 +15,29 @@ test by Joshua and McKenna.
 Voice: edge-tts is not installed here either, so the first half runs
 the no-voice fallback path (text only, no crash). The second half
 stubs edge-tts with a fake that writes a small file instead of
-calling the real service, and proves a line reaches the player.
+calling the real service, and proves a line reaches the player. A
+third half stubs a voice service that always fails, and a player that
+cannot load a file, and proves each failure is logged in plain words
+instead of silence. Every log line the game would write to
+arena_log.txt is captured here, so the checks read the same words
+Joshua would read.
 """
 
+import io
+import logging
 import os
 import sys
 import time
 import types
 from unittest import mock
+
+# Capture every log line the game writes, the same words that would
+# land in arena_log.txt on Joshua's machine.
+LOG_CAPTURE = io.StringIO()
+_log_handler = logging.StreamHandler(LOG_CAPTURE)
+_log_handler.setLevel(logging.INFO)
+logging.getLogger().addHandler(_log_handler)
+logging.getLogger().setLevel(logging.INFO)
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -244,6 +259,17 @@ def check(name, condition):
     print("ok - " + name)
 
 
+def wait_for_log(text, timeout=5.0):
+    """True once the log capture holds the text (voice work happens
+    on a background thread, so log lines arrive a moment later)."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if text in LOG_CAPTURE.getvalue():
+            return True
+        time.sleep(0.05)
+    return False
+
+
 def main_test():
     fighter = game_logic.new_fighter("Bolt", "robot")
     fighter["points"] = 500
@@ -321,6 +347,10 @@ def main_test():
     # No voice here (edge-tts is not installed on this machine): the
     # game must carry on with text only and never ring a bell.
     check("voice is off without edge-tts", frame.voice is None)
+    check("startup log names the Python running the game",
+          "Voice startup: Python" in LOG_CAPTURE.getvalue())
+    check("startup log says edge-tts is missing",
+          "edge-tts not installed" in LOG_CAPTURE.getvalue())
     frame.announce("A quiet line.")
     check("announce still shows text without a voice",
           frame.message_line.GetLabel() == "A quiet line.")
@@ -382,6 +412,10 @@ def voice_test():
     fighter = game_logic.new_fighter("Piper", "chef", "female")
     frame = main.MainFrame(fighter)
     check("voice is on with edge-tts present", frame.voice is not None)
+    check("startup log says edge-tts is installed",
+          "edge-tts installed" in LOG_CAPTURE.getvalue())
+    check("startup log names the female voice",
+          "voice en-US-AriaNeural" in LOG_CAPTURE.getvalue())
     check("female fighter gets the female voice",
           frame.voice.voice == voice_engine.FEMALE_VOICE)
     media = frame._media
@@ -403,6 +437,13 @@ def voice_test():
             break
     check("a spoken line reaches the player", heard)
     check("the player actually played it", media.played >= 1)
+    check("speak attempt is logged with voice and preview",
+          'Voice: speaking "Hello, fighter." with en-US-AriaNeural'
+          in LOG_CAPTURE.getvalue())
+    check("synthesis is logged with file size",
+          wait_for_log('Voice: made "Hello, fighter." with en-US-AriaNeural ('))
+    check("playback start is logged",
+          wait_for_log("Voice: playing voice file ("))
 
     # A newer line replaces an older one still waiting.
     frame.voice.speak("old line")
@@ -432,6 +473,82 @@ def voice_test():
     print("\nAll voice smoke tests passed.")
 
 
+def _make_failing_edge_tts():
+    """A stand-in edge-tts whose voice service always fails."""
+
+    class _FailingCommunicate:
+        def __init__(self, text, voice):
+            pass
+
+        async def save(self, path):
+            raise ConnectionError("test: no network")
+
+    module = types.ModuleType("edge_tts")
+    module.Communicate = _FailingCommunicate
+    return module
+
+
+def voice_failure_test():
+    """With a voice service that always fails, the failure is logged
+    in plain words, the engine goes dead, and later lines are dropped
+    with one log line instead of silence or a flood."""
+    import importlib
+    import voice_engine
+
+    sys.modules["edge_tts"] = _make_failing_edge_tts()
+    importlib.reload(voice_engine)
+
+    voice = voice_engine.EdgeVoice(voice_engine.FEMALE_VOICE, lambda path: None)
+    check("failing voice still starts its thread", voice.start() is True)
+    voice.speak("This line will fail.")
+    check("failed synthesis is logged in plain words",
+          wait_for_log("the voice service failed (ConnectionError: test: no network)"))
+    check("engine is dead after a failed synthesis", voice.available is False)
+    before = LOG_CAPTURE.getvalue().count("Voice: not spoken")
+    voice.speak("Another line.")
+    voice.speak("And another.")
+    time.sleep(0.5)
+    check("dropped lines are logged once, not once per line",
+          LOG_CAPTURE.getvalue().count("Voice: not spoken") == before + 1)
+    voice.stop()
+    check("voice thread shutdown is logged",
+          "Voice thread stopped." in LOG_CAPTURE.getvalue())
+    print("\nAll voice failure tests passed.")
+
+
+class _FailingMediaCtrl(_MediaCtrl):
+    """A player that cannot load a file, as a missing Windows Media
+    Player backend on the player's computer would."""
+
+    def Load(self, path):
+        self.loaded.append(path)
+        return False
+
+
+def voice_playback_failure_test():
+    """With a player that cannot load the file, the failure is logged
+    in plain words instead of silence."""
+    import importlib
+    import voice_engine
+
+    sys.modules["edge_tts"] = _make_fake_edge_tts()
+    importlib.reload(voice_engine)
+    importlib.reload(main)
+    sys.modules["wx.media"].MediaCtrl = _FailingMediaCtrl
+
+    fighter = game_logic.new_fighter("Rusty", "robot", "male")
+    frame = main.MainFrame(fighter)
+    check("voice is on even when playback fails", frame.voice is not None)
+    check("failed playback is logged in plain words",
+          wait_for_log("the voice file could not be played"))
+    frame.on_close(mock.MagicMock())
+    if os.path.exists(main.SAVE_PATH):
+        os.unlink(main.SAVE_PATH)
+    print("\nAll voice playback failure tests passed.")
+
+
 if __name__ == "__main__":
     main_test()
     voice_test()
+    voice_failure_test()
+    voice_playback_failure_test()
