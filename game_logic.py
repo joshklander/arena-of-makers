@@ -50,13 +50,16 @@ def format_time(seconds):
     return "about %d hours" % int(round(hours))
 
 
-def new_fighter(name, kind):
-    """Create a level 1 fighter. kind is 'robot' or 'chef'."""
+def new_fighter(name, kind, gender="male"):
+    """Create a level 1 fighter. kind is 'robot' or 'chef',
+    gender is 'male' or 'female' (it picks the voice)."""
     name = (name or "").strip()
     if not name:
         raise ValueError("Give your fighter a name first.")
     if kind not in ("robot", "chef"):
         raise ValueError("Pick robot or chef for your fighter.")
+    if gender not in ("male", "female"):
+        raise ValueError("Pick male or female for your fighter.")
     if kind == "robot":
         weapon_name = "Laser Blaster"
         armor_name = "Scrap Plating"
@@ -66,6 +69,7 @@ def new_fighter(name, kind):
     return {
         "name": name,
         "kind": kind,
+        "gender": gender,
         "level": 1,
         "xp": 0,
         "hp": 100,
@@ -358,4 +362,6 @@ def load_game(path=None):
     # Fill in any field an older save is missing, so old saves keep working.
     fresh = new_fighter(data["name"], data["kind"])
     fresh.update(data)
+    if fresh.get("gender") not in ("male", "female"):
+        fresh["gender"] = "male"
     return fresh

@@ -19,11 +19,16 @@ If the game hits a problem, the details are written to arena_log.txt
 next to this file, so nobody has to open a command prompt to see what
 went wrong.
 
-Voice note: narration is shown as text in this skeleton. The speak()
-function below is a clearly marked stub: wiring real Microsoft Edge
-text-to-speech is the next step, not this one. Sound effects are simple
-tones for now (wx.Bell); real effects and music come only from Pixabay
-and freesound.org, using material marked free to use.
+Voice: narration is spoken with real Microsoft Edge text-to-speech
+(the free edge-tts package, no key, no account). The player picks a
+male voice (en-US-GuyNeural) or a female voice (en-US-AriaNeural) when
+they create their fighter, and can change it later in Settings. Speech
+never blocks the game: lines are made in the background and only the
+newest one is spoken. If edge-tts is not installed, or the voice
+service cannot be reached, the game carries on with text only and
+writes one plain line to arena_log.txt saying why. Sound effects are
+still to come, only from Pixabay and freesound.org, using material
+marked free to use.
 """
 
 import logging
@@ -35,7 +40,15 @@ import traceback
 
 import wx
 
+try:
+    import wx.media
+except ImportError:
+    # wx.media ships separately on some Linux builds; the voice then
+    # stays off and the game carries on with text only.
+    wx.media = None
+
 import game_logic
+import voice_engine
 
 APP_TITLE = "Arena of Makers"
 SAVE_PATH = game_logic.default_save_path()
@@ -43,16 +56,6 @@ LOG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "arena_log.t
 
 # Idle fighting does one fight about every 5 seconds.
 IDLE_FIGHT_GAP = 5
-
-
-def speak(text):
-    """STUB: speak text with Microsoft Edge text-to-speech.
-
-    This skeleton only shows narration as text and returns False.
-    Real Edge TTS wiring (edge-tts, free, no key) is a later step;
-    nothing here should be mistaken for a working voice.
-    """
-    return False
 
 
 def setup_logging():
@@ -93,7 +96,7 @@ def log_uncaught(exc_type, exc_value, exc_tb):
 
 
 class CreateFighterDialog(wx.Dialog):
-    """First launch: pick robot or chef, name the fighter. Nothing else."""
+    """First launch: pick robot or chef, pick a voice, name the fighter."""
 
     def __init__(self, parent):
         super().__init__(parent, title="Create your fighter")
@@ -124,6 +127,15 @@ class CreateFighterDialog(wx.Dialog):
         )
         sizer.Add(self.kind_box, 0, wx.ALL | wx.EXPAND, 10)
 
+        self.gender_box = wx.RadioBox(
+            self,
+            label="Voice",
+            choices=["Male voice", "Female voice"],
+            majorDimension=1,
+            style=wx.RA_SPECIFY_COLS,
+        )
+        sizer.Add(self.gender_box, 0, wx.ALL | wx.EXPAND, 10)
+
         sizer.Add(wx.StaticText(self, label="Fighter name:"), 0, wx.LEFT | wx.RIGHT, 10)
         self.name_ctrl = wx.TextCtrl(self)
         sizer.Add(self.name_ctrl, 0, wx.ALL | wx.EXPAND, 10)
@@ -138,12 +150,13 @@ class CreateFighterDialog(wx.Dialog):
         wx.CallAfter(self.name_ctrl.SetFocus)
 
     def get_result(self):
-        """Return (kind, name), or None when the player cancelled."""
+        """Return (kind, name, gender), or None when the name is empty."""
         kind = "robot" if self.kind_box.GetSelection() == 0 else "chef"
+        gender = "male" if self.gender_box.GetSelection() == 0 else "female"
         name = self.name_ctrl.GetValue().strip()
         if not name:
             return None
-        return kind, name
+        return kind, name, gender
 
 
 class MainFrame(wx.Frame):
@@ -168,6 +181,10 @@ class MainFrame(wx.Frame):
         self.sound_on = True
         self.volume = 40
         self.was_repairing = game_logic.is_repairing(fighter)
+        self.voice = None
+        self._media = None
+        self._voice_file = None
+        self._voice_play_failed = False
 
         self.notebook = wx.Notebook(self)
         self.lists = {}
@@ -207,6 +224,8 @@ class MainFrame(wx.Frame):
         self.timer = wx.Timer(self)
         self.Bind(wx.EVT_TIMER, self.on_tick, self.timer)
         self.timer.Start(1000)  # once a second
+
+        self.voice = self._setup_voice()
 
         self.refresh_all()
         self.announce("Welcome to Arena of Makers, %s." % fighter["name"])
@@ -259,8 +278,11 @@ class MainFrame(wx.Frame):
             ]
         if tab == "Settings":
             sound = "on" if self.sound_on else "off"
+            gender = self.fighter.get("gender", "male")
+            voice_name = "Male" if gender == "male" else "Female"
+            voice_state = "" if self.voice is not None else " (voice off)"
             return [
-                "Voice: Microsoft Edge (text for now, voice coming soon)",
+                "Voice: %s%s (press Enter to change)" % (voice_name, voice_state),
                 "Sound effects: %s" % sound,
                 "Lower volume (now %d percent)" % self.volume,
                 "Raise volume (now %d percent)" % self.volume,
@@ -288,16 +310,79 @@ class MainFrame(wx.Frame):
 
     # -- speaking and sound --------------------------------------------
 
-    def announce(self, text):
-        """Say it (stub for now) and show it in plain words."""
-        self.message_line.SetLabel(text)
-        speak(text)
+    def _setup_voice(self):
+        """Start the Edge voice, or stay text-only with one log line
+        saying why. Returns the voice, or None when it is off."""
+        if wx.media is None:
+            logging.warning(
+                "Edge voice is off: this computer has no wx.media to "
+                "play voice with. The game keeps going with text only."
+            )
+            return None
+        try:
+            media = wx.media.MediaCtrl(self)
+            media.Hide()
+        except Exception as error:
+            logging.warning(
+                "Edge voice is off: this computer could not open the "
+                "voice player (%s). The game keeps going with text only.",
+                error,
+            )
+            return None
+        voice = voice_engine.EdgeVoice(
+            voice_engine.voice_for_gender(self.fighter.get("gender", "male")),
+            self._on_voice_file,
+        )
+        if not voice.start():
+            return None
+        self._media = media
+        return voice
 
-    def tone(self, good=True):
-        """Simple tone for now. Real sound effects come later, only from
-        Pixabay and freesound.org, using material marked free to use."""
-        if self.sound_on:
-            wx.Bell()
+    def _on_voice_file(self, path):
+        """Called on the voice thread when a line is ready to play.
+        Hop to the UI thread before touching any window."""
+        wx.CallAfter(self._play_voice_file, path)
+
+    def _play_voice_file(self, path):
+        """Play one spoken line, at the game's volume. The previous
+        line's file is deleted first, so old files never pile up."""
+        if self._media is None:
+            return
+        try:
+            self._media.Stop()
+        except Exception:
+            pass
+        old = self._voice_file
+        if old and old != path:
+            try:
+                os.unlink(old)
+            except OSError:
+                pass
+        self._voice_file = path
+        try:
+            self._media.SetVolume(self.volume / 100.0)
+            if self._media.Load(path):
+                self._media.Play()
+            elif not self._voice_play_failed:
+                self._voice_play_failed = True
+                logging.warning(
+                    "Edge voice is off: the voice file could not be "
+                    "played. The game keeps going with text only."
+                )
+        except Exception as error:
+            if not self._voice_play_failed:
+                self._voice_play_failed = True
+                logging.warning(
+                    "Edge voice is off: the voice file could not be "
+                    "played (%s). The game keeps going with text only.",
+                    error,
+                )
+
+    def announce(self, text):
+        """Show it in plain words, and speak it when the voice is on."""
+        self.message_line.SetLabel(text)
+        if self.voice is not None:
+            self.voice.speak(text)
 
     def log(self, lines):
         """Add fight narration to the Combat log."""
@@ -313,10 +398,6 @@ class MainFrame(wx.Frame):
         result = game_logic.fight(self.fighter, rng=self.random)
         self.log(result["lines"])
         self.announce(result["lines"][-1])
-        if result["won"] is True:
-            self.tone(good=True)
-        elif result["won"] is False:
-            self.tone(good=False)
         self.save()
         self.refresh_all()
 
@@ -395,10 +476,13 @@ class MainFrame(wx.Frame):
         elif tab == "More" and item == "Quests (coming soon)":
             self.announce("Quests are coming soon. The hangout is open meanwhile.")
         elif tab == "Settings" and item.startswith("Voice:"):
-            self.announce(
-                "Voice is Microsoft Edge. In this first version the voice is "
-                "shown as text; Edge speech is the next step."
-            )
+            gender = "female" if self.fighter.get("gender", "male") == "male" else "male"
+            self.fighter["gender"] = gender
+            if self.voice is not None:
+                self.voice.set_voice(voice_engine.voice_for_gender(gender))
+            self.save()
+            self.announce("Voice set to %s." % gender)
+            self.refresh_all()
         elif tab == "Settings" and item.startswith("Sound effects:"):
             self.sound_on = not self.sound_on
             self.announce("Sound effects %s." % ("on" if self.sound_on else "off"))
@@ -500,6 +584,14 @@ class MainFrame(wx.Frame):
     def on_close(self, event):
         self.save()
         self.timer.Stop()
+        if self.voice is not None:
+            self.voice.stop()
+            if self._media is not None:
+                try:
+                    self._media.Stop()
+                except Exception:
+                    pass
+            self.voice.cleanup_files()
         event.Skip()
 
 
@@ -520,9 +612,9 @@ def run_game():
                 wx.OK | wx.ICON_INFORMATION,
             )
             return
-        kind, name = result
+        kind, name, gender = result
         try:
-            fighter = game_logic.new_fighter(name, kind)
+            fighter = game_logic.new_fighter(name, kind, gender)
         except ValueError as error:
             wx.MessageBox(str(error), "Arena of Makers", wx.OK | wx.ICON_INFORMATION)
             return

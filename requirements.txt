@@ -1,0 +1,4 @@
+# Arena of Makers - what the game needs on your computer.
+# Install once with:  pip install -r requirements.txt
+wxPython
+edge-tts

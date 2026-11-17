@@ -11,6 +11,11 @@ item starts a real upgrade, idle fighting toggles, and the timer
 finishes upgrades and repairs. It does NOT prove anything about NVDA,
 focus order, or how the window looks on Windows: that needs a live
 test by Joshua and McKenna.
+
+Voice: edge-tts is not installed here either, so the first half runs
+the no-voice fallback path (text only, no crash). The second half
+stubs edge-tts with a fake that writes a small file instead of
+calling the real service, and proves a line reaches the player.
 """
 
 import os
@@ -118,6 +123,31 @@ class _RadioBox(_Widget):
         return 0
 
 
+class _MediaCtrl(_Widget):
+    """Stand-in for wx.media.MediaCtrl: records what would be played."""
+
+    def __init__(self, *args, **kwargs):
+        self.loaded = []
+        self.played = 0
+
+    def Load(self, path):
+        self.loaded.append(path)
+        return True
+
+    def Play(self):
+        self.played += 1
+        return True
+
+    def Stop(self):
+        pass
+
+    def Hide(self):
+        pass
+
+    def SetVolume(self, value):
+        pass
+
+
 class _Frame(_Widget):
     def __init__(self, *args, **kwargs):
         self._status = ""
@@ -164,6 +194,8 @@ def _make_wx():
     wx.Window = type("Window", (), {"FindFocus": staticmethod(lambda: None)})
     wx.Bell = lambda: None
     wx.MessageBox = lambda *args, **kwargs: None
+    # CallAfter runs the call right away here: there is no real event loop.
+    wx.CallAfter = lambda fn, *args, **kwargs: fn(*args, **kwargs)
     wx.ID_OK = 1
     wx.OK = 1
     wx.CANCEL = 2
@@ -192,7 +224,15 @@ def _make_wx():
     return wx
 
 
+def _make_media():
+    media = types.ModuleType("wx.media")
+    media.MediaCtrl = _MediaCtrl
+    return media
+
+
 sys.modules["wx"] = _make_wx()
+sys.modules["wx.media"] = _make_media()
+sys.modules["wx"].media = sys.modules["wx.media"]
 
 import game_logic
 import main
@@ -263,8 +303,47 @@ def main_test():
     frame.on_tick(mock.MagicMock())
     check("tick heals after repairs finish", fighter["hp"] == fighter["max_hp"])
 
-    # The voice is a clearly marked stub in this skeleton.
-    check("speak stub reports no voice yet", main.speak("hello") is False)
+    # The fighter-creation dialog returns kind, name and gender.
+    dialog = main.CreateFighterDialog(None)
+    dialog.name_ctrl.text = "Ember"
+    check("dialog returns kind, name and gender",
+          dialog.get_result() == ("robot", "Ember", "male"))
+    dialog.gender_box.GetSelection = lambda: 1
+    check("dialog returns female when picked",
+          dialog.get_result() == ("robot", "Ember", "female"))
+    dialog.kind_box.GetSelection = lambda: 1
+    check("dialog returns chef when picked",
+          dialog.get_result() == ("chef", "Ember", "female"))
+    dialog.name_ctrl.text = "   "
+    check("dialog returns nothing without a name",
+          dialog.get_result() is None)
+
+    # No voice here (edge-tts is not installed on this machine): the
+    # game must carry on with text only and never ring a bell.
+    check("voice is off without edge-tts", frame.voice is None)
+    frame.announce("A quiet line.")
+    check("announce still shows text without a voice",
+          frame.message_line.GetLabel() == "A quiet line.")
+    source = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               "main.py"), encoding="utf-8").read()
+    check("no bell left in main.py", "Bell" not in source)
+    check("no tone method left in main.py", "def tone" not in source)
+
+    # Settings: Enter on the Voice item switches the voice and saves it.
+    frame.notebook.SetSelection(4)  # Settings tab
+    frame.refresh_list("Settings")
+    settings_box = frame.lists["Settings"]
+    check("settings first item is the voice",
+          settings_box.GetString(0).startswith("Voice: Male"))
+    settings_box.SetSelection(0)
+    frame.activate_current()
+    check("voice item switches to female", fighter["gender"] == "female")
+    check("voice item saves the switch",
+          game_logic.load_game(main.SAVE_PATH)["gender"] == "female")
+    check("settings now shows female",
+          frame.list_items("Settings")[0].startswith("Voice: Female"))
+    frame.activate_current()
+    check("voice item switches back to male", fighter["gender"] == "male")
 
     os.unlink(main.SAVE_PATH)
     print("\nAll window smoke tests passed.")
@@ -272,5 +351,87 @@ def main_test():
     print("the window looks on Windows still need a live test by Joshua/McKenna.")
 
 
+def _make_fake_edge_tts():
+    """A stand-in edge-tts that writes a small file instead of calling
+    the real voice service."""
+
+    class _FakeCommunicate:
+        def __init__(self, text, voice):
+            self.text = text
+            self.voice = voice
+
+        async def save(self, path):
+            with open(path, "wb") as handle:
+                handle.write(("fake-mp3:" + self.text).encode("utf-8"))
+
+    module = types.ModuleType("edge_tts")
+    module.Communicate = _FakeCommunicate
+    return module
+
+
+def voice_test():
+    """With a stubbed edge-tts, a spoken line reaches the player,
+    and a newer line replaces an older one still waiting."""
+    import importlib
+    import voice_engine
+
+    sys.modules["edge_tts"] = _make_fake_edge_tts()
+    importlib.reload(voice_engine)
+    importlib.reload(main)
+
+    fighter = game_logic.new_fighter("Piper", "chef", "female")
+    frame = main.MainFrame(fighter)
+    check("voice is on with edge-tts present", frame.voice is not None)
+    check("female fighter gets the female voice",
+          frame.voice.voice == voice_engine.FEMALE_VOICE)
+    media = frame._media
+
+    def last_spoken():
+        try:
+            with open(media.loaded[-1], "rb") as handle:
+                return handle.read()
+        except (IndexError, OSError):
+            return b""
+
+    frame.announce("Hello, fighter.")
+    deadline = time.time() + 5
+    heard = False
+    while time.time() < deadline:
+        time.sleep(0.05)
+        if last_spoken() == b"fake-mp3:Hello, fighter.":
+            heard = True
+            break
+    check("a spoken line reaches the player", heard)
+    check("the player actually played it", media.played >= 1)
+
+    # A newer line replaces an older one still waiting.
+    frame.voice.speak("old line")
+    frame.voice.speak("new line")
+    deadline = time.time() + 5
+    while time.time() < deadline:
+        time.sleep(0.05)
+        if frame.voice._queue.empty():
+            break
+    time.sleep(1.0)
+    check("only the newest line is spoken",
+          last_spoken() == b"fake-mp3:new line")
+
+    # Switching voice in Settings changes the engine voice too.
+    frame.notebook.SetSelection(4)
+    frame.refresh_list("Settings")
+    frame.lists["Settings"].SetSelection(0)
+    frame.activate_current()
+    check("settings switch changes the voice",
+          frame.voice.voice == voice_engine.MALE_VOICE)
+
+    frame.on_close(mock.MagicMock())
+    check("voice files are cleaned up on close",
+          not os.path.exists(media.loaded[-1]))
+    if os.path.exists(main.SAVE_PATH):
+        os.unlink(main.SAVE_PATH)
+    print("\nAll voice smoke tests passed.")
+
+
 if __name__ == "__main__":
     main_test()
+    voice_test()

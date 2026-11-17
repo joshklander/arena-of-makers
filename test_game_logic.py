@@ -8,6 +8,7 @@ endless upgrade costs, the 2 to 4 hour timer cap, repairs, and a
 save/load roundtrip.
 """
 
+import json
 import os
 import random
 import sys
@@ -48,6 +49,18 @@ def main():
         check("bad kind is rejected", False)
     except ValueError:
         check("bad kind is rejected", True)
+
+    # Gender picks the voice. Male is the default, female is the other.
+    check("gender defaults to male", robot["gender"] == "male")
+    girl = game_logic.new_fighter("Ember", "chef", "female")
+    check("female fighter stores female", girl["gender"] == "female")
+    check("female chef still gets spatula", girl["weapon_name"] == "Trusty Spatula")
+
+    try:
+        game_logic.new_fighter("Bolt", "robot", "other")
+        check("bad gender is rejected", False)
+    except ValueError:
+        check("bad gender is rejected", True)
 
     # One fight, with a fixed seed so the test is repeatable.
     rng = random.Random(7)
@@ -130,16 +143,29 @@ def main():
     fd, path = tempfile.mkstemp(suffix=".json")
     os.close(fd)
     try:
-        saved = game_logic.new_fighter("Saver", "chef")
+        saved = game_logic.new_fighter("Saver", "chef", "female")
         saved["points"] = 42
         saved["level"] = 3
         game_logic.save_game(saved, path)
         loaded = game_logic.load_game(path)
         check("save/load roundtrip keeps name", loaded["name"] == "Saver")
         check("save/load roundtrip keeps kind", loaded["kind"] == "chef")
+        check("save/load roundtrip keeps gender", loaded["gender"] == "female")
         check("save/load roundtrip keeps points", loaded["points"] == 42)
         check("save/load roundtrip keeps level", loaded["level"] == 3)
         check("save/load roundtrip keeps weapon", loaded["weapon_name"] == "Trusty Spatula")
+        # An older save with no gender at all loads as male.
+        old = {"name": "Oldie", "kind": "robot", "level": 1}
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(old, handle)
+        check("old save without gender loads as male",
+              game_logic.load_game(path)["gender"] == "male")
+        # A save with a nonsense gender also loads as male.
+        old["gender"] = "nonsense"
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(old, handle)
+        check("save with bad gender loads as male",
+              game_logic.load_game(path)["gender"] == "male")
     finally:
         os.unlink(path)
     check("missing save loads as nothing",
