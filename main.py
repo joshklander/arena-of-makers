@@ -15,6 +15,9 @@ Run it with:  python main.py
 It needs Python and wxPython. The save lives in arena_save.json next
 to this file, on this computer only. No accounts, no passwords, no
 server, and no keys of any kind in the code: the repository is public.
+If the game hits a problem, the details are written to arena_log.txt
+next to this file, so nobody has to open a command prompt to see what
+went wrong.
 
 Voice note: narration is shown as text in this skeleton. The speak()
 function below is a clearly marked stub: wiring real Microsoft Edge
@@ -23,10 +26,12 @@ tones for now (wx.Bell); real effects and music come only from Pixabay
 and freesound.org, using material marked free to use.
 """
 
+import logging
 import os
 import random
 import sys
 import time
+import traceback
 
 import wx
 
@@ -34,6 +39,7 @@ import game_logic
 
 APP_TITLE = "Arena of Makers"
 SAVE_PATH = game_logic.default_save_path()
+LOG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "arena_log.txt")
 
 # Idle fighting does one fight about every 5 seconds.
 IDLE_FIGHT_GAP = 5
@@ -49,6 +55,43 @@ def speak(text):
     return False
 
 
+def setup_logging():
+    """Write a plain-text log next to the game, so a crash can be read
+    from the log file instead of the command prompt."""
+    logging.basicConfig(
+        filename=LOG_PATH,
+        filemode="a",
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s: %(message)s",
+    )
+    logging.info("Arena of Makers started.")
+
+
+def tell_player_about_log():
+    """Plain-words message about the log file. Never let telling the
+    player fail too: if there is no window to show it in, stay quiet
+    and let the log file speak."""
+    try:
+        wx.MessageBox(
+            "Arena of Makers hit a problem. The details were written to "
+            "arena_log.txt, next to the game, so you can send that file "
+            "to Muse to look at.",
+            "Arena of Makers",
+            wx.OK | wx.ICON_INFORMATION,
+        )
+    except Exception:
+        pass
+
+
+def log_uncaught(exc_type, exc_value, exc_tb):
+    """Anything that escapes gets written to the log file, and the
+    player is told where it is, in plain words."""
+    logging.error(
+        "The game hit a problem:", exc_info=(exc_type, exc_value, exc_tb)
+    )
+    tell_player_about_log()
+
+
 class CreateFighterDialog(wx.Dialog):
     """First launch: pick robot or chef, name the fighter. Nothing else."""
 
@@ -57,18 +100,23 @@ class CreateFighterDialog(wx.Dialog):
         self.kind = "robot"
         self.fighter_name = ""
 
-        panel = wx.Panel(self)
+        # The sizer lives on the dialog itself, with every control a
+        # direct child of the dialog. CreateButtonSizer parents its
+        # OK/Cancel buttons to the dialog, and wx requires every window
+        # in a sizer to share the sizer's window as its parent: putting
+        # the controls on a panel while the buttons belonged to the
+        # dialog crashed at startup with a wx assertion error.
         sizer = wx.BoxSizer(wx.VERTICAL)
 
         hint = wx.StaticText(
-            panel,
+            self,
             label="Welcome to Arena of Makers. Pick your fighter, then give them a name.",
         )
         hint.Wrap(420)
         sizer.Add(hint, 0, wx.ALL, 10)
 
         self.kind_box = wx.RadioBox(
-            panel,
+            self,
             label="Fighter type",
             choices=["Robot fighter", "Chef fighter"],
             majorDimension=1,
@@ -76,16 +124,18 @@ class CreateFighterDialog(wx.Dialog):
         )
         sizer.Add(self.kind_box, 0, wx.ALL | wx.EXPAND, 10)
 
-        sizer.Add(wx.StaticText(panel, label="Fighter name:"), 0, wx.LEFT | wx.RIGHT, 10)
-        self.name_ctrl = wx.TextCtrl(panel)
+        sizer.Add(wx.StaticText(self, label="Fighter name:"), 0, wx.LEFT | wx.RIGHT, 10)
+        self.name_ctrl = wx.TextCtrl(self)
         sizer.Add(self.name_ctrl, 0, wx.ALL | wx.EXPAND, 10)
 
         buttons = self.CreateButtonSizer(wx.OK | wx.CANCEL)
         sizer.Add(buttons, 0, wx.ALL | wx.ALIGN_RIGHT, 10)
 
-        panel.SetSizer(sizer)
+        self.SetSizer(sizer)
         sizer.Fit(self)
-        self.name_ctrl.SetFocus()
+        # Focus only once the dialog is actually showing: focusing a
+        # control in a hidden dialog trips another wx assertion.
+        wx.CallAfter(self.name_ctrl.SetFocus)
 
     def get_result(self):
         """Return (kind, name), or None when the player cancelled."""
@@ -453,7 +503,7 @@ class MainFrame(wx.Frame):
         event.Skip()
 
 
-def main():
+def run_game():
     app = wx.App()
     fighter = game_logic.load_game(SAVE_PATH)
     if fighter is None:
@@ -480,6 +530,18 @@ def main():
     frame = MainFrame(fighter)
     frame.Show()
     app.MainLoop()
+
+
+def main():
+    setup_logging()
+    sys.excepthook = log_uncaught
+    try:
+        run_game()
+    except Exception:
+        logging.exception("The game hit a problem and had to stop.")
+        tell_player_about_log()
+        return
+    logging.info("Arena of Makers closed.")
 
 
 if __name__ == "__main__":
