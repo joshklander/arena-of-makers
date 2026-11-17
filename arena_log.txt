@@ -12,3 +12,34 @@
 2026-11-16 21:53:13,890 INFO: Voice: playing voice file (32112 bytes).
 2026-11-16 21:53:20,790 INFO: Voice thread stopped.
 2026-11-16 21:53:20,873 INFO: Arena of Makers closed.
+2026-11-16 22:09:38,957 INFO: Arena of Makers started.
+2026-11-16 22:09:39,029 INFO: Voice startup: Python C:\Program Files\Python313\python.exe; edge-tts installed; wx.media available; voice en-US-GuyNeural; volume 40 percent.
+2026-11-16 22:09:39,112 INFO: Voice: engine started, voice en-US-GuyNeural.
+2026-11-16 22:09:39,116 INFO: Voice: speaking "Welcome to Arena of Makers, Freddy." with en-US-GuyNeural.
+2026-11-16 22:09:39,826 INFO: Voice: made "Welcome to Arena of Makers, Freddy." with en-US-GuyNeural (19440 bytes).
+2026-11-16 22:09:39,842 INFO: Voice: playing voice file (19440 bytes).
+2026-11-16 22:09:46,434 INFO: Voice: speaking "Combat. Fight one creature, or let idle ..." with en-US-GuyNeural.
+2026-11-16 22:09:47,204 INFO: Voice: made "Combat. Fight one creature, or let idle ..." with en-US-GuyNeural (32976 bytes).
+2026-11-16 22:09:47,223 INFO: Voice: playing voice file (32976 bytes).
+2026-11-16 22:09:52,728 INFO: Voice: speaking "You won! You earned 25 experience and 15..." with en-US-GuyNeural.
+2026-11-16 22:09:53,420 INFO: Voice: made "You won! You earned 25 experience and 15..." with en-US-GuyNeural (32112 bytes).
+2026-11-16 22:09:53,438 INFO: Voice: playing voice file (32112 bytes).
+2026-11-16 22:19:26,007 INFO: Voice thread stopped.
+2026-11-16 22:19:30,084 INFO: Arena of Makers closed.
+2026-11-16 22:19:42,354 INFO: Arena of Makers started.
+2026-11-16 22:19:42,418 INFO: Voice startup: Python C:\Program Files\Python313\python.exe; edge-tts installed; pygame installed; voice en-US-GuyNeural; volume 40 percent.
+2026-11-16 22:19:42,449 INFO: Voice: engine started, voice en-US-GuyNeural.
+2026-11-16 22:19:42,456 INFO: Voice: speaking "Welcome to Arena of Makers, Freddy." with en-US-GuyNeural.
+2026-11-16 22:19:43,216 INFO: Voice: made "Welcome to Arena of Makers, Freddy." with en-US-GuyNeural (19440 bytes).
+2026-11-16 22:19:43,222 INFO: Voice: playing voice file (19440 bytes).
+2026-11-16 22:19:43,534 INFO: Voice: mixer is playing.
+2026-11-16 22:19:49,061 INFO: Voice: speaking "Combat. Fight one creature, or let idle ..." with en-US-GuyNeural.
+2026-11-16 22:19:49,706 INFO: Voice: made "Combat. Fight one creature, or let idle ..." with en-US-GuyNeural (32976 bytes).
+2026-11-16 22:19:49,713 INFO: Voice: playing voice file (32976 bytes).
+2026-11-16 22:19:50,024 INFO: Voice: mixer is playing.
+2026-11-16 22:20:06,064 INFO: Voice: speaking "You won! You earned 25 experience and 15..." with en-US-GuyNeural.
+2026-11-16 22:20:06,643 INFO: Voice: made "You won! You earned 25 experience and 15..." with en-US-GuyNeural (32112 bytes).
+2026-11-16 22:20:06,651 INFO: Voice: playing voice file (32112 bytes).
+2026-11-16 22:20:06,959 INFO: Voice: mixer is playing.
+2026-11-16 22:20:23,497 INFO: Voice thread stopped.
+2026-11-16 22:20:23,549 INFO: Arena of Makers closed.

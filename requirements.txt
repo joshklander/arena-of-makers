@@ -2,3 +2,4 @@
 # Install once with:  pip install -r requirements.txt
 wxPython
 edge-tts
+pygame

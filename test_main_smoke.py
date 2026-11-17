@@ -138,29 +138,33 @@ class _RadioBox(_Widget):
         return 0
 
 
-class _MediaCtrl(_Widget):
-    """Stand-in for wx.media.MediaCtrl: records what would be played."""
+class _FakeMusic:
+    """Stand-in for pygame.mixer.music: records what would be played."""
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self):
         self.loaded = []
         self.played = 0
+        self.fail_load = False
 
-    def Load(self, path):
+    def load(self, path):
+        if self.fail_load:
+            raise RuntimeError("test: cannot decode this file")
         self.loaded.append(path)
-        return True
 
-    def Play(self):
+    def play(self):
         self.played += 1
-        return True
 
-    def Stop(self):
+    def stop(self):
         pass
 
-    def Hide(self):
+    def unload(self):
         pass
 
-    def SetVolume(self, value):
+    def set_volume(self, value):
         pass
+
+    def get_busy(self):
+        return self.played > 0
 
 
 class _Frame(_Widget):
@@ -211,6 +215,7 @@ def _make_wx():
     wx.MessageBox = lambda *args, **kwargs: None
     # CallAfter runs the call right away here: there is no real event loop.
     wx.CallAfter = lambda fn, *args, **kwargs: fn(*args, **kwargs)
+    wx.CallLater = lambda ms, fn, *args, **kwargs: fn(*args, **kwargs)
     wx.ID_OK = 1
     wx.OK = 1
     wx.CANCEL = 2
@@ -239,15 +244,16 @@ def _make_wx():
     return wx
 
 
-def _make_media():
-    media = types.ModuleType("wx.media")
-    media.MediaCtrl = _MediaCtrl
-    return media
+def _make_pygame():
+    pygame = types.ModuleType("pygame")
+    pygame.mixer = types.SimpleNamespace(
+        init=lambda: None, music=_FakeMusic()
+    )
+    return pygame
 
 
 sys.modules["wx"] = _make_wx()
-sys.modules["wx.media"] = _make_media()
-sys.modules["wx"].media = sys.modules["wx.media"]
+sys.modules["pygame"] = _make_pygame()
 
 import game_logic
 import main
@@ -418,7 +424,7 @@ def voice_test():
           "voice en-US-AriaNeural" in LOG_CAPTURE.getvalue())
     check("female fighter gets the female voice",
           frame.voice.voice == voice_engine.FEMALE_VOICE)
-    media = frame._media
+    media = sys.modules["pygame"].mixer.music
 
     def last_spoken():
         try:
@@ -437,6 +443,8 @@ def voice_test():
             break
     check("a spoken line reaches the player", heard)
     check("the player actually played it", media.played >= 1)
+    check("mixer busy check is logged",
+          wait_for_log("Voice: mixer is playing."))
     check("speak attempt is logged with voice and preview",
           'Voice: speaking "Hello, fighter." with en-US-AriaNeural'
           in LOG_CAPTURE.getvalue())
@@ -516,15 +524,6 @@ def voice_failure_test():
     print("\nAll voice failure tests passed.")
 
 
-class _FailingMediaCtrl(_MediaCtrl):
-    """A player that cannot load a file, as a missing Windows Media
-    Player backend on the player's computer would."""
-
-    def Load(self, path):
-        self.loaded.append(path)
-        return False
-
-
 def voice_playback_failure_test():
     """With a player that cannot load the file, the failure is logged
     in plain words instead of silence."""
@@ -534,7 +533,7 @@ def voice_playback_failure_test():
     sys.modules["edge_tts"] = _make_fake_edge_tts()
     importlib.reload(voice_engine)
     importlib.reload(main)
-    sys.modules["wx.media"].MediaCtrl = _FailingMediaCtrl
+    sys.modules["pygame"].mixer.music.fail_load = True
 
     fighter = game_logic.new_fighter("Rusty", "robot", "male")
     frame = main.MainFrame(fighter)

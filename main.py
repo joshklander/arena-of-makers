@@ -12,7 +12,7 @@ does something once; Shift plus the same letter starts the idle loop.
     R         hear repair status (More tab)
 
 Run it with:  python main.py
-It needs Python and wxPython. The save lives in arena_save.json next
+It needs Python, wxPython, edge-tts and pygame. The save lives in arena_save.json next
 to this file, on this computer only. No accounts, no passwords, no
 server, and no keys of any kind in the code: the repository is public.
 If the game hits a problem, the details are written to arena_log.txt
@@ -28,7 +28,7 @@ newest one is spoken. If edge-tts is not installed, or the voice
 service cannot be reached, the game carries on with text only and
 writes one plain line to arena_log.txt saying why. For diagnosis the
 game also logs every speak attempt there: which Python is running it,
-whether edge-tts is installed, which voice and volume are set, whether
+whether edge-tts and pygame are installed, which voice and volume are set, whether
 each line's sound file was made and how big it was, and whether the
 player started playing it. Sound effects are still to come, only from
 Pixabay and freesound.org, using material marked free to use.
@@ -44,11 +44,12 @@ import traceback
 import wx
 
 try:
-    import wx.media
+    # Only the sound mixer is used, never pygame's own window.
+    import pygame
 except ImportError:
-    # wx.media ships separately on some Linux builds; the voice then
-    # stays off and the game carries on with text only.
-    wx.media = None
+    # Without pygame the voice stays off and the game carries on with
+    # text only.
+    pygame = None
 
 import game_logic
 import voice_engine
@@ -185,7 +186,7 @@ class MainFrame(wx.Frame):
         self.volume = 40
         self.was_repairing = game_logic.is_repairing(fighter)
         self.voice = None
-        self._media = None
+        self._player_ready = False
         self._voice_file = None
         self._voice_play_failed = False
 
@@ -317,64 +318,70 @@ class MainFrame(wx.Frame):
         """Start the Edge voice, or stay text-only with one log line
         saying why. Returns the voice, or None when it is off. The
         startup line in the log records everything a diagnosis needs:
-        which Python is running the game, whether edge-tts is
-        installed, whether this computer can play voice at all, which
-        voice is picked, and the volume."""
+        which Python is running the game, whether edge-tts and pygame
+        are installed, which voice is picked, and the volume."""
         voice_name = voice_engine.voice_for_gender(
             self.fighter.get("gender", "male")
         )
         logging.info(
-            "Voice startup: Python %s; edge-tts %s; wx.media %s; "
+            "Voice startup: Python %s; edge-tts %s; pygame %s; "
             "voice %s; volume %d percent.",
             sys.executable,
             "installed" if voice_engine.edge_tts is not None else "not installed",
-            "available" if wx.media is not None else "missing",
+            "installed" if pygame is not None else "not installed",
             voice_name,
             self.volume,
         )
-        if wx.media is None:
+        if pygame is None:
             logging.warning(
-                "Edge voice is off: this computer has no wx.media to "
-                "play voice with. The game keeps going with text only."
+                "Edge voice is off: the pygame package is not installed, "
+                "so there is nothing to play voice with. Run: "
+                "pip install pygame. The game keeps going with text only."
             )
             return None
         try:
-            media = wx.media.MediaCtrl(self)
-            media.Hide()
+            pygame.mixer.init()
         except Exception as error:
             logging.warning(
-                "Edge voice is off: this computer could not open the "
-                "voice player (%s). The game keeps going with text only.",
+                "Edge voice is off: this computer could not open its "
+                "sound device (%s: %s). The game keeps going with "
+                "text only.",
+                type(error).__name__,
                 error,
             )
             return None
         voice = voice_engine.EdgeVoice(voice_name, self._on_voice_file)
         if not voice.start():
             return None
-        self._media = media
+        self._player_ready = True
         return voice
 
     def _on_voice_file(self, path):
         """Called on the voice thread when a line is ready to play.
-        Hop to the UI thread before touching any window."""
+        Hop to the UI thread before touching the player."""
         wx.CallAfter(self._play_voice_file, path)
+
+    def _release_voice_file(self):
+        """Stop playback and let go of the current file, so Windows
+        allows it to be deleted. Never raises."""
+        try:
+            pygame.mixer.music.stop()
+            pygame.mixer.music.unload()
+        except Exception:
+            pass
 
     def _play_voice_file(self, path):
         """Play one spoken line, at the game's volume. The previous
         line's file is deleted first, so old files never pile up.
-        Every outcome is logged: a file that loads but will not play
-        used to fail silently, because only the Load result was ever
-        checked."""
-        if self._media is None:
+        Every outcome is logged, and a moment after play starts the
+        mixer is asked whether it is really making sound."""
+        if not self._player_ready:
             logging.warning(
                 "Voice: the player is missing, so a finished line "
                 "could not be played. The game keeps going with text only."
             )
             return
-        try:
-            self._media.Stop()
-        except Exception:
-            pass
+        self._release_voice_file()
         old = self._voice_file
         if old and old != path:
             try:
@@ -383,40 +390,40 @@ class MainFrame(wx.Frame):
                 pass
         self._voice_file = path
         try:
-            self._media.SetVolume(self.volume / 100.0)
-            try:
-                size = os.path.getsize(path)
-            except OSError:
-                size = 0
-            if not self._media.Load(path):
-                if not self._voice_play_failed:
-                    self._voice_play_failed = True
-                    logging.warning(
-                        "Edge voice is off: the voice file could not be "
-                        "played (%d bytes). The game keeps going with "
-                        "text only.",
-                        size,
-                    )
-            elif self._media.Play():
-                self._voice_play_failed = False
-                logging.info("Voice: playing voice file (%d bytes).", size)
-            elif not self._voice_play_failed:
-                self._voice_play_failed = True
-                logging.warning(
-                    "Edge voice is off: the voice file loaded but would "
-                    "not play (%d bytes). The game keeps going with "
-                    "text only.",
-                    size,
-                )
+            size = os.path.getsize(path)
+        except OSError:
+            size = 0
+        try:
+            pygame.mixer.music.load(path)
+            pygame.mixer.music.set_volume(self.volume / 100.0)
+            pygame.mixer.music.play()
         except Exception as error:
             if not self._voice_play_failed:
                 self._voice_play_failed = True
                 logging.warning(
                     "Edge voice is off: the voice file could not be "
-                    "played (%s: %s). The game keeps going with text only.",
+                    "played (%s: %s; %d bytes). The game keeps going "
+                    "with text only.",
                     type(error).__name__,
                     error,
+                    size,
                 )
+            return
+        self._voice_play_failed = False
+        logging.info("Voice: playing voice file (%d bytes).", size)
+        wx.CallLater(300, self._log_voice_busy)
+
+    def _log_voice_busy(self):
+        """Log whether the mixer is really playing, shortly after a
+        line started. A line that is still sounding is the proof that
+        sound is coming out of the speakers."""
+        try:
+            busy = pygame.mixer.music.get_busy()
+        except Exception:
+            return
+        logging.info(
+            "Voice: mixer is %s.", "playing" if busy else "not playing"
+        )
 
     def announce(self, text):
         """Show it in plain words, and speak it when the voice is on."""
@@ -626,11 +633,8 @@ class MainFrame(wx.Frame):
         self.timer.Stop()
         if self.voice is not None:
             self.voice.stop()
-            if self._media is not None:
-                try:
-                    self._media.Stop()
-                except Exception:
-                    pass
+            if self._player_ready:
+                self._release_voice_file()
             self.voice.cleanup_files()
         event.Skip()
 
