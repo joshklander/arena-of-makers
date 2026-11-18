@@ -657,6 +657,13 @@ def voice_test():
         except (IndexError, OSError):
             return b""
 
+    # The welcome line is still sounding in the fake player: wait
+    # for it to reach the player, then let it finish, since a new
+    # line now waits behind a line already speaking instead of
+    # cutting it off.
+    check("the welcome line reaches the player first",
+          _wait_spoken(frame, "Welcome to Arena of Makers, Piper."))
+    media.finish()
     frame.announce("Hello, fighter.")
     deadline = time.time() + 5
     heard = False
@@ -792,10 +799,127 @@ def _finish_line_and_advance(frame):
     frame.on_tick(mock.MagicMock())  # pause is over, next line speaks
 
 
+def currency_wording_test():
+    """Currency is always spoken as "credits", never "points".
+    "Stat points" is a different, correct term and stays, as
+    does "one more point" on a stat line. Checks the real
+    spoken lines from game_logic, the window's lists and the
+    "no stat points" announce, and the server's spoken lines
+    in the migrations: the newest apply_timers replaces the
+    baseline's one rename line that still said "points"."""
+    import copy
+    import re
+
+    def _bare_points(line):
+        """True when a line says "point(s)" about anything but stats."""
+        cleaned = re.sub(r"stat points?", "", line, flags=re.IGNORECASE)
+        cleaned = re.sub(r"one (more )?point", "", cleaned, flags=re.IGNORECASE)
+        return "point" in cleaned.lower()
+
+    spoken = []
+    # Fight lines: a win (seed 0), a loss (a fighter on 1 HP
+    # loses on seed 0), and a win that levels the fighter up.
+    trial = copy.deepcopy(game_logic.new_fighter("Bolt", "robot"))
+    spoken += game_logic.fight(trial, rng=random.Random(0))["lines"]
+    trial = copy.deepcopy(game_logic.new_fighter("Bolt", "robot"))
+    trial["hp"] = 1
+    trial["credits"] = 50
+    spoken += game_logic.fight(trial, rng=random.Random(0))["lines"]
+    trial = copy.deepcopy(game_logic.new_fighter("Bolt", "robot"))
+    trial["xp"] = game_logic.xp_to_next_level(1) - 1
+    spoken += game_logic.fight(trial, rng=random.Random(0))["lines"]
+    # Stat spending, respec, upgrades and the status line.
+    banker = game_logic.new_fighter("Bolt", "robot")
+    banker["stat_points"] = 2
+    _error, line = game_logic.spend_stat(banker, "strength")
+    spoken.append(line)
+    _error, line = game_logic.spend_stat(banker, "strength")
+    spoken.append(line)
+    _error, line = game_logic.respec_stats(banker)
+    spoken.append(line)
+    poor = game_logic.new_fighter("Bolt", "robot")
+    poor["credits"] = 0
+    spoken.append(game_logic.start_upgrade(poor, "weapon"))
+    rich = game_logic.new_fighter("Bolt", "robot")
+    rich["credits"] = 100000
+    _error, line = game_logic.start_max_upgrade(rich, "weapon")
+    spoken.append(line)
+    spoken.append(game_logic.status_text(rich))
+    for stat in game_logic.STAT_NAMES:
+        spoken.append(game_logic.stat_line(rich, stat))
+    check("fight and upgrade lines were collected", len(spoken) >= 10)
+    check("no spoken line says points for the currency",
+          not any(_bare_points(line) for line in spoken))
+    check("the win line says credits",
+          any("earned" in line and "credits" in line for line in spoken))
+    check("the loss line says credits",
+          any(line.startswith("You lost") and "credits" in line
+              for line in spoken))
+    print("    Spoken lines checked: %s" % spoken)
+
+    # The window's lists, and the line spoken when you press
+    # Enter on "You have no stat points to spend right now."
+    fighter = game_logic.new_fighter("Bolt", "robot")
+    fighter["stat_points"] = 0
+    frame = main.MainFrame(fighter)
+    for tab in main.MainFrame.TAB_NAMES:
+        for item in frame.list_items(tab):
+            check("list item says credits, not points: %r" % item,
+                  not _bare_points(item))
+    frame.notebook.SetSelection(0)  # Home tab
+    frame.refresh_list("Home")
+    home_box = frame.lists["Home"]
+    home_box.SetSelection(
+        [i for i, item in enumerate(frame.list_items("Home"))
+         if item.startswith("You have no stat points")][0])
+    frame.activate_current()
+    spoken_no_points = frame.message_line.GetLabel()
+    check("no-points announce says stat points, not points",
+          spoken_no_points ==
+          "You have no stat points to spend right now. You get "
+          "2 stat points every time you level up.")
+    check("no-points announce has no bare points",
+          not _bare_points(spoken_no_points))
+    frame.on_close(mock.MagicMock())
+
+    # The server's spoken lines: format('...') strings in the
+    # migrations. The baseline's one rename line is history,
+    # superseded by the newest migration, so it is checked
+    # there instead of here.
+    here = os.path.dirname(os.path.abspath(__file__))
+    mig_dir = os.path.join(here, "supabase", "migrations")
+    names = sorted(os.listdir(mig_dir))
+    check("a credits-wording migration exists",
+          any("fix_credits_wording" in name for name in names))
+    newest = open(os.path.join(mig_dir, names[-1]), encoding="utf-8").read()
+    check("newest migration is the credits-wording fix",
+          "fix_credits_wording" in names[-1])
+    check("newest migration fixes the rename line",
+          "Your balance is now in credits." in newest)
+    check("newest migration never says points for the currency",
+          "Your points are now called credits" not in newest)
+    check("newest migration replaces apply_timers only",
+          "create or replace function arena_private.apply_timers(" in newest
+          and "set search_path = ''" in newest)
+    baseline = open(os.path.join(
+        mig_dir, "20261118045430_baseline.sql"), encoding="utf-8").read()
+    baseline_lines = [
+        literal for literal in re.findall(r"format\('([^']*)'", baseline)
+        if "Your points are now called credits" not in literal]
+    check("baseline fight and upgrade lines say credits, not points",
+          not any(_bare_points(literal) for literal in baseline_lines))
+    check("baseline win line says credits",
+          any("You won! You earned" in literal and "credits" in literal
+              for literal in baseline_lines))
+    print("\nAll currency wording tests passed.")
+
+
 def narration_test():
     """Turn-by-turn narration: a manual fight speaks every round
-    line in order, with a pause, and an idle fight speaks only
-    its result line."""
+    line in order, with a pause; an idle fight does the same;
+    a single announce waits behind a narration instead of
+    cutting it off; and the next idle fight waits for the
+    narration to finish before it starts."""
     import importlib
     import voice_engine
 
@@ -831,28 +955,89 @@ def narration_test():
     check("every fight line was spoken, in order", spoken == lines)
     check("narration queue is empty at the end", frame._narration_queue == [])
 
-    # A single announce cancels a narration in progress.
+    # A single announce no longer cuts a narration off: it waits
+    # at the end of the queue and is spoken after the fight's
+    # lines, in order. (This is how turning idle fighting off
+    # mid-fight works: the fight finishes talking first.)
     frame.random = random.Random(7)
+    log_before = len(frame.logs["Combat"].text.strip().split("\n"))
     frame.do_fight()
+    second_lines = frame.logs["Combat"].text.strip().split("\n")[log_before:]
     check("a second fight queues its lines again", bool(frame._narration_queue))
     frame.announce("Idle fighting off.")
-    check("announce cancels the narration queue", frame._narration_queue == [])
-
-    # An idle fight speaks only its result line, and queues nothing.
-    # First wait for the "Idle fighting off." line above to finish
-    # reaching the player, so the count below is not still moving.
-    check("the cancelling line reaches the player first",
+    check("announce queues behind a narration, it does not cancel it",
+          frame._narration_queue[-1] == "Idle fighting off."
+          and len(frame._narration_queue) >= 2)
+    # Finish the fight's lines first, then the queued line speaks.
+    # Drain the whole queue: the off line is only popped when it
+    # starts speaking, so the loop cannot end early.
+    while frame._narration_queue:
+        _finish_line_and_advance(frame)
+    check("the queued line speaks after the fight lines",
           _wait_spoken(frame, "Idle fighting off."))
+    check("narration queue is empty at the end", frame._narration_queue == [])
+    media.finish()
+
+    # An idle fight now narrates every round line, exactly like a
+    # manual fight, with the same queue and the same order.
     frame.random = random.Random(7)
+    log_before = len(frame.logs["Combat"].text.strip().split("\n"))
     before = len(media.loaded)
     frame.do_fight(idle=True)
-    check("idle fight queues no narration", frame._narration_queue == [])
-    idle_lines = frame.logs["Combat"].text.strip().split("\n")
-    check("idle fight speaks only its result line",
-          _wait_spoken(frame, idle_lines[-1]))
-    time.sleep(0.5)
-    check("idle fight does not speak round lines afterwards",
-          len(media.loaded) == before + 1)
+    idle_lines = frame.logs["Combat"].text.strip().split("\n")[log_before:]
+    check("idle fight queues every round line, not just the result",
+          len(frame._narration_queue) == len(idle_lines) - 1)
+    check("idle fight speaks the first round line first",
+          _wait_spoken(frame, idle_lines[0]))
+    spoken = [idle_lines[0]]
+    while frame._narration_queue:
+        _finish_line_and_advance(frame)
+        check("next idle line is the next fight line",
+              _wait_spoken(frame, idle_lines[len(spoken)]))
+        spoken.append(idle_lines[len(spoken)])
+    check("every idle fight line was spoken, in order", spoken == idle_lines)
+    check("idle fight spoke every line, not just one",
+          len(media.loaded) == before + len(idle_lines))
+    media.finish()
+
+    # The next idle fight waits for the narration to finish.
+    # While the first fight is still talking, a tick must not
+    # start a second fight, and must not restart the 5-second
+    # gap either. Once the talking is done, the next tick
+    # starts the next fight straight away.
+    import copy
+    wins_losses = fighter["wins"] + fighter["losses"]
+    winning_seed = None
+    for seed in range(50):
+        trial = copy.deepcopy(fighter)
+        if game_logic.fight(trial, rng=random.Random(seed))["won"]:
+            winning_seed = seed
+            break
+    check("a winning seed exists for the gating test", winning_seed is not None)
+    frame.random = random.Random(winning_seed)
+    log_before = len(frame.logs["Combat"].text.strip().split("\n"))
+    frame.do_fight(idle=True)
+    gating_lines = frame.logs["Combat"].text.strip().split("\n")[log_before:]
+    check("gating fight started", fighter["wins"] + fighter["losses"] == wins_losses + 1)
+    frame.idle_fighting = True
+    frame.last_idle_fight = 0.0  # the 5-second gap is long past
+    frame.on_tick(mock.MagicMock())
+    check("no second idle fight starts while narration is speaking",
+          fighter["wins"] + fighter["losses"] == wins_losses + 1)
+    check("the waiting gap is not restarted while narration speaks",
+          frame.last_idle_fight == 0.0)
+    while frame._narration_queue:
+        _finish_line_and_advance(frame)
+    # The last line was only just spoken: wait for it to reach
+    # the player and finish sounding before the next tick, or
+    # the gate will (rightly) still see narration in progress.
+    check("the gating fight's last line reaches the player",
+          _wait_spoken(frame, gating_lines[-1]))
+    media.finish()
+    frame.on_tick(mock.MagicMock())
+    check("the next idle fight starts once the narration has finished",
+          fighter["wins"] + fighter["losses"] == wins_losses + 2)
+    frame.idle_fighting = False
 
     frame.on_close(mock.MagicMock())
     print("\nAll turn-by-turn narration tests passed.")
@@ -924,6 +1109,7 @@ def sounds_test():
 
 if __name__ == "__main__":
     main_test()
+    currency_wording_test()
     voice_test()
     narration_test()
     sounds_test()

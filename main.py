@@ -753,26 +753,67 @@ class MainFrame(wx.Frame):
         self._narration_playing = False
         self._narration_next_at = 0.0
 
+    def _narration_busy(self):
+        """True while a fight narration is still speaking or
+        waiting to be spoken: lines queued, a line being made
+        by the voice, or the mixer still playing a line. The
+        mixer is the ground truth for a line sounding: the
+        _narration_playing flag goes stale after a single
+        announce() line finishes, because _advance_narration
+        only clears it while a narration queue is running, so
+        it is not used here. A voice that is off or dead never
+        counts as busy, so a dead voice can never stall idle
+        fighting: the game just carries on with text only."""
+        if self._narration_queue or self._narration_waiting:
+            return True
+        if self.voice is None or pygame is None:
+            return False
+        if not self.voice.available:
+            return False
+        try:
+            return bool(pygame.mixer.music.get_busy())
+        except Exception:
+            return False
+
     def announce(self, text):
         """Show it in plain words, and speak it when the voice is on.
-        This is a single line: it cancels any narration in progress
-        and, through voice.speak(), drops any older line still
-        waiting, so it can never pile up a backlog."""
-        self._cancel_narration()
+        A single line never cuts off a fight narration in progress:
+        when narration is still speaking or queued, the line waits
+        at the end of the queue and is spoken after the fight's
+        lines, in order. That is how turning idle fighting off
+        mid-fight works: the current fight's lines finish first,
+        then \"Idle fighting off.\" is spoken, and no new fight
+        starts. Only when nothing is speaking does a line speak
+        at once. (Closing the game is the one exception: on_close
+        cancels narration outright.)"""
+        text = (text or "").strip()
+        if not text:
+            return
+        if self.voice is None:
+            self.message_line.SetLabel(text)
+            return
+        if self._narration_busy():
+            self._narration_queue.append(text)
+            return
         self.message_line.SetLabel(text)
-        if self.voice is not None:
-            self.voice.speak(text)
+        self._cancel_narration()
+        # The line is being made now: mark it waiting, so the
+        # next idle fight does not start and cut it off while
+        # the voice is still synthesising it. _play_voice_file
+        # clears this the moment the line starts sounding.
+        self._narration_waiting = True
+        self.voice.speak(text)
 
     def announce_sequence(self, lines, pause_seconds=TURN_PAUSE_SECONDS):
         """Speak lines one at a time, in order, with a short pause
-        between them. This is how a manual fight is narrated turn
-        by turn. It does not block the window: the first line is
-        spoken now, and _advance_narration() (called from the
-        one-second timer in on_tick) speaks each next line only
-        once the mixer has finished the current one. The Combat
-        text log already holds every line, so the log and the
-        voice tell the same story. With no voice, only the last
-        line is shown, as before."""
+        between them. This is how a fight is narrated turn by
+        turn, manual or idle: the first line is spoken now, and
+        _advance_narration() (called from the one-second timer
+        in on_tick) speaks each next line only once the mixer
+        has finished the current one. The Combat text log
+        already holds every line, so the log and the voice tell
+        the same story. With no voice, only the last line is
+        shown, as before."""
         lines = [line for line in (lines or []) if (line or "").strip()]
         if not lines:
             return
@@ -1010,10 +1051,18 @@ class MainFrame(wx.Frame):
 
     def do_fight(self, idle=False, opponent_code=None):
         """Fight one creature. A manual fight (F, or Enter on the
-        fight item) is narrated turn by turn, round by round.
-        An idle fight speaks only its last line -- the result --
-        and plays no fight sounds, so idle fighting every 5
-        seconds can never build a speech or sound backlog.
+        fight item) and an idle fight are both narrated turn by
+        turn, round by round, with the fight sounds for every
+        line. Idle fighting used to speak only the result line
+        and play no sounds, so it could run every 5 seconds
+        without a backlog; that quiet-idle behaviour was
+        removed at Makenna's request (Nov 17, 2026): auto-fight
+        is the full battle, music and sounds and turn-by-turn
+        TTS. The backlog is prevented a different way now: the
+        next idle fight does not start until the previous
+        fight's narration has finished speaking (see on_tick),
+        so the 5-second gap is a minimum wait, never an
+        interrupt.
 
         Online, the server runs the fight with its own dice and
         sends back the lines and the new fighter; the server
@@ -1034,10 +1083,7 @@ class MainFrame(wx.Frame):
         else:
             result = game_logic.fight(self.fighter, rng=self.random)
         self.log(result["lines"])
-        if idle:
-            self.announce(result["lines"][-1])
-        else:
-            self.announce_sequence(result["lines"])
+        self.announce_sequence(result["lines"])
         self.refresh_all()
 
     def toggle_keep_signed_in(self):
@@ -1080,6 +1126,11 @@ class MainFrame(wx.Frame):
         self.refresh_all()
 
     def toggle_idle(self):
+        """Turn idle fighting on or off. Turning it off
+        mid-fight does not cut the fight's narration short:
+        announce() queues \"Idle fighting off.\" behind the
+        fight's lines, so they finish first and no new fight
+        starts after them."""
         if game_logic.is_repairing(self.fighter):
             self.announce(
                 "Your fighter is still repairing. %s left."
@@ -1262,7 +1313,7 @@ class MainFrame(wx.Frame):
             else:
                 self.announce(
                     "You have no stat points to spend right now. You get "
-                    "2 points every time you level up."
+                    "2 stat points every time you level up."
                 )
         elif tab == "Home" and item.startswith("Strength,"):
             self.do_spend_stat("strength")
@@ -1457,16 +1508,24 @@ class MainFrame(wx.Frame):
 
     def on_tick(self, event):
         """Once a second: turn-by-turn narration, idle fights,
-        finished upgrades, finished repairs."""
+        finished upgrades, finished repairs. The 5-second idle
+        gap is a minimum, not a trigger: the next idle fight
+        only starts once the previous fight's narration has
+        finished speaking (see _narration_busy), so one fight's
+        rounds are never cut off by the next fight. While
+        narration is still going, last_idle_fight is left
+        alone, so the fight starts as soon as the talking ends
+        instead of waiting out another full gap."""
         now = time.time()
         self._advance_narration(now)
         if self.idle_fighting and now - self.last_idle_fight >= IDLE_FIGHT_GAP:
-            self.last_idle_fight = now
-            self.do_fight(idle=True)
-            if game_logic.is_repairing(self.fighter):
-                self.idle_fighting = False
-                self.announce("Idle fighting stopped while your fighter repairs.")
-                self.refresh_all()
+            if not self._narration_busy():
+                self.last_idle_fight = now
+                self.do_fight(idle=True)
+                if game_logic.is_repairing(self.fighter):
+                    self.idle_fighting = False
+                    self.announce("Idle fighting stopped while your fighter repairs.")
+                    self.refresh_all()
         if self.online_config:
             self._tick_online(now)
         else:

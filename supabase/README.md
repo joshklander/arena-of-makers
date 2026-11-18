@@ -57,6 +57,11 @@ before adding one.
 - `migrations/20261118045430_baseline.sql`: the whole server as of
   November 18, 2026, including the combat stats phase. It is safe
   to run again, so the first automatic deploy can replay it.
+- `migrations/20261118061843_fix_credits_wording.sql`: replaces
+  only `arena_private.apply_timers`, changing one spoken line so
+  the credits rename no longer says "points" for the currency
+  ("Your balance is now in credits."). Same inputs, outputs and
+  rules as the baseline; older games keep working.
 - `config.toml`: made by `supabase init`, for running a database on
   your own computer. It has no `[remotes]` section, so it never
   changes the live project's settings.
