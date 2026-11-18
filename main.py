@@ -9,7 +9,15 @@ does something once; Shift plus the same letter starts the idle loop.
     Shift+F   idle fighting on and off (Combat tab)
     U         upgrade weapon (Shop tab)
     A         upgrade armor (Shop tab)
+    Shift+U   max affordable weapon upgrade (Shop tab)
+    Shift+A   max affordable armor upgrade (Shop tab)
     R         hear repair status (More tab)
+
+Stats live on the Home tab, in the same list as the fighter
+status: move with the arrow keys, press Enter on a stat to
+spend one banked stat point. Stay on the same stat and press
+Enter again to spend another point there. No new keys, no
+new tabs, no new screens.
 
 Run it with:  python main.py
 It needs Python, wxPython, edge-tts and pygame. Arena of Makers is
@@ -367,7 +375,7 @@ class MainFrame(wx.Frame):
     TAB_HINTS = {
         "Home": "Home. Your fighter, and where to go next.",
         "Combat": "Combat. Fight one creature, or let idle fighting keep going.",
-        "Shop": "Shop. Upgrade your weapon and armor. Upgrades take time, capped at 4 hours.",
+        "Shop": "Shop. Upgrade your weapon and armor, or buy as many levels as you can afford. Upgrades take time, capped at 4 hours.",
         "More": "More. Hangout, repairs, and quests.",
         "Settings": "Settings. Voice, sound effects, and volume.",
     }
@@ -481,13 +489,34 @@ class MainFrame(wx.Frame):
     def list_items(self, tab):
         fighter = self.fighter
         if tab == "Home":
-            return [
-                "Hear my fighter status",
+            items = ["Hear my fighter status"]
+            # Stats live here, in the same list as the fighter
+            # status: arrow keys to move, Enter to spend one
+            # banked point on the highlighted stat. Banked
+            # points may all go into one stat: stay on the
+            # line and press Enter again for the next point.
+            points = fighter.get("stat_points", 0)
+            if points > 0:
+                items.append(
+                    "You have %d stat %s to spend. Press Enter on a "
+                    "stat to spend one point."
+                    % (points, "point" if points == 1 else "points")
+                )
+            else:
+                items.append("You have no stat points to spend right now.")
+            for stat in game_logic.STAT_NAMES:
+                items.append(game_logic.stat_line(fighter, stat))
+            if sum(game_logic.stats_of(fighter).values()) > 0:
+                items.append(
+                    "Reset all my stats (first one free, later ones 100 credits)"
+                )
+            items += [
                 "Go to Combat",
                 "Go to Shop",
                 "Go to More",
                 "Go to Settings",
             ]
+            return items
         if tab == "Combat":
             state = "on" if self.idle_fighting else "off"
             return [
@@ -503,14 +532,42 @@ class MainFrame(wx.Frame):
                 weapon_line = upgrade
             else:
                 weapon_line = (
-                    "Upgrade %s to level %d, costs %d points (press U)"
+                    "Upgrade %s to level %d, costs %d credits (press U)"
                     % (fighter["weapon_name"], fighter["weapon_level"] + 1, weapon_cost)
                 )
             armor_line = (
-                "Upgrade %s to level %d, costs %d points (press A)"
+                "Upgrade %s to level %d, costs %d credits (press A)"
                 % (fighter["armor_name"], fighter["armor_level"] + 1, armor_cost)
             )
-            return [weapon_line, armor_line, "Hear my fighter status"]
+            items = [weapon_line, armor_line]
+            if not upgrade:
+                # Max affordable: one line per slot, worked out
+                # from the fighter the server sent back. The
+                # server decides the real queue and price.
+                for slot, key in (("weapon", "U"), ("armor", "A")):
+                    plan = game_logic.max_affordable(fighter, slot)
+                    if plan["levels"]:
+                        count = len(plan["levels"])
+                        items.append(
+                            "Max affordable: %s up %d %s for %d credits, "
+                            "done in %s (press Shift %s)"
+                            % (
+                                plan["name"],
+                                count,
+                                "level" if count == 1 else "levels",
+                                plan["cost"],
+                                game_logic.format_time(plan["seconds"]),
+                                key,
+                            )
+                        )
+                    else:
+                        items.append(
+                            "Max affordable: your next %s level costs %d "
+                            "credits and you have %d credits."
+                            % (plan["name"], plan["next_cost"], plan["credits"])
+                        )
+            items.append("Hear my fighter status")
+            return items
         if tab == "More":
             return [
                 "Visit the hangout",
@@ -1042,9 +1099,19 @@ class MainFrame(wx.Frame):
         )
         self.refresh_all()
 
+    def _confirm(self, text):
+        """Ask yes or no with a plain-words question. Returns
+        True only when the player says yes. Used before any
+        spending that cannot be undone: a max-affordable queue
+        and a respec."""
+        yes_no = getattr(wx, "YES_NO", 0)
+        question = getattr(wx, "ICON_QUESTION", 0)
+        yes = getattr(wx, "ID_YES", 1)
+        return wx.MessageBox(text, APP_TITLE, yes_no | question) == yes
+
     def do_upgrade(self, slot):
         """Start a timed upgrade. Online, the server checks the
-        points, takes the cost and sets the finish time."""
+        credits, takes the cost and sets the finish time."""
         if self.online_config:
             server_fighter, _messages, error = online_save.start_upgrade(
                 self.online_config, slot
@@ -1067,6 +1134,110 @@ class MainFrame(wx.Frame):
         )
         self.refresh_all()
 
+    def do_spend_stat(self, stat):
+        """Spend one banked stat point on the highlighted stat.
+        One point per press: stay on the line and press Enter
+        again to spend another point there, in the same stat
+        or a different one. Online, the server decides."""
+        if self.online_config:
+            server_fighter, message, _messages, error = online_save.spend_stat(
+                self.online_config, stat
+            )
+            self.use_server_fighter(server_fighter)
+        else:
+            error, message = game_logic.spend_stat(self.fighter, stat)
+        if error:
+            self.announce(error)
+            self.refresh_all()
+            return
+        self.announce(message)
+        self.refresh_all()
+
+    def do_respec(self):
+        """Reset all 5 stats, refunding every spent point. The
+        first respec is free; later ones cost 100 credits. A
+        respec cannot be undone, so the game asks first."""
+        fighter = self.fighter
+        spent = sum(game_logic.stats_of(fighter).values())
+        if spent <= 0:
+            self.announce("You have no stat points spent to reset.")
+            return
+        used = fighter.get("respecs_used", 0)
+        if used <= 0:
+            question = (
+                "Reset all your stats? You have %d stat points spent. "
+                "They will all come back to spend again. Your first "
+                "respec is free. Do you want to do it?" % spent
+            )
+        else:
+            question = (
+                "Reset all your stats? You have %d stat points spent. "
+                "They will all come back to spend again. This respec "
+                "costs 100 credits and you have %d credits. Do you "
+                "want to do it?"
+                % (spent, game_logic.credits_of(fighter))
+            )
+        if not self._confirm(question):
+            self.announce("Your stats stay as they are.")
+            return
+        if self.online_config:
+            server_fighter, message, _messages, error = online_save.respec_stats(
+                self.online_config
+            )
+            self.use_server_fighter(server_fighter)
+        else:
+            error, message = game_logic.respec_stats(self.fighter)
+        if error:
+            self.announce(error)
+            self.refresh_all()
+            return
+        self.announce(message)
+        self.refresh_all()
+
+    def do_max_upgrade(self, slot):
+        """Start a max-affordable queue: as many levels as the
+        credits and the 4-hour cap allow. The game says the
+        whole deal in plain words and asks first, because once
+        started the queue runs to the end with no cancelling."""
+        fighter = self.fighter
+        plan = game_logic.max_affordable(fighter, slot)
+        if not plan["levels"]:
+            self.announce(
+                "Your next %s level costs %d credits and you have %d credits."
+                % (plan["name"], plan["next_cost"], plan["credits"])
+            )
+            return
+        count = len(plan["levels"])
+        question = (
+            "Your %s can go up %d %s for %d credits, leaving %d. "
+            "It will take %s, one level after another. Do you want "
+            "to do it?"
+            % (
+                plan["name"],
+                count,
+                "level" if count == 1 else "levels",
+                plan["cost"],
+                plan["credits_left"],
+                game_logic.format_time(plan["seconds"]),
+            )
+        )
+        if not self._confirm(question):
+            self.announce("Nothing was bought. Your credits stay as they are.")
+            return
+        if self.online_config:
+            server_fighter, message, _messages, error = online_save.max_upgrade(
+                self.online_config, slot
+            )
+            self.use_server_fighter(server_fighter)
+        else:
+            error, message = game_logic.start_max_upgrade(self.fighter, slot)
+        if error:
+            self.announce(error)
+            self.refresh_all()
+            return
+        self.announce(message)
+        self.refresh_all()
+
     def activate_current(self):
         """Enter on the selected list item."""
         tab = self.current_tab()
@@ -1080,6 +1251,31 @@ class MainFrame(wx.Frame):
             self.announce(game_logic.status_text(fighter))
         elif item.startswith("Go to "):
             self.notebook.SetSelection(self.TAB_NAMES.index(item[6:]))
+        elif tab == "Home" and item.startswith("You have "):
+            points = fighter.get("stat_points", 0)
+            if points > 0:
+                self.announce(
+                    "You have %d stat %s to spend. Move with the arrow "
+                    "keys to a stat and press Enter to spend one point."
+                    % (points, "point" if points == 1 else "points")
+                )
+            else:
+                self.announce(
+                    "You have no stat points to spend right now. You get "
+                    "2 points every time you level up."
+                )
+        elif tab == "Home" and item.startswith("Strength,"):
+            self.do_spend_stat("strength")
+        elif tab == "Home" and item.startswith("Defense,"):
+            self.do_spend_stat("defense")
+        elif tab == "Home" and item.startswith("Health,"):
+            self.do_spend_stat("health")
+        elif tab == "Home" and item.startswith("Speed,"):
+            self.do_spend_stat("speed")
+        elif tab == "Home" and item.startswith("Luck,"):
+            self.do_spend_stat("luck")
+        elif tab == "Home" and item.startswith("Reset all my stats"):
+            self.do_respec()
         elif tab == "Combat" and item.startswith("Fight a Scrap Rat"):
             self.do_fight()
         elif tab == "Combat" and item.startswith("Idle fighting:"):
@@ -1088,6 +1284,16 @@ class MainFrame(wx.Frame):
             self.do_upgrade("weapon")
         elif tab == "Shop" and item.startswith("Upgrade " + fighter["armor_name"]):
             self.do_upgrade("armor")
+        elif tab == "Shop" and item.startswith(
+            "Max affordable: " + fighter["weapon_name"] + " up"
+        ):
+            self.do_max_upgrade("weapon")
+        elif tab == "Shop" and item.startswith(
+            "Max affordable: " + fighter["armor_name"] + " up"
+        ):
+            self.do_max_upgrade("armor")
+        elif tab == "Shop" and item.startswith("Max affordable: your next"):
+            self.announce(item)
         elif tab == "Shop" and item.startswith("Upgrading "):
             self.announce(game_logic.upgrade_status(fighter) or "No upgrade is running.")
         elif tab == "More" and item == "Visit the hangout":
@@ -1188,9 +1394,10 @@ class MainFrame(wx.Frame):
         on_list = isinstance(focused, wx.ListBox)
         # Every game key press goes to the server, with the tab
         # it was pressed on. Only keys that do something in the
-        # game are logged: F, Shift F, U, A, R, Return, Escape.
+        # game are logged: F, Shift F, U, Shift U, A, Shift A,
+        # R, Return, Escape.
         if on_list and key in (
-            ord("f"), ord("F"), ord("u"), ord("a"), ord("r"),
+            ord("f"), ord("F"), ord("u"), ord("U"), ord("a"), ord("A"), ord("r"),
             wx.WXK_RETURN, wx.WXK_ESCAPE,
         ):
             label = chr(key) if 32 <= key < 127 else str(key)
@@ -1227,6 +1434,12 @@ class MainFrame(wx.Frame):
                 return
             if key == ord("a"):
                 self.do_upgrade("armor")
+                return
+            if key == ord("U"):
+                self.do_max_upgrade("weapon")
+                return
+            if key == ord("A"):
+                self.do_max_upgrade("armor")
                 return
         if on_list and self.current_tab() == "More" and key == ord("r"):
             fighter = self.fighter

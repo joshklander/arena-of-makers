@@ -5,7 +5,7 @@ only judge of what a fighter has. The game cannot read or
 write the players table at all. It can only call the arena_*
 functions set up by supabase_schema.sql, and the server runs
 every game rule itself: fights, dice rolls, experience,
-levels, points, upgrade costs and timers. The game shows
+levels, credits, upgrade costs and timers. The game shows
 what the server sends back. That is what stops cheating:
 changing the game's code or memory changes nothing on the
 server.
@@ -56,7 +56,7 @@ def rpc(config, name, args, timeout=15):
     data is the function's JSON answer when it worked, else
     None. error is a plain-words message, else None. A
     plain-words problem the server reports, like "That upgrade
-    costs 38 points", comes back as error, with data still set
+    costs 38 credits", comes back as error, with data still set
     so the caller can see the fighter the server sent along.
     The args, which may hold a password or session token, are
     never logged.
@@ -108,7 +108,7 @@ def refresh_state(config, timeout=15):
 
 def fight(config, opponent_code=None, timeout=15):
     """Fight one creature, on the server. Returns (result,
-    error). result has won, lines, xp, points, levels_gained,
+    error). result has won, lines, xp, credits, levels_gained,
     messages and the fighter as the server now has it."""
     args = _session_args(config)
     args["p_opponent_code"] = opponent_code
@@ -121,13 +121,52 @@ def fight(config, opponent_code=None, timeout=15):
 def start_upgrade(config, slot, timeout=15):
     """Start a timed upgrade of weapon or armor, on the server.
     Returns (fighter, messages, error). On a plain-words
-    problem like too few points, fighter is still the server's
+    problem like too few credits, fighter is still the server's
     copy when it sent one."""
     args = _session_args(config)
     args["p_slot"] = slot
     data, error = rpc(config, "arena_start_upgrade", args, timeout)
     data = data or {}
     return data.get("fighter"), data.get("messages") or [], error
+
+
+def spend_stat(config, stat, timeout=15):
+    """Spend one banked stat point, on the server. The game
+    sends only the session token plus one stat name. Returns
+    (fighter, message, messages, error). message is the
+    plain-words line to speak, with how many stat points are
+    left. One point per call: to spend several points, call
+    again on the same stat line."""
+    args = _session_args(config)
+    args["p_stat"] = stat
+    data, error = rpc(config, "arena_spend_stat", args, timeout)
+    data = data or {}
+    return (data.get("fighter"), data.get("message"),
+            data.get("messages") or [], error)
+
+
+def respec_stats(config, timeout=15):
+    """Reset all 5 stats on the server, refunding every spent
+    point. The first respec is free; later ones cost 100
+    credits. Returns (fighter, message, messages, error)."""
+    data, error = rpc(config, "arena_respec", _session_args(config), timeout)
+    data = data or {}
+    return (data.get("fighter"), data.get("message"),
+            data.get("messages") or [], error)
+
+
+def max_upgrade(config, slot, timeout=15):
+    """Start a max-affordable upgrade queue on the server: as
+    many levels as the credits and the 4-hour cap allow, with
+    the full cost deducted up front. The game must confirm
+    first (see game_logic.max_affordable). Returns (fighter,
+    message, messages, error)."""
+    args = _session_args(config)
+    args["p_slot"] = slot
+    data, error = rpc(config, "arena_max_upgrade", args, timeout)
+    data = data or {}
+    return (data.get("fighter"), data.get("message"),
+            data.get("messages") or [], error)
 
 
 def set_voice(config, gender, timeout=15):

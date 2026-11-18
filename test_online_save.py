@@ -125,8 +125,8 @@ def main_test():
         fighter = game_logic.new_fighter("Bolt", "robot")
         answers["arena_fight"] = {
             "won": True, "lines": ["A Scrap Rat appears! Level 1.", "You won!"],
-            "xp": 25, "points": 15, "levels_gained": 0, "messages": [],
-            "fighter": dict(fighter, wins=1, points=15),
+            "xp": 25, "credits": 15, "levels_gained": 0, "messages": [],
+            "fighter": dict(fighter, wins=1, credits=15),
         }
         result, error = online_save.fight(config, opponent_code="5150")
         check("fight runs on the server", error is None and result["won"] is True)
@@ -146,14 +146,71 @@ def main_test():
         # Upgrades: the server's plain-words refusal is passed on,
         # with the fighter the server sent along.
         answers["arena_start_upgrade"] = {
-            "error": "That upgrade costs 25 points and you have 15 points.",
-            "fighter": dict(fighter, points=15), "messages": [],
+            "error": "That upgrade costs 25 credits and you have 15 credits.",
+            "fighter": dict(fighter, credits=15), "messages": [],
         }
         server_fighter, _messages, error = online_save.start_upgrade(config, "weapon")
         check("upgrade refusal comes back in plain words",
-              error.startswith("That upgrade costs 25 points"))
+              error.startswith("That upgrade costs 25 credits"))
         check("upgrade refusal still sends the server's fighter",
-              server_fighter["points"] == 15)
+              server_fighter["credits"] == 15)
+
+        # Stats: spending a point sends only the session token
+        # plus one stat name, and the server's plain-words
+        # line comes back with how many points are left.
+        answers["arena_spend_stat"] = {
+            "message": "Strength is now 5. One more point adds 2 damage. "
+                       "You have 7 stat points left.",
+            "fighter": dict(fighter, stats={"strength": 5, "defense": 0,
+                                            "health": 0, "speed": 0, "luck": 0},
+                            stat_points=7),
+            "messages": [],
+        }
+        server_fighter, message, _messages, error = online_save.spend_stat(
+            config, "strength")
+        check("spending a stat point runs on the server",
+              error is None and server_fighter["stats"]["strength"] == 5)
+        check("spend stat calls the arena_spend_stat function",
+              calls[-1]["url"] == good_url + "/rest/v1/rpc/arena_spend_stat")
+        check("spend stat sends the session and one stat name",
+              calls[-1]["body"] == {"p_token": "a" * 64, "p_stat": "strength"})
+        check("spend stat line says points left", "7 stat points left" in message)
+
+        # Respec: the server refunds every spent point.
+        answers["arena_respec"] = {
+            "message": "Your stats are reset. You have 5 stat points to spend. "
+                       "Your first respec was free.",
+            "fighter": dict(fighter, stats={"strength": 0, "defense": 0,
+                                            "health": 0, "speed": 0, "luck": 0},
+                            stat_points=5),
+            "messages": [],
+        }
+        server_fighter, message, _messages, error = online_save.respec_stats(config)
+        check("respec runs on the server",
+              error is None and server_fighter["stat_points"] == 5)
+        check("respec calls the arena_respec function",
+              calls[-1]["url"] == good_url + "/rest/v1/rpc/arena_respec")
+        check("respec sends only the session token",
+              calls[-1]["body"] == {"p_token": "a" * 64})
+
+        # Max affordable: the server works out the queue and
+        # price; the game only confirms first.
+        answers["arena_max_upgrade"] = {
+            "message": "Your Laser Blaster will go up 5 levels for 330 credits. "
+                       "All 5 levels will be done in 15 minutes.",
+            "fighter": dict(fighter, credits=170, upgrade={"slot": "weapon",
+                                                           "name": "Laser Blaster",
+                                                           "level": 2}),
+            "messages": [],
+        }
+        server_fighter, message, _messages, error = online_save.max_upgrade(
+            config, "weapon")
+        check("max upgrade runs on the server",
+              error is None and server_fighter["credits"] == 170)
+        check("max upgrade calls the arena_max_upgrade function",
+              calls[-1]["url"] == good_url + "/rest/v1/rpc/arena_max_upgrade")
+        check("max upgrade sends the session and one slot",
+              calls[-1]["body"] == {"p_token": "a" * 64, "p_slot": "weapon"})
 
         # A dead session is said plainly.
         answers["arena_state"] = {

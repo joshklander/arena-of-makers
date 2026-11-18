@@ -337,7 +337,7 @@ def main_test():
     import copy
     import online_save as _online_save
     fighter = game_logic.new_fighter("Bolt", "robot")
-    fighter["points"] = 500
+    fighter["credits"] = 500
     fighter["player_code"] = "4242"
     server = {"fighter": copy.deepcopy(fighter), "calls": []}
 
@@ -351,6 +351,21 @@ def main_test():
         server["calls"].append("upgrade")
         error = game_logic.start_upgrade(server["fighter"], slot)
         return copy.deepcopy(server["fighter"]), [], error
+
+    def _fake_spend_stat(config, stat):
+        server["calls"].append("spend_stat")
+        error, message = game_logic.spend_stat(server["fighter"], stat)
+        return copy.deepcopy(server["fighter"]), message, [], error
+
+    def _fake_respec(config):
+        server["calls"].append("respec")
+        error, message = game_logic.respec_stats(server["fighter"])
+        return copy.deepcopy(server["fighter"]), message, [], error
+
+    def _fake_max_upgrade(config, slot):
+        server["calls"].append("max_upgrade")
+        error, message = game_logic.start_max_upgrade(server["fighter"], slot)
+        return copy.deepcopy(server["fighter"]), message, [], error
 
     def _fake_state(config):
         server["calls"].append("state")
@@ -371,6 +386,9 @@ def main_test():
 
     _online_save.fight = _fake_fight
     _online_save.start_upgrade = _fake_upgrade
+    _online_save.spend_stat = _fake_spend_stat
+    _online_save.respec_stats = _fake_respec
+    _online_save.max_upgrade = _fake_max_upgrade
     _online_save.refresh_state = _fake_state
     _online_save.set_voice = _fake_voice
     _online_save.heartbeat = lambda *args, **kwargs: True
@@ -407,11 +425,11 @@ def main_test():
     check("window shows the server's fighter",
           fighter["wins"] + fighter["losses"]
           == server["fighter"]["wins"] + server["fighter"]["losses"])
-    fighter["points"] = 999999  # a cheat in the game's memory
+    fighter["credits"] = 999999  # a cheat in the game's memory
     server["fighter"]["repair_until"] = 0
     frame.do_fight()
     check("a cheat in memory is wiped by the next server answer",
-          fighter["points"] == server["fighter"]["points"] != 999999)
+          fighter["credits"] == server["fighter"]["credits"] != 999999)
     check("no local save file was created",
           not os.path.exists(os.path.join(
               os.path.dirname(os.path.abspath(__file__)), "arena_save.json")))
@@ -451,6 +469,64 @@ def main_test():
     frame._last_timer_check = 0
     frame.on_tick(mock.MagicMock())
     check("tick heals after repairs finish", fighter["hp"] == fighter["max_hp"])
+
+    # Stats live on the Home tab, in the same list as the
+    # fighter status: 5 stat lines, spoken in plain words.
+    frame.notebook.SetSelection(0)  # Home tab
+    frame.refresh_list("Home")
+    home_items = frame.list_items("Home")
+    check("home list has the 5 stat lines",
+          sum(1 for item in home_items
+              if item.split(",")[0] in
+              ("Strength", "Defense", "Health", "Speed", "Luck")) == 5)
+    check("home list says credits nowhere on stat lines",
+          all("points" not in item or "stat point" in item
+              for item in home_items))
+
+    # Enter on a stat line spends one banked point on the
+    # server, and the spoken line says how many are left.
+    # The fake server starts with 0 banked points, so give
+    # both copies 8 and spend them all in one stat.
+    server["fighter"]["stat_points"] = 8
+    fighter["stat_points"] = 8
+    frame.refresh_list("Home")
+    home_box = frame.lists["Home"]
+    home_box.SetSelection(home_items.index(
+        [item for item in home_items if item.startswith("Strength,")][0]))
+    frame.activate_current()
+    check("enter on a stat spends one point on the server",
+          "spend_stat" in server["calls"])
+    check("one point spent, 7 banked left",
+          fighter["stat_points"] == 7 and fighter["stats"]["strength"] == 1)
+    # Stay on the same line and press Enter again: the next
+    # point goes to the same stat. No forced spreading.
+    for _ in range(7):
+        frame.activate_current()
+    check("all 8 banked points can go into Strength",
+          fighter["stats"]["strength"] == 8 and fighter["stat_points"] == 0)
+    check("the server's fighter matches after spending",
+          server["fighter"]["stats"]["strength"] == 8)
+
+    # Shop shows "credits" and a max-affordable line, and
+    # Enter on it starts the queue on the server after the
+    # player says yes. The stub's confirm box says no, so
+    # the queue must not start here.
+    frame.notebook.SetSelection(2)  # Shop tab
+    frame.refresh_list("Shop")
+    shop_items = frame.list_items("Shop")
+    check("shop lines say credits, not points",
+          any("credits" in item for item in shop_items)
+          and not any("points" in item and "stat" not in item
+                      for item in shop_items))
+    check("shop has a max-affordable line",
+          any(item.startswith("Max affordable: Laser Blaster up")
+              for item in shop_items))
+    shop_box.SetSelection(
+        [i for i, item in enumerate(shop_items)
+         if item.startswith("Max affordable: Laser Blaster up")][0])
+    frame.activate_current()
+    check("max affordable asks first and does not start on no",
+          "max_upgrade" not in server["calls"])
 
     # The fighter-creation dialog returns kind, name and gender.
     dialog = main.CreateFighterDialog(None)

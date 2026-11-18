@@ -12,7 +12,7 @@
 -- 2. The game can only call the arena_* functions below.
 --    Each one checks who is signed in, then does one thing.
 --    The server runs every game rule itself: fights, dice
---    rolls, experience, levels, points, upgrade costs and
+--    rolls, experience, levels, credits, upgrade costs and
 --    timers, using its own clock. The game only shows what
 --    the server sends back, so editing the game cannot
 --    change a fighter's stats.
@@ -146,15 +146,30 @@ as $$
     'xp', 0,
     'hp', 100,
     'max_hp', 100,
-    'points', 0,
+    -- The upgrade currency is called "credits". Fighters
+    -- made before the rename carry "points" instead;
+    -- apply_timers converts them 1-for-1 on next sign-in.
+    'credits', 0,
     'wins', 0,
     'losses', 0,
     'weapon_name', case when p_kind = 'robot' then 'Laser Blaster' else 'Trusty Spatula' end,
     'weapon_level', 1,
     'armor_name', case when p_kind = 'robot' then 'Scrap Plating' else 'Chef Apron' end,
     'armor_level', 1,
+    -- The 5 level-up stats, all starting at 0. Unspent
+    -- stat points sit in "stat_points": 2 per level-up,
+    -- bankable, spendable any time, in any distribution.
+    'stats', '{"strength": 0, "defense": 0, "health": 0, "speed": 0, "luck": 0}'::jsonb,
+    'stat_points', 0,
+    -- New fighters need no migration.
+    'stats_migrated', true,
+    -- Respecs used: the first is free, later ones cost credits.
+    'respecs_used', 0,
     'repair_until', 0,
-    'upgrade', null
+    'upgrade', null,
+    -- Queued levels left for a max-affordable upgrade.
+    'upgrade_queue', null,
+    'upgrade_total', 0
   )
 $$;
 
@@ -169,6 +184,137 @@ as $$
   select p_fighter || jsonb_build_object('player_code', p_code, 'username', p_username)
 $$;
 
+-- ---------------------------------------------------------------
+-- Stats helpers (STATS_DESIGN.md). The server is the only
+-- judge of stats, exactly as it is of fights: the game never
+-- decides a stat, it only shows what the server sends back.
+-- ---------------------------------------------------------------
+
+-- The fighter's spendable balance. Credits first; fighters
+-- made before the rename may still carry "points", which
+-- count 1-for-1 until apply_timers converts them. A zero
+-- credits balance still falls through to points, so a
+-- fighter that has not been converted yet is never read
+-- as broke.
+create or replace function arena_private.credits_of(p_fighter jsonb)
+returns numeric
+language sql immutable
+set search_path = ''
+as $$
+  select case
+    when coalesce((p_fighter ->> 'credits')::numeric, 0) > 0
+      then (p_fighter ->> 'credits')::numeric
+    else coalesce((p_fighter ->> 'points')::numeric, 0)
+  end
+$$;
+
+-- One of the 5 stats, or 0 when the fighter has no stats yet.
+create or replace function arena_private.stat_value(p_fighter jsonb, p_stat text)
+returns integer
+language sql immutable
+set search_path = ''
+as $$
+  select coalesce((p_fighter -> 'stats' ->> p_stat)::integer, 0)
+$$;
+
+-- Max health: 100, plus 10 for every level above 1 (health
+-- always grows with level, no matter what the player
+-- chooses), plus 10 for every Health point on top.
+create or replace function arena_private.fighter_max_hp(p_fighter jsonb)
+returns integer
+language sql immutable
+set search_path = ''
+as $$
+  select 100 + 10 * ((p_fighter ->> 'level')::integer - 1)
+       + 10 * arena_private.stat_value(p_fighter, 'health')
+$$;
+
+-- Critical-hit chance in percent, diminishing returns, never
+-- a cap: 50 x Luck / (Luck + 25).
+create or replace function arena_private.crit_chance(p_luck integer)
+returns numeric
+language sql immutable
+set search_path = ''
+as $$
+  select case when coalesce(p_luck, 0) <= 0 then 0::numeric
+         else 50.0 * p_luck / (p_luck + 25) end
+$$;
+
+-- Dodge chance in percent when faster than the enemy,
+-- diminishing returns, never reaching 20 percent:
+-- 20 x advantage / (advantage + 20).
+create or replace function arena_private.dodge_chance(p_advantage integer)
+returns numeric
+language sql immutable
+set search_path = ''
+as $$
+  select case when coalesce(p_advantage, 0) <= 0 then 0::numeric
+         else 20.0 * p_advantage / (p_advantage + 20) end
+$$;
+
+-- Split stat points by fixed weights, largest remainder,
+-- ties broken in the order the weights are given. Weights
+-- are (strength, defense, health, speed, luck).
+create or replace function arena_private.distribute_points(
+  p_total integer, p_strength integer, p_defense integer,
+  p_health integer, p_speed integer, p_luck integer)
+returns jsonb
+language plpgsql immutable
+set search_path = ''
+as $$
+declare
+  v_sum integer := greatest(1, p_strength + p_defense + p_health + p_speed + p_luck);
+  v_total integer := greatest(0, coalesce(p_total, 0));
+  v_names text[] := array['strength', 'defense', 'health', 'speed', 'luck'];
+  v_weights integer[] := array[p_strength, p_defense, p_health, p_speed, p_luck];
+  v_base integer[] := array[0, 0, 0, 0, 0];
+  v_frac numeric[] := array[0, 0, 0, 0, 0];
+  v_given integer := 0;
+  v_left integer;
+  v_exact numeric;
+  i integer;
+  j integer;
+  v_out jsonb := '{}'::jsonb;
+begin
+  for i in 1..5 loop
+    v_exact := v_total * v_weights[i]::numeric / v_sum;
+    v_base[i] := floor(v_exact)::integer;
+    v_frac[i] := v_exact - v_base[i];
+    v_given := v_given + v_base[i];
+  end loop;
+  v_left := v_total - v_given;
+  -- Hand the leftover points to the largest fractions, in
+  -- order when fractions tie (earliest first).
+  while v_left > 0 loop
+    j := 1;
+    for i in 2..5 loop
+      if v_frac[i] > v_frac[j] then
+        j := i;
+      end if;
+    end loop;
+    v_base[j] := v_base[j] + 1;
+    v_frac[j] := -1;
+    v_left := v_left - 1;
+  end loop;
+  for i in 1..5 loop
+    v_out := v_out || jsonb_build_object(v_names[i], v_base[i]);
+  end loop;
+  return v_out;
+end;
+$$;
+
+-- The Scrap Rat's stats: the same 2 points per level as a
+-- fighter, split evenly across the 5 stats, so fights stay
+-- even as the fighter builds stats.
+create or replace function arena_private.creature_stats(p_level integer)
+returns jsonb
+language sql immutable
+set search_path = ''
+as $$
+  select arena_private.distribute_points(
+    2 * (greatest(1, p_level) - 1), 2, 2, 2, 2, 2)
+$$;
+
 -- Finish an upgrade or a repair whose time is up.
 create or replace function arena_private.apply_timers(
   p_fighter jsonb, p_now double precision,
@@ -180,14 +326,81 @@ declare
   f jsonb := p_fighter;
   up jsonb := p_fighter -> 'upgrade';
   repair double precision := coalesce((p_fighter ->> 'repair_until')::double precision, 0);
+  v_queue jsonb;
+  v_next integer;
+  v_total integer;
+  v_pts numeric;
+  v_pts_text text;
+  v_level integer;
+  v_grant integer;
 begin
   messages := '[]'::jsonb;
+
+  -- Credits rename, once: a fighter carrying the old
+  -- "points" balance gets it copied to "credits" 1-for-1,
+  -- and the old key goes away. After the first launch this
+  -- does nothing, because credits already exists.
+  if (f ? 'points') and not (f ? 'credits') then
+    v_pts := coalesce((f ->> 'points')::numeric, 0);
+    v_pts_text := case when v_pts = floor(v_pts)
+      then floor(v_pts)::bigint::text else v_pts::text end;
+    f := (f - 'points') || jsonb_build_object('credits', v_pts);
+    messages := messages || to_jsonb(
+      format('Your points are now called credits. You have %s credits.',
+        v_pts_text));
+  end if;
+
+  -- Stats migration, once: fighters made before stats get
+  -- 2 banked stat points for every level already earned
+  -- above level 1, and a flag so it only happens once.
+  -- Weapon and armor levels, wins, losses, credits and XP
+  -- are untouched; only the new stats fields are added.
+  if not coalesce((f ->> 'stats_migrated')::boolean, false) then
+    v_level := coalesce((f ->> 'level')::integer, 1);
+    v_grant := 2 * greatest(0, v_level - 1);
+    f := f || jsonb_build_object(
+      'stats', coalesce(f -> 'stats',
+        '{"strength": 0, "defense": 0, "health": 0, "speed": 0, "luck": 0}'::jsonb),
+      'stat_points', coalesce((f ->> 'stat_points')::integer, 0) + v_grant,
+      'stats_migrated', true,
+      'respecs_used', coalesce((f ->> 'respecs_used')::integer, 0),
+      'upgrade_queue', coalesce(f -> 'upgrade_queue', 'null'::jsonb),
+      'upgrade_total', coalesce((f ->> 'upgrade_total')::integer, 0));
+    if v_grant > 0 then
+      messages := messages || to_jsonb(
+        format('You have %s stat points to spend. Would you like to choose your stats now?',
+          v_grant));
+    end if;
+  end if;
+
   if up is not null and jsonb_typeof(up) = 'object'
      and (up ->> 'finish')::double precision <= p_now then
     f := jsonb_set(f, array[(up ->> 'slot') || '_level'], up -> 'level');
-    f := jsonb_set(f, '{upgrade}', 'null'::jsonb);
-    messages := messages || to_jsonb(
-      format('Your %s is now level %s.', up ->> 'name', up ->> 'level'));
+    v_queue := f -> 'upgrade_queue';
+    if v_queue is not null and jsonb_typeof(v_queue) = 'array'
+       and jsonb_array_length(v_queue) > 0 then
+      -- A max-affordable queue: start the next level at once.
+      v_next := (v_queue ->> 0)::integer;
+      f := jsonb_set(f, '{upgrade}', jsonb_build_object(
+        'slot', up ->> 'slot',
+        'name', up ->> 'name',
+        'level', v_next,
+        'finish', p_now + least(60 * (v_next - 1), 4 * 3600)));
+      f := jsonb_set(f, '{upgrade_queue}', v_queue - 0);
+      messages := messages || to_jsonb(
+        format('Your %s is now level %s.', up ->> 'name', up ->> 'level'));
+    else
+      f := jsonb_set(f, '{upgrade}', 'null'::jsonb);
+      f := jsonb_set(f, '{upgrade_queue}', 'null'::jsonb);
+      v_total := coalesce((f ->> 'upgrade_total')::integer, 0);
+      f := jsonb_set(f, '{upgrade_total}', '0'::jsonb);
+      messages := messages || to_jsonb(
+        format('Your %s is now level %s.', up ->> 'name', up ->> 'level'));
+      if v_total > 1 then
+        messages := messages || to_jsonb(
+          format('All %s levels are done.', v_total));
+      end if;
+    end if;
   end if;
   if repair > 0 and repair <= p_now then
     f := f || jsonb_build_object('hp', f -> 'max_hp', 'repair_until', 0);
@@ -498,8 +711,14 @@ $$;
 
 -- One fight against a Scrap Rat at the fighter's level. The
 -- same rules as game_logic.fight, run on the server with the
--- server's own dice. p_opponent_code is only recorded in the
--- history, when the fight was started from "Fight a player".
+-- server's own dice. Stats apply here: the faster side hits
+-- first every round (a tie goes to the fighter), a faster
+-- side may dodge, Luck may crit for x1.5, and no single hit
+-- may deal more than 75% of the target's max health. The
+-- Scrap Rat gets the same 2 stat points per level as a
+-- fighter, split evenly, so fights stay even. p_opponent_code
+-- is only recorded in the history, when the fight was started
+-- from "Fight a player".
 create or replace function public.arena_fight(
   p_token text, p_opponent_code text default null)
 returns jsonb
@@ -515,20 +734,46 @@ declare
   v_now double precision := arena_private.now_epoch();
   v_name text;
   lvl integer;
+  -- Fighter stats.
+  v_str integer;
+  v_def integer;
+  v_hea integer;
+  v_spd integer;
+  v_luk integer;
+  -- Scrap Rat stats (same 2 points per level, even split).
+  c_stats jsonb;
+  c_str integer;
+  c_hea integer;
+  c_def integer;
+  c_spd integer;
+  c_luk integer;
   c_hp integer;
+  c_max_hp integer;
   c_dmg integer;
+  c_soak integer;
+  c_speed integer;
+  c_crit numeric;
+  c_dodge numeric;
   dmg integer;
   def integer;
+  f_max_hp integer;
+  f_speed integer;
+  f_crit numeric;
+  f_dodge numeric;
   f_hp integer;
+  fighter_first boolean;
   round_no integer := 0;
+  v_turn integer;
+  v_fighter_turn boolean;
   hit integer;
-  hurt integer;
+  v_crit boolean;
   lines jsonb;
   xp_gain integer;
-  pts_gain numeric;
+  cr_gain numeric;
   cur_xp integer;
   new_level integer;
   new_max_hp integer;
+  new_stat_points integer;
   gained integer := 0;
   lost numeric;
   wait integer;
@@ -558,39 +803,106 @@ begin
         format('Your fighter is still repairing. %s left.',
           arena_private.format_time((f ->> 'repair_until')::double precision - v_now)),
         'You can visit the hangout or browse the shop while you wait.'),
-      'xp', 0, 'points', 0, 'levels_gained', 0,
+      'xp', 0, 'credits', 0, 'levels_gained', 0,
       'messages', t.messages,
       'fighter', arena_private.fighter_out(f, r.player_code, r.username));
   end if;
 
   lvl := (f ->> 'level')::integer;
-  c_hp := 30 + 15 * (lvl - 1);
-  c_dmg := 4 + 2 * (lvl - 1);
+  v_str := arena_private.stat_value(f, 'strength');
+  v_def := arena_private.stat_value(f, 'defense');
+  v_hea := arena_private.stat_value(f, 'health');
+  v_spd := arena_private.stat_value(f, 'speed');
+  v_luk := arena_private.stat_value(f, 'luck');
+  c_stats := arena_private.creature_stats(lvl);
+  c_str := (c_stats ->> 'strength')::integer;
+  c_hea := (c_stats ->> 'health')::integer;
+  c_def := (c_stats ->> 'defense')::integer;
+  c_spd := (c_stats ->> 'speed')::integer;
+  c_luk := (c_stats ->> 'luck')::integer;
+  c_max_hp := 30 + 15 * (lvl - 1) + 10 * c_hea;
+  c_hp := c_max_hp;
+  c_dmg := 4 + 2 * (lvl - 1) + 2 * c_str;
+  c_soak := c_def;
+  c_speed := 5 + c_spd;
+  c_crit := arena_private.crit_chance(c_luk);
+  c_dodge := arena_private.dodge_chance(c_speed - (5 + v_spd));
   dmg := (case when f ->> 'kind' = 'robot' then 12 else 10 end)
-         + 5 * ((f ->> 'weapon_level')::integer - 1) + 2 * (lvl - 1);
-  def := 2 + 2 * ((f ->> 'armor_level')::integer - 1) + (lvl - 1);
+         + 5 * ((f ->> 'weapon_level')::integer - 1) + 2 * (lvl - 1) + 2 * v_str;
+  def := 2 + 2 * ((f ->> 'armor_level')::integer - 1) + (lvl - 1) + 2 * v_def;
+  f_max_hp := arena_private.fighter_max_hp(f);
+  f_speed := 5 + v_spd;
+  f_crit := arena_private.crit_chance(v_luk);
+  f_dodge := arena_private.dodge_chance(f_speed - c_speed);
   f_hp := (f ->> 'hp')::integer;
+  fighter_first := f_speed >= c_speed;
   lines := jsonb_build_array(format('A Scrap Rat appears! Level %s.', lvl));
 
   while f_hp > 0 and c_hp > 0 and round_no < 20 loop
     round_no := round_no + 1;
-    hit := dmg + floor(random() * 4)::integer;
-    c_hp := c_hp - hit;
-    lines := lines || to_jsonb(format('Round %s: %s hits the Scrap Rat for %s.',
-      round_no, v_name, hit));
-    exit when c_hp <= 0;
-    hurt := greatest(1, c_dmg + floor(random() * 3)::integer - (def / 2));
-    f_hp := f_hp - hurt;
-    lines := lines || to_jsonb(format('Round %s: The Scrap Rat hits %s for %s.',
-      round_no, v_name, hurt));
+    for v_turn in 1..2 loop
+      exit when f_hp <= 0 or c_hp <= 0;
+      v_fighter_turn := (fighter_first and v_turn = 1)
+        or (not fighter_first and v_turn = 2);
+      if v_fighter_turn then
+        if random() * 100 < c_dodge then
+          lines := lines || to_jsonb(format(
+            'Round %s: The Scrap Rat dodges! Your hit misses.', round_no));
+        else
+          hit := dmg + floor(random() * 4)::integer;
+          v_crit := random() * 100 < f_crit;
+          if v_crit then
+            hit := round(hit * 1.5)::integer;
+          end if;
+          hit := greatest(1, hit - c_soak);
+          hit := least(hit, floor(0.75 * c_max_hp)::integer);
+          c_hp := c_hp - hit;
+          if v_crit then
+            lines := lines || to_jsonb(format(
+              'Round %s: Critical hit! %s hits the Scrap Rat for %s.',
+              round_no, v_name, hit));
+          else
+            lines := lines || to_jsonb(format(
+              'Round %s: %s hits the Scrap Rat for %s.',
+              round_no, v_name, hit));
+          end if;
+        end if;
+      else
+        if random() * 100 < f_dodge then
+          lines := lines || to_jsonb(format(
+            'Round %s: %s dodges! The Scrap Rat''s hit misses.',
+            round_no, v_name));
+        else
+          hit := c_dmg + floor(random() * 3)::integer;
+          v_crit := random() * 100 < c_crit;
+          if v_crit then
+            hit := round(hit * 1.5)::integer;
+          end if;
+          hit := greatest(1, hit - (def / 2));
+          hit := least(hit, floor(0.75 * f_max_hp)::integer);
+          f_hp := f_hp - hit;
+          if v_crit then
+            lines := lines || to_jsonb(format(
+              'Round %s: Critical hit! The Scrap Rat hits %s for %s.',
+              round_no, v_name, hit));
+          else
+            lines := lines || to_jsonb(format(
+              'Round %s: The Scrap Rat hits %s for %s.',
+              round_no, v_name, hit));
+          end if;
+        end if;
+      end if;
+    end loop;
   end loop;
 
   if c_hp <= 0 then
     v_won := true;
     xp_gain := 20 + 5 * lvl;
-    pts_gain := 10 + 5 * lvl;
+    cr_gain := 10 + 5 * lvl;
     cur_xp := (f ->> 'xp')::integer + xp_gain;
     new_level := lvl;
+    -- Health always grows with level: +10 max HP per level,
+    -- whatever the player chooses.
     new_max_hp := (f ->> 'max_hp')::integer;
     while cur_xp >= 100 * new_level loop
       cur_xp := cur_xp - 100 * new_level;
@@ -598,33 +910,40 @@ begin
       new_max_hp := new_max_hp + 10;
       gained := gained + 1;
     end loop;
+    new_stat_points := coalesce((f ->> 'stat_points')::integer, 0)
+      + 2 * gained;
     f := f || jsonb_build_object(
       'xp', cur_xp,
       'level', new_level,
       'max_hp', new_max_hp,
       'hp', greatest(1, f_hp),
-      'points', (f ->> 'points')::numeric + pts_gain,
+      'credits', arena_private.credits_of(f) + cr_gain,
+      'stat_points', new_stat_points,
       'wins', (f ->> 'wins')::integer + 1);
-    lines := lines || to_jsonb(format('You won! You earned %s experience and %s points.',
-      xp_gain, pts_gain));
+    f := f - 'points';
+    lines := lines || to_jsonb(format('You won! You earned %s experience and %s credits.',
+      xp_gain, cr_gain));
     if gained > 0 then
-      lines := lines || to_jsonb(format('You are now level %s!', new_level));
+      lines := lines || to_jsonb(format(
+        'You are now level %s! Your health grew to %s. You have %s stat points to spend.',
+        new_level, new_max_hp, new_stat_points));
     end if;
   else
     v_won := false;
     xp_gain := 0;
-    lost := least((f ->> 'points')::numeric, 5);
-    pts_gain := -lost;
+    lost := least(arena_private.credits_of(f), 5);
+    cr_gain := -lost;
     wait := least(300 * lvl, 4 * 3600);
     f := f || jsonb_build_object(
-      'points', (f ->> 'points')::numeric - lost,
+      'credits', arena_private.credits_of(f) - lost,
       'losses', (f ->> 'losses')::integer + 1,
       'hp', 1,
       'repair_until', v_now + wait);
+    f := f - 'points';
     lines := lines || to_jsonb(format('You lost. Your fighter needs repairs, %s.',
       arena_private.format_time(wait)));
     if lost > 0 then
-      lines := lines || to_jsonb(format('You lost %s points.', lost));
+      lines := lines || to_jsonb(format('You lost %s credits.', lost));
     end if;
     lines := lines || to_jsonb('While repairs run, you can still visit the hangout.'::text);
   end if;
@@ -633,7 +952,7 @@ begin
   set fighter = f, last_fight_at = now(), updated_at = now()
   where player_code = v_code;
 
-  v_result := jsonb_build_object('won', v_won, 'xp', xp_gain, 'points', pts_gain);
+  v_result := jsonb_build_object('won', v_won, 'xp', xp_gain, 'credits', cr_gain);
   if v_opp ~ '^[0-9]{4}$' then
     v_result := v_result || jsonb_build_object('opponent_code', v_opp);
   end if;
@@ -643,7 +962,7 @@ begin
     'won', v_won,
     'lines', lines,
     'xp', xp_gain,
-    'points', pts_gain,
+    'credits', cr_gain,
     'levels_gained', gained,
     'messages', t.messages,
     'fighter', arena_private.fighter_out(f, r.player_code, r.username));
@@ -663,7 +982,7 @@ declare
   f jsonb;
   lvl integer;
   cost numeric;
-  points numeric;
+  credits numeric;
 begin
   if v_code is null then
     return arena_private.signed_out();
@@ -686,25 +1005,274 @@ begin
   end if;
   lvl := (f ->> (p_slot || '_level'))::integer;
   cost := round(25 * power(1.5::numeric, lvl - 1));
-  points := (f ->> 'points')::numeric;
-  if points < cost then
+  credits := arena_private.credits_of(f);
+  if credits < cost then
     return jsonb_build_object(
-      'error', format('That upgrade costs %s points and you have %s points.', cost, points),
+      'error', format('That upgrade costs %s credits and you have %s credits.', cost, credits),
       'messages', t.messages,
       'fighter', arena_private.fighter_out(f, r.player_code, r.username));
   end if;
   f := f || jsonb_build_object(
-    'points', points - cost,
+    'credits', credits - cost,
     'upgrade', jsonb_build_object(
       'slot', p_slot,
       'name', f ->> (p_slot || '_name'),
       'level', lvl + 1,
       'finish', arena_private.now_epoch() + least(60 * lvl, 4 * 3600)));
+  f := f - 'points';
   update arena_private.players set fighter = f, updated_at = now()
   where player_code = v_code;
   perform arena_private.log_event(v_code, 'upgrade_' || p_slot,
     jsonb_build_object('level', lvl + 1, 'cost', cost), 'server');
   return jsonb_build_object(
+    'messages', t.messages,
+    'fighter', arena_private.fighter_out(f, r.player_code, r.username));
+end;
+$$;
+
+-- Spend one banked stat point. The game sends only the
+-- in-memory session token plus one stat name. The server
+-- checks the session, the stat name, and that a point is
+-- available. Banked points may all go into one stat: stay
+-- on the line and spend again, one point per call. The
+-- spoken line always says how many points are left.
+create or replace function public.arena_spend_stat(p_token text, p_stat text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_code text := arena_private.session_player(p_token);
+  r arena_private.players%rowtype;
+  t record;
+  f jsonb;
+  v_stat text := lower(btrim(coalesce(p_stat, '')));
+  v_stats jsonb;
+  v_value integer;
+  v_points integer;
+  v_line text;
+begin
+  if v_code is null then
+    return arena_private.signed_out();
+  end if;
+  if v_stat not in ('strength', 'defense', 'health', 'speed', 'luck') then
+    return jsonb_build_object('error', 'Pick strength, defense, health, speed or luck.');
+  end if;
+  select * into r from arena_private.players where player_code = v_code for update;
+  select * into t from arena_private.apply_timers(r.fighter, arena_private.now_epoch());
+  f := t.fighter;
+  v_points := coalesce((f ->> 'stat_points')::integer, 0);
+  if v_points <= 0 then
+    return jsonb_build_object(
+      'error', 'You have no stat points to spend right now.',
+      'messages', t.messages,
+      'fighter', arena_private.fighter_out(f, r.player_code, r.username));
+  end if;
+  v_stats := coalesce(f -> 'stats',
+    '{"strength": 0, "defense": 0, "health": 0, "speed": 0, "luck": 0}'::jsonb);
+  v_value := coalesce((v_stats ->> v_stat)::integer, 0) + 1;
+  v_stats := jsonb_set(v_stats, array[v_stat], to_jsonb(v_value));
+  f := f || jsonb_build_object('stats', v_stats, 'stat_points', v_points - 1);
+  if v_stat = 'health' then
+    -- A Health point adds 10 max HP and heals 10 right away.
+    f := f || jsonb_build_object(
+      'max_hp', arena_private.fighter_max_hp(f),
+      'hp', least((f ->> 'hp')::integer + 10, arena_private.fighter_max_hp(f)));
+  end if;
+  v_line := case v_stat
+    when 'strength' then format('Strength is now %s. One more point adds 2 damage.', v_value)
+    when 'defense' then format('Defense is now %s. One more point soaks 1 more damage.', v_value)
+    when 'health' then format('Health is now %s. One more point adds 10 health.', v_value)
+    when 'speed' then format('Speed is now %s. One more point makes you a little faster.', v_value)
+    when 'luck' then format('Luck is now %s. One more point adds a little critical chance.', v_value)
+  end;
+  if v_points - 1 > 0 then
+    v_line := v_line || format(' You have %s stat %s left.',
+      v_points - 1, case when v_points - 1 = 1 then 'point' else 'points' end);
+  else
+    v_line := v_line || ' That was your last stat point.';
+  end if;
+  update arena_private.players set fighter = f, updated_at = now()
+  where player_code = v_code;
+  perform arena_private.log_event(v_code, 'spend_stat',
+    jsonb_build_object('stat', v_stat), 'server');
+  return jsonb_build_object(
+    'message', v_line,
+    'messages', t.messages,
+    'fighter', arena_private.fighter_out(f, r.player_code, r.username));
+end;
+$$;
+
+-- Reset all 5 stats, refunding every spent point to unspent
+-- stat points. The first respec is free; later ones cost
+-- 100 credits. Level, weapon, armor, wins, losses and
+-- fighter kind are never touched.
+create or replace function public.arena_respec(p_token text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_code text := arena_private.session_player(p_token);
+  r arena_private.players%rowtype;
+  t record;
+  f jsonb;
+  v_stats jsonb;
+  v_spent integer;
+  v_points integer;
+  v_used integer;
+  v_cost integer;
+  v_new_max_hp integer;
+  v_line text;
+begin
+  if v_code is null then
+    return arena_private.signed_out();
+  end if;
+  select * into r from arena_private.players where player_code = v_code for update;
+  select * into t from arena_private.apply_timers(r.fighter, arena_private.now_epoch());
+  f := t.fighter;
+  v_stats := coalesce(f -> 'stats',
+    '{"strength": 0, "defense": 0, "health": 0, "speed": 0, "luck": 0}'::jsonb);
+  v_spent := coalesce((v_stats ->> 'strength')::integer, 0)
+    + coalesce((v_stats ->> 'defense')::integer, 0)
+    + coalesce((v_stats ->> 'health')::integer, 0)
+    + coalesce((v_stats ->> 'speed')::integer, 0)
+    + coalesce((v_stats ->> 'luck')::integer, 0);
+  if v_spent <= 0 then
+    return jsonb_build_object(
+      'error', 'You have no stat points spent to reset.',
+      'messages', t.messages,
+      'fighter', arena_private.fighter_out(f, r.player_code, r.username));
+  end if;
+  v_used := coalesce((f ->> 'respecs_used')::integer, 0);
+  v_cost := case when v_used <= 0 then 0 else 100 end;
+  if v_cost > arena_private.credits_of(f) then
+    return jsonb_build_object(
+      'error', format('A respec costs %s credits and you have %s credits.',
+        v_cost, arena_private.credits_of(f)),
+      'messages', t.messages,
+      'fighter', arena_private.fighter_out(f, r.player_code, r.username));
+  end if;
+  v_points := coalesce((f ->> 'stat_points')::integer, 0) + v_spent;
+  v_new_max_hp := 100 + 10 * ((f ->> 'level')::integer - 1);
+  f := f || jsonb_build_object(
+    'stats', '{"strength": 0, "defense": 0, "health": 0, "speed": 0, "luck": 0}'::jsonb,
+    'stat_points', v_points,
+    'respecs_used', v_used + 1,
+    'credits', arena_private.credits_of(f) - v_cost,
+    'max_hp', v_new_max_hp,
+    'hp', least((f ->> 'hp')::integer, v_new_max_hp));
+  f := f - 'points';
+  if v_cost > 0 then
+    v_line := format('Your stats are reset. You have %s stat points to spend. That respec cost %s credits.',
+      v_points, v_cost);
+  else
+    v_line := format('Your stats are reset. You have %s stat points to spend. Your first respec was free.',
+      v_points);
+  end if;
+  update arena_private.players set fighter = f, updated_at = now()
+  where player_code = v_code;
+  perform arena_private.log_event(v_code, 'respec',
+    jsonb_build_object('cost', v_cost, 'refunded', v_spent), 'server');
+  return jsonb_build_object(
+    'message', v_line,
+    'messages', t.messages,
+    'fighter', arena_private.fighter_out(f, r.player_code, r.username));
+end;
+$$;
+
+-- Max affordable: buy as many levels of one slot as the
+-- credits AND the 4-hour cap allow, in one go. The server
+-- works out the queue itself, deducts the full cost up
+-- front, and runs the levels one after another. Once started
+-- the queue runs to the end: there is no cancelling, so the
+-- game must confirm first (see game_logic.max_affordable).
+create or replace function public.arena_max_upgrade(p_token text, p_slot text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_code text := arena_private.session_player(p_token);
+  r arena_private.players%rowtype;
+  t record;
+  f jsonb;
+  v_level integer;
+  v_credits numeric;
+  v_levels jsonb := '[]'::jsonb;
+  v_cost numeric := 0;
+  v_seconds integer := 0;
+  v_c numeric;
+  v_s integer;
+  v_count integer;
+  v_first integer;
+  v_name text;
+  v_line text;
+begin
+  if v_code is null then
+    return arena_private.signed_out();
+  end if;
+  if p_slot is null or p_slot not in ('weapon', 'armor') then
+    return jsonb_build_object('error', 'Pick weapon or armor to upgrade.');
+  end if;
+  select * into r from arena_private.players where player_code = v_code for update;
+  select * into t from arena_private.apply_timers(r.fighter, arena_private.now_epoch());
+  f := t.fighter;
+  if f is distinct from r.fighter then
+    update arena_private.players set fighter = f, updated_at = now()
+    where player_code = v_code;
+  end if;
+  if f -> 'upgrade' is not null and jsonb_typeof(f -> 'upgrade') = 'object' then
+    return jsonb_build_object(
+      'error', 'An upgrade is already running. Wait for it to finish first.',
+      'messages', t.messages,
+      'fighter', arena_private.fighter_out(f, r.player_code, r.username));
+  end if;
+  v_level := (f ->> (p_slot || '_level'))::integer;
+  v_credits := arena_private.credits_of(f);
+  v_name := f ->> (p_slot || '_name');
+  loop
+    v_c := round(25 * power(1.5::numeric, v_level - 1));
+    v_s := least(60 * v_level, 4 * 3600);
+    exit when v_cost + v_c > v_credits;
+    exit when v_seconds + v_s > 4 * 3600;
+    v_levels := v_levels || to_jsonb(v_level + 1);
+    v_cost := v_cost + v_c;
+    v_seconds := v_seconds + v_s;
+    v_level := v_level + 1;
+  end loop;
+  v_count := jsonb_array_length(v_levels);
+  if v_count <= 0 then
+    return jsonb_build_object(
+      'error', format('Your next %s level costs %s credits and you have %s credits.',
+        v_name, round(25 * power(1.5::numeric, (f ->> (p_slot || '_level'))::integer - 1)), v_credits),
+      'messages', t.messages,
+      'fighter', arena_private.fighter_out(f, r.player_code, r.username));
+  end if;
+  v_first := (v_levels ->> 0)::integer;
+  f := f || jsonb_build_object(
+    'credits', v_credits - v_cost,
+    'upgrade', jsonb_build_object(
+      'slot', p_slot,
+      'name', v_name,
+      'level', v_first,
+      'finish', arena_private.now_epoch() + least(60 * (v_first - 1), 4 * 3600)),
+    'upgrade_queue', v_levels - 0,
+    'upgrade_total', v_count);
+  f := f - 'points';
+  v_line := format('Your %s will go up %s %s for %s credits. All %s %s will be done in %s.',
+    v_name, v_count, case when v_count = 1 then 'level' else 'levels' end,
+    v_cost, v_count, case when v_count = 1 then 'level' else 'levels' end,
+    arena_private.format_time(v_seconds));
+  update arena_private.players set fighter = f, updated_at = now()
+  where player_code = v_code;
+  perform arena_private.log_event(v_code, 'max_upgrade_' || p_slot,
+    jsonb_build_object('levels', v_count, 'cost', v_cost), 'server');
+  return jsonb_build_object(
+    'message', v_line,
     'messages', t.messages,
     'fighter', arena_private.fighter_out(f, r.player_code, r.username));
 end;
@@ -953,6 +1521,9 @@ revoke all on function public.arena_sign_out(text) from public;
 revoke all on function public.arena_state(text) from public;
 revoke all on function public.arena_fight(text, text) from public;
 revoke all on function public.arena_start_upgrade(text, text) from public;
+revoke all on function public.arena_spend_stat(text, text) from public;
+revoke all on function public.arena_respec(text) from public;
+revoke all on function public.arena_max_upgrade(text, text) from public;
 revoke all on function public.arena_set_voice(text, text) from public;
 revoke all on function public.arena_lookup_player(text, text) from public;
 revoke all on function public.arena_list_online(text) from public;
@@ -968,6 +1539,9 @@ grant execute on function public.arena_sign_out(text) to anon, authenticated;
 grant execute on function public.arena_state(text) to anon, authenticated;
 grant execute on function public.arena_fight(text, text) to anon, authenticated;
 grant execute on function public.arena_start_upgrade(text, text) to anon, authenticated;
+grant execute on function public.arena_spend_stat(text, text) to anon, authenticated;
+grant execute on function public.arena_respec(text) to anon, authenticated;
+grant execute on function public.arena_max_upgrade(text, text) to anon, authenticated;
 grant execute on function public.arena_set_voice(text, text) to anon, authenticated;
 grant execute on function public.arena_lookup_player(text, text) to anon, authenticated;
 grant execute on function public.arena_list_online(text) to anon, authenticated;
