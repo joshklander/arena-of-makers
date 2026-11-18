@@ -27,6 +27,17 @@ limit, just wait an hour and try again.
 The updater itself is not updated by this program. When a new updater
 comes out, download it again from the repository or from Google Drive
 and replace this file.
+
+Exe mode
+--------
+When this updater is itself a frozen exe (built by the GitHub
+workflow, next to ArenaOfMakers.exe), it does NOT sync source files.
+Instead it checks the latest GitHub Release, downloads the new
+ArenaOfMakers.exe, and swaps it in for the old one. Your .env file
+and arena_save.json live next to the exe and are never touched.
+The game must be closed first: Windows will not let a running exe
+be replaced, so the updater says so plainly and you press the
+button again after closing the game.
 """
 
 import base64
@@ -34,6 +45,7 @@ import hashlib
 import json
 import os
 import shutil
+import sys
 import tempfile
 import threading
 import urllib.error
@@ -134,6 +146,79 @@ def get_tree():
     if status == 200 and isinstance(payload, dict):
         return [t for t in payload.get("tree", []) if t.get("type") == "blob"]
     return None
+
+
+# --------------------------------------------------------------------------
+# GitHub Release helpers (exe mode only)
+# --------------------------------------------------------------------------
+
+RELEASES_URL = API_BASE + "/releases/latest"
+GAME_EXE_NAME = "ArenaOfMakers.exe"
+UPDATER_EXE_NAME = "ArenaOfMakersUpdater.exe"
+
+
+def get_latest_release():
+    """Return (tag, asset download url for the game exe), or (None, None)."""
+    status, payload = api_get("/releases/latest")
+    if status != 200 or not isinstance(payload, dict):
+        return None, None
+    for asset in payload.get("assets", []):
+        if asset.get("name") == GAME_EXE_NAME:
+            return payload.get("tag_name"), asset.get("browser_download_url")
+    return payload.get("tag_name"), None
+
+
+def local_exe_version_file(game_dir):
+    return os.path.join(game_dir, "arena_version.json")
+
+
+def update_exe_from_release(game_dir, log):
+    """Download the newest game exe from GitHub Releases and swap it in.
+
+    Returns True when the game exe now matches the latest release.
+    Never touches .env, arena_save.json, or arena_log.txt.
+    """
+    game_dir = os.path.abspath(game_dir)
+    game_exe = os.path.join(game_dir, GAME_EXE_NAME)
+    tag, download_url = get_latest_release()
+    if tag is None:
+        log("Could not reach GitHub to check for updates. Try again later.")
+        return False
+    if download_url is None:
+        log("The latest release has no game exe yet. Try again later.")
+        return False
+    # Remember which release we already have, in the same version file
+    # the source updater uses, so a later check is quick.
+    stored_head, _files = load_state(game_dir)
+    if stored_head == tag and os.path.exists(game_exe):
+        log("You already have the newest version (%s). Nothing to download." % tag)
+        return True
+    log("A newer version is on GitHub (%s). Downloading the new game." % tag)
+    tmp = os.path.join(tempfile.gettempdir(), GAME_EXE_NAME)
+    req = urllib.request.Request(download_url, method="GET")
+    req.add_header("User-Agent", "ArenaOfMakersUpdater")
+    try:
+        with urllib.request.urlopen(req, timeout=300) as resp:
+            with open(tmp, "wb") as f:
+                shutil.copyfileobj(resp, f)
+    except Exception as e:
+        log("Could not download the new game: %s" % e)
+        return False
+    # Windows will not replace a running exe. Try the swap; if it
+    # fails, say so plainly instead of deleting anything.
+    try:
+        os.makedirs(game_dir, exist_ok=True)
+        if os.path.exists(game_exe):
+            os.replace(tmp, game_exe)
+        else:
+            shutil.move(tmp, game_exe)
+    except OSError:
+        log("Close Arena of Makers first, then press Check for updates again. "
+            "The new version is downloaded and ready to install.")
+        return False
+    save_state(game_dir, tag, {GAME_EXE_NAME})
+    log("Update finished. You now have %s. Your save and your .env file were left alone." % tag)
+    return True
 
 
 def blob_hash(data):
@@ -296,6 +381,10 @@ def sync_game(game_dir, log):
     log(text) is called with plain-word progress lines. Returns True when
     the local game now matches GitHub, False otherwise.
     """
+    # Frozen exe mode: update the bundled exe from GitHub Releases,
+    # never by syncing source files over it.
+    if getattr(sys, "frozen", False):
+        return update_exe_from_release(game_dir, log)
     game_dir = os.path.abspath(game_dir)
     installed = is_installed(game_dir)
     head = get_head_sha()
