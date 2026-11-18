@@ -40,11 +40,16 @@ username, a gender (which picks the voice), your own player
 code (4 digits, like 4827, or press "Make a code for
 me"), and whether you are a robot or a chef. Your username is
 also your fighter's name. Friends look you up by your player
-code, from the More tab. Accounts live only in Supabase, in that same one shared
-`players` table (see `supabase_schema.sql`). There is no
-local account file: every launch you type your username and
-player code, and the game looks you up online. No password
-is involved, and `.env` is never pushed to GitHub.
+code, from the More tab. You also pick a password: the
+password box hides what you type, and the password is never
+saved, logged or shown. Tick "Keep me signed in on this
+computer" to skip signing in next time (it can be turned off
+in Settings). Accounts live only in Supabase, and the server
+runs every game rule, so the game cannot be edited to cheat.
+The server's setup lives in `supabase/migrations/`, and
+Supabase applies new migration files by itself when they
+reach the `main` branch on GitHub (see `supabase/README.md`).
+`.env` is never pushed to GitHub.
 
 Everything lives in one shared Supabase table, called
 `players`: one row per player, holding the account (username,

@@ -23,7 +23,7 @@ Run it with:  python main.py
 It needs Python, wxPython, edge-tts and pygame. Arena of Makers is
 online-only, and the server is the only judge of a fighter: every
 fight, upgrade and timer runs on the Supabase server, through the
-arena_* functions in supabase_schema.sql. The game shows what the
+arena_* functions in supabase/migrations/. The game shows what the
 server sends back, so changing the game cannot change a fighter.
 Players sign in with a username, a player code and a password.
 The password box hides what is typed, and the password is never

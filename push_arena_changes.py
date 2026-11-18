@@ -39,7 +39,6 @@ TRACKED_FILES = [
     "README.md",
     "test_key.py",
     "test_online_save.py",
-    "supabase_schema.sql",
     "SOUNDS.md",
     "sounds.py",
     "build_exe.py",
@@ -107,6 +106,12 @@ def main():
         message = "Update from Joshua (" + stamp + ")"
 
     to_add = [name for name in TRACKED_FILES if os.path.isfile(name)]
+    # The server's setup: config.toml, README.md and every
+    # migration file. Supabase applies new migration files by
+    # itself once they reach main. supabase/.gitignore keeps the
+    # CLI's temporary files out.
+    if os.path.isdir("supabase"):
+        to_add.append("supabase")
     log_included = False
     if os.path.isfile(LOG_FILE):
         to_add.append(LOG_FILE)

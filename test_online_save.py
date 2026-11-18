@@ -236,8 +236,8 @@ def main_test():
         answers["arena_state"] = urllib.error.HTTPError(
             good_url, 404, "Not Found", {}, None)
         _f, _m, error = online_save.refresh_state(config)
-        check("missing server functions point to the schema file",
-              "supabase_schema.sql" in error)
+        check("missing server functions are said plainly",
+              "server is missing a part" in error)
         answers["arena_state"] = OSError("no network")
         _f, _m, error = online_save.refresh_state(config)
         check("no network is said plainly", "Could not reach" in error)

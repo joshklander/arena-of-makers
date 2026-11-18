@@ -3,7 +3,7 @@
 Arena of Makers is exclusively online, and the server is the
 only judge of what a fighter has. The game cannot read or
 write the players table at all. It can only call the arena_*
-functions set up by supabase_schema.sql, and the server runs
+functions set up by supabase/migrations/, and the server runs
 every game rule itself: fights, dice rolls, experience,
 levels, credits, upgrade costs and timers. The game shows
 what the server sends back. That is what stops cheating:
@@ -37,8 +37,9 @@ import urllib.request
 
 
 SCHEMA_MISSING = (
-    "The game's server is not set up yet. Run supabase_schema.sql "
-    "in Supabase, SQL Editor."
+    "The game's server is missing a part this version of the game "
+    "needs. The server updates itself from GitHub within a few "
+    "minutes of a push, so try again soon."
 )
 
 
@@ -76,7 +77,7 @@ def rpc(config, name, args, timeout=15):
             return None, "Supabase rejected the key."
         if error.code == 404:
             logging.error("Server call %s failed: the function is missing. "
-                          "Run supabase_schema.sql.", name)
+                          "Check that supabase/migrations deployed.", name)
             return None, SCHEMA_MISSING
         logging.error("Server call %s failed: Supabase answered HTTP %d.",
                       name, error.code)

@@ -193,8 +193,8 @@ def test_connection(config, timeout=15):
             )
             return True, (
                 "Supabase answered and the key was accepted, but the "
-                "game's server is not set up yet. Run "
-                "supabase_schema.sql in Supabase, SQL Editor."
+                "game's server is not set up yet. It sets itself up "
+                "from supabase/migrations when a push reaches GitHub."
             )
         logging.error("Online test: Supabase answered with HTTP %d.", error.code)
         return False, "Supabase answered with an error (HTTP %d)." % error.code
