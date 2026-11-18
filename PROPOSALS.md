@@ -96,7 +96,7 @@ No multiplayer work has started yet.
 
 ---
 
-## Progress tracker — updated 2026-11-17 evening
+## Progress tracker — updated 2026-11-18 evening
 
 Read this first. Each phase is Done, In progress, or Not started.
 Update this table (and the date) whenever a phase changes, so the next
@@ -105,23 +105,25 @@ person — Maren, Josh's Muse, or Kiro — can pick up without getting lost.
 | Phase | Status | What it means | Evidence / next step |
 | --- | --- | --- | --- |
 | 1. Personal save out of the public repo | Done — 2026-11-17 | `arena_save.json` (Josh's Freddy) removed; `.gitignore` added; `arena_log.txt` stays public on purpose | Commits 8a0399e, b3faebf |
-| 2. Turn-by-turn voice for fights | Done — 2026-11-17 | Manual fights speak each round, ~1 sec pause, then win/loss; idle fights stay short, result only | Commit f5d876e; confirmed working by Makenna 2026-11-17 |
+| 2. Turn-by-turn voice for fights | Done — 2026-11-17 | Manual fights speak each round, ~1 sec pause, then win/loss; idle fights stay short, result only | Commit f5d876e; confirmed working by Makenna 2026-11-17. Update 2026-11-17 evening: idle fights now also narrate round by round, with fight sounds (commit 17240de) |
 | 3. Online-only game, Supabase saves | Done — 2026-11-17 | No local JSON; saves in shared Supabase `players` table; launch key check with plain-words error; account creation (username, gender, player code, robot/chef); own-data export only | Commit f5d876e; project `arena-of-makers`, ref `yurdzzinmibgnoanxtkm` |
 | 4. Password sign-in + anti-cheat | Done — 2026-11-17 (Kiro) | Username + 4-digit code + password (min 8 chars, bcrypt hash only, 5 wrong tries lock 10 min); session token in memory only; private `arena_private` schema, game can only call `arena_*` functions | Commit 29ad230 "Kiro made changes." |
 | 5. Auto-login ("Keep me signed in") | Done — 2026-11-17 (Kiro) | Remember token in Windows Credential Manager via `keyring`, password never stored; token rotates each launch, expires after 30 days unused | Commit 29ad230; new file `remember.py` |
 | 6. Tables created + Josh's account | Done — 2026-11-17 | Josh used Kiro CLI tools to create the tables from the new schema and created his account on his computer | Working live; no SQL Editor run needed |
 | 7. Sound effects + music — code | Done — 2026-11-17 | `sounds.py` wired in; robot laser/servo/clank, chef chop/sizzle/pan clang, win/loss, lofi music loop; on by default, turn-offable in Settings | Commit f5d876e; picks in SOUNDS.md, all royalty-free (CC0 / Pixabay) |
-| 8. Sound effects + music — files | Done — 9 of 9 converted (2026-11-17/18) | **All 9 effects + music converted and in `sounds/` in Maren's local copy.** Robot: Freesound CC0 laser/servo/clank (as before). Chef chop: Kenney RPG knifeSlice; pan clang: Kenney Impact metal hit; win: Kenney sax fanfare (volume raised, it was quiet); loss: Mixkit sad trombone (Kenney has no trombone); sizzle: DailySounds "Sizzling Eggs", a real sizzle (Kenney has none — the pot clink was only a placeholder). Music: Incompetech Jazz Brunch as `music_loop.mp3` (+ staged `music_hangout.mp3`), Mesmerizing Galaxy Loop as staged `music_fight.mp3` — CC-BY, credit lines in SOUNDS.md; the two-track switch is NOT coded yet. **Upload pending: the audio files are NOT on GitHub yet.** Maren's GitHub connector only pushes text (UTF-8 snapshots) and cannot push binary WAV/MP3 files; `gh` is not logged in and raw git has no credentials on her side. | NEXT: upload the 11 audio files to `sounds/` on main with a git push from a machine with GitHub credentials (e.g. Josh's computer), together with the SOUNDS.md/PROPOSALS.md updates; then fix the SOUNDS.md intro line that says the files are pending |
+| 8. Sound effects + music — files | Done — on GitHub 2026-11-18 | **All 9 effects + music are in `sounds/` on main** (commit dc3923b, uploaded through the GitHub website by Makenna, signed in as Katprincess2169). Robot: Freesound CC0 laser/servo/clank (as before). Chef chop: Kenney RPG knifeSlice; pan clang: Kenney Impact metal hit; win: Kenney sax fanfare (volume raised, it was quiet); loss: Mixkit sad trombone (Kenney has no trombone); sizzle: DailySounds "Sizzling Eggs", a real sizzle (Kenney has none — the pot clink was only a placeholder). Music: Incompetech Jazz Brunch as `music_loop.mp3` (+ `music_hangout.mp3`), Mesmerizing Galaxy Loop as `music_fight.mp3` — CC-BY, credit lines in SOUNDS.md. **One swap pending:** the robot laser was replaced 2026-11-18 with Kenney's electric zap1 (see Phase 17 note below); the new `robot_laser.wav` cannot be pushed by Maren's tools (binary), so it waits in a zip for the browser upload, like these 11 files did. | NEXT: upload the new `robot_laser.wav` (zip `arena-robot-laser-zap1.zip` in the work folder) to `sounds/` on main through the GitHub website |
 | 9. Makenna pulls the update + creates her account | In progress | Makenna still has to pull commit 29ad230 onto her own computer, install new requirement `keyring`, and create her account (4-digit code + password, robot fighter) | NEXT: pull, run, create account, test turn-by-turn + sign-in |
 | 10. Exe build + Release | In progress | Updater ready for exe mode; local PyInstaller build ready (`build_exe.bat`); GitHub Actions workflow file still needs Josh (admin) to add it — Maren got 403 twice | NEXT: test straight Python first, then build exe; Josh adds `.github/workflows/build-exe.yml` |
-| 11. Per-location music | Not started | Different music track per location (arena, hangout, shop, etc.), like Magic Worlds' kitchen and other places | Idea from Makenna, 2026-11-17 |
-| 12. Music for auto-fighting, effects only for manual | Not started | Background track while idle/auto fighting is on; just fight sound effects when fighting manually | Idea from Makenna, 2026-11-17 |
+| 11. Per-location music | Done — 2026-11-18 | Two tracks wired in: hangout plays `music_hangout.mp3` (Jazz Brunch, cafe), fights play `music_fight.mp3` (Mesmerizing Galaxy Loop, sci-fi). `music_loop.mp3` stays as the hangout alias. **Music start rule now in the code:** music never starts at launch or on tab switch — only for the hangout or auto-fighting. | Bug fix, reported by Makenna 2026-11-18: cafe music was starting at launch with no activity. Fixed in `sounds.py` (`start_music(track)`, `current_music_track`) + `main.py` (`_refresh_music`, `_in_hangout`) |
+| 12. Music for auto-fighting, effects only for manual | Done — 2026-11-18 | Auto-fighting plays the fight track; a manual fight has sound effects only, no music. Turning music or sound effects off in Settings stops the music. | Same fix as Phase 11; tests in `test_main_smoke.py` (no music at launch, hangout/fight/manual) |
 | 13. More creatures / NPCs | Not started | Only Scrap Rat exists now. Randomly create different types of animals and other NPC fighters, including NPC robot fighters and NPC chef fighters, so robots can fight chefs and chefs can fight robots and vice versa. In idle and manual fighting. Opponents must scale with level — health and everything scales proportionally to the player's stats — so fights stay even and fair for everybody, even at really high levels. Note: Scrap Rat already scales a little (hp 30+15 per level, damage 4+2 per level in `game_logic.py`), but new NPCs need the same proportional scaling. | Idea from Makenna, 2026-11-17 |
 | 14. Random challenges from online players | Not started | When multiple players are online, they can randomly challenge another online player, in idle and/or manual fighting. **Fair matchmaking (Makenna, 2026-11-17): even with infinite progression and scaling, never match a player against somebody way too high for their level or way too low for their level — opponents must stay near the player's level so fights stay fair. Multiplayer warning, not a block: a player can still attack someone higher than them, but the game must warn them first (e.g. "This player might be too hard for you to beat") if it looks like an unfair match, so it does not block multiplayer.** Note: right now `arena_fight` only fights a Scrap Rat at the player's level; a player code is only recorded, not actually fought as a player yet. | Idea from Makenna, 2026-11-17 |
 | 15. Attack notification + counterattack | Not started | If a player is attacked by somebody, on their next launch the game should let them know who attacked them — showing the attacker's username and/or player code — and give them the option to land a counterattack. Example: if Makenna (username Katprincess, player code 2169) attacks Josh, Josh should be told on his next launch that Katprincess / 2169 attacked him. | Idea from Makenna, 2026-11-17 |
 | 16. Windows notifications outside the app | Not started | Windows push notifications outside the app, only if the user grants permission, so they arrive when the app is closed. Uses: (1) when somebody attacks you, (2) when a timed upgrade finishes — e.g. a 20-minute upgrade (upgrade time is 60 seconds x level, capped at 4 hours), so you can close the app instead of sitting in the hangout, get notified when it is done, and go back in. Note: no notification code exists yet; closed-app notifications need a background helper / scheduled check, not just in-app toasts, because nothing is running when the app is closed. | Idea from Makenna, 2026-11-17 |
+| 17. Bug fixes — 2026-11-18 (music, laser, Yes/No, updater) | Done — 2026-11-18 | **Music:** no auto-start at launch; two tracks wired (Phase 11/12). **Laser:** robot laser replaced with Kenney's electric zap1 (1.02 s, CC0) — the new `robot_laser.wav` still needs the browser upload (see Phase 8). **Max affordable:** the Yes/No question is now a real dialog with Yes as the default button, Y/N keys, Escape = No — Enter on Yes was heard as No by the old MessageBox, so the game said "Nothing was bought". Server max-upgrade logic, cost formula and 4-hour cap unchanged. **Updater:** a fresh install lands in exactly one "Arena of Makers" folder (no nesting); the updater finds the real install one level down or in the parent and offers "Check for updates"; a fresh install always writes its version note. New headless tests in `test_updater.py`. | Reported by Makenna 2026-11-18, with Josh present; fixed in `main.py`, `sounds.py`, `arena_of_makers_updater.py`, `SOUNDS.md`, `test_main_smoke.py`, `test_updater.py` |
+| 18. Hangout quests | Not started — NEXT after the bug fixes | Hangout quests so the hangout actually means something. Design already drafted (`HANGOUT_QUESTS_DESIGN.md` in the work folder): endlessly generated quests, six givers (Bolt, Marge, Pip, Dot, Gus, Belle) each with their own Edge voice, Start/Stop in the hangout, music only on Start, spoken progress update every 5 minutes, quests 2–4 hours max, Stop saves to the server, rewards and reputation with each giver. **Sequencing (Makenna, 2026-11-18): do NOT start quests until the bug fixes above are pushed and she has tested them.** | NEXT: start after Makenna confirms the bug fixes by pulling latest main |
 
-**Next up, in order:** (a) Makenna pulls + creates her account (Phase 9), (b) upload the 11 converted audio files to `sounds/` on main (Phase 8 — needs a git push from a machine with GitHub credentials; Maren's connector cannot push binaries), (c) test the exe build (Phase 10). Phases 11–16 are ideas for after that, not started yet.
+**Next up, in order:** (a) Makenna pulls latest main and tests the four bug fixes (Phase 17) + creates her account (Phase 9), (b) upload the new `robot_laser.wav` to `sounds/` on main (Phase 8), (c) hangout quests (Phase 18), (d) test the exe build (Phase 10).
 
 ## Status update — 2026-11-17 evening (Makenna, with Maren)
 
@@ -157,3 +159,53 @@ This section is the handover note. If anyone's tokens/credits run out — Maren'
 - Keep writing changes and new ideas in this file, with the date. That is how Josh's Muse, Kiro, or Maren can pick up where the last one left off if tokens/credits run out.
 - Do not overwrite Kiro's password/auto-login/anti-cheat work in commit 29ad230. Do not put `.env`, passwords, tokens, or personal save files in the repo. `.env` stays next to the game/exe, never bundled in.
 - Supabase project: `arena-of-makers`, ref `yurdzzinmibgnoanxtkm`, region Americas. Makenna owns it; Josh has full read/write developer access.
+
+## Status update — 2026-11-18 (Makenna, with Josh and Maren)
+
+### Four bugs Makenna reported while playing, all fixed
+
+1. **Music started at launch.** The cafe track (Jazz Brunch) played as
+   soon as the game opened, with no activity. Cause: `main.py` called
+   `start_music()` in `__init__`. Fixed: no music at launch; the two
+   tracks are now wired in (`sounds.py` plays `music_hangout.mp3` for
+   the hangout and `music_fight.mp3` for fights) and music only starts
+   for an activity — entering the hangout, or auto-fighting. A manual
+   fight has sound effects only. For now "Visit the hangout" on the
+   More tab is the hangout's Start: entering starts the cafe music,
+   leaving the More tab (or Escape to Home) stops it. When quests add
+   a real Start/Stop, the music will follow that instead.
+2. **Robot laser was not electric enough.** The old laser was a 0.17 s
+   retro beep. Replaced with Kenney's zap1 (Digital Audio pack, CC0),
+   a 1.02 s electric zap, converted to WAV. The new `robot_laser.wav`
+   still needs the browser upload to `sounds/` (see Phase 8) — Maren's
+   tools cannot push audio files.
+3. **Max affordable said "Nothing was bought" after Yes.** Makenna
+   was told she could afford 3 laser levels, pressed Enter on Yes,
+   and the game said nothing was bought. Cause: the question was a
+   plain `wx.MessageBox`, whose default button is up to the platform,
+   so Enter did not land as Yes. Fixed: a real Yes/No dialog with Yes
+   as the default button, Y for yes, N for no, Escape for no. The
+   server max-upgrade logic, the cost formula and the 4-hour cap were
+   not changed.
+4. **Updater: nested folders, and no "Check for updates".** Installing
+   wanted Arena of Makers inside Arena of Makers inside Arena of
+   Makers, and after reinstalling the updater only offered Install.
+   Cause: the default folder added "Arena of Makers" even when the
+   updater already sat inside such a folder, and the button only
+   checked whether the version note existed in the folder shown — so
+   after the nesting mess it looked in the wrong folder. Fixed: the
+   folder is normalised to exactly one "Arena of Makers"; the updater
+   finds the real install one level down or in the parent and points
+   the folder box at it; a fresh install always writes its version
+   note. `.env` and the updater's own state file are never touched.
+   To test: point the updater at the folder holding the game (or its
+   parent) — it should say "Check for updates", not "Install".
+
+### What Makenna decided next
+
+- **She is waiting for these four fixes to be pushed before playing
+  any more.** After she pulls latest main and confirms them, the next
+  work is hangout quests (Phase 18), so the hangout actually means
+  something. Quests were NOT started in this run, on purpose.
+- She still has to pull latest main and create her account
+  (Katprincess / 2169, robot fighter) — Phase 9.

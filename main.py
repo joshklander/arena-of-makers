@@ -367,6 +367,58 @@ class FindPlayerDialog(wx.Dialog):
         return code or None
 
 
+class _ConfirmDialog(wx.Dialog):
+    """A yes/no question with Yes as the default button.
+
+    A plain wx.MessageBox left the default button up to the
+    platform, and Enter on Yes was heard as No: a player
+    pressed Enter on Yes for a max-affordable queue and the
+    game answered "Nothing was bought" (2026-11-18). This
+    dialog makes Yes explicit: it is the default button and
+    it starts with the focus, Y answers yes, N answers no,
+    and Escape answers no. The question itself is spoken
+    aloud, so the player always knows what Yes means."""
+
+    def __init__(self, parent, text):
+        super().__init__(parent, title=APP_TITLE)
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        question = wx.StaticText(
+            self,
+            label=text + " Press Y for yes, or N for no.",
+        )
+        question.Wrap(560)
+        sizer.Add(question, 0, wx.ALL, 10)
+        row = wx.BoxSizer(wx.HORIZONTAL)
+        yes_button = wx.Button(self, wx.ID_YES, "Yes")
+        yes_button.SetDefault()
+        yes_button.Bind(
+            wx.EVT_BUTTON, lambda event: self.EndModal(wx.ID_YES)
+        )
+        row.Add(yes_button, 0, wx.ALL, 5)
+        no_button = wx.Button(self, wx.ID_NO, "No")
+        no_button.Bind(
+            wx.EVT_BUTTON, lambda event: self.EndModal(wx.ID_NO)
+        )
+        row.Add(no_button, 0, wx.ALL, 5)
+        sizer.Add(row, 0, wx.ALL | wx.ALIGN_RIGHT, 5)
+        self.SetSizer(sizer)
+        sizer.Fit(self)
+        self.Bind(wx.EVT_CHAR_HOOK, self._on_key)
+        # Focus only once the dialog is actually showing:
+        # focusing a control in a hidden dialog trips a wx
+        # assertion, the same as in CreateFighterDialog.
+        wx.CallAfter(yes_button.SetFocus)
+
+    def _on_key(self, event):
+        key = event.GetKeyCode()
+        if key in (ord("y"), ord("Y")):
+            self.EndModal(wx.ID_YES)
+        elif key in (ord("n"), ord("N"), wx.WXK_ESCAPE):
+            self.EndModal(wx.ID_NO)
+        else:
+            event.Skip()
+
+
 class MainFrame(wx.Frame):
     """One window, five tabs, one list on each tab."""
 
@@ -409,6 +461,13 @@ class MainFrame(wx.Frame):
         self.random = random.Random()
         self.idle_fighting = False
         self.last_idle_fight = 0.0
+        # Music rule (Makenna, 2026-11-17): music only plays for
+        # one activity at a time — the hangout, or auto-fighting.
+        # It never starts at launch and never starts just from
+        # switching tabs. _in_hangout is True from "Visit the
+        # hangout" until the player leaves the More tab.
+        self._in_hangout = False
+        self._last_tab = "Home"
         self.sound_on = True
         self.music_on = True
         self.volume = 40
@@ -472,10 +531,10 @@ class MainFrame(wx.Frame):
         # Sound effects and music use the same mixer the voice
         # already opened. With no sound files in sounds/ this just
         # logs that nothing was loaded, and the game plays on.
+        # No music at launch: it only starts for an activity
+        # (the hangout, or auto-fighting), never on its own.
         self.sounds.load()
         self.sounds.set_volume(self.volume)
-        if self.sound_on and self.music_on:
-            self.sounds.start_music()
 
         self.refresh_all()
         self.announce("Welcome to Arena of Makers, %s." % fighter["name"])
@@ -1069,6 +1128,9 @@ class MainFrame(wx.Frame):
         also records the fight. Only the headless tests, which
         have no server, run the fight here, and nothing they do
         is ever saved."""
+        # Music follows the fight: an auto-fight keeps the fight
+        # track playing, a manual fight has sound effects only.
+        self._refresh_music()
         if self.online_config:
             result, error = online_save.fight(
                 self.online_config, opponent_code=opponent_code
@@ -1145,20 +1207,43 @@ class MainFrame(wx.Frame):
             self.announce("Idle fighting on. Press Escape to stop.")
         else:
             self.announce("Idle fighting off.")
+        self._refresh_music()
         self._log_online(
             "idle_on" if self.idle_fighting else "idle_off"
         )
         self.refresh_all()
 
+    def _refresh_music(self):
+        """Play the music for what the player is doing right
+        now, or stop it. Hangout music in the hangout, fight
+        music while auto-fighting is on, nothing anywhere else:
+        a manual fight has sound effects only, switching tabs
+        starts nothing, and launch starts nothing. Turning
+        music or sound effects off in Settings stops it too.
+        Asking for the track that is already playing does not
+        restart it, so the loop never jumps."""
+        if not self.sound_on or not self.music_on:
+            self.sounds.stop_music()
+            return
+        if self.idle_fighting:
+            self.sounds.start_music("fight")
+        elif self._in_hangout:
+            self.sounds.start_music("hangout")
+        else:
+            self.sounds.stop_music()
+
     def _confirm(self, text):
         """Ask yes or no with a plain-words question. Returns
         True only when the player says yes. Used before any
         spending that cannot be undone: a max-affordable queue
-        and a respec."""
-        yes_no = getattr(wx, "YES_NO", 0)
-        question = getattr(wx, "ICON_QUESTION", 0)
-        yes = getattr(wx, "ID_YES", 1)
-        return wx.MessageBox(text, APP_TITLE, yes_no | question) == yes
+        and a respec. The dialog is a real Yes/No dialog with
+        Yes as the default button, not a MessageBox: Enter on
+        Yes must mean yes."""
+        dialog = _ConfirmDialog(self, text)
+        try:
+            return dialog.ShowModal() == wx.ID_YES
+        finally:
+            dialog.Destroy()
 
     def do_upgrade(self, slot):
         """Start a timed upgrade. Online, the server checks the
@@ -1348,9 +1433,20 @@ class MainFrame(wx.Frame):
         elif tab == "Shop" and item.startswith("Upgrading "):
             self.announce(game_logic.upgrade_status(fighter) or "No upgrade is running.")
         elif tab == "More" and item == "Visit the hangout":
+            # Entering the hangout starts its music: this is
+            # the hangout's Start, until quests give it a
+            # Start/Stop of their own. Leaving the More tab
+            # stops it again (see on_tab_changed).
+            self._in_hangout = True
+            self._refresh_music()
+            if self.sound_on and self.music_on:
+                music_note = "The cafe music is playing."
+            else:
+                music_note = "The music is off, so it is quiet."
             self.announce(
                 "You are in the hangout. Other players will join here when "
-                "multiplayer arrives. For now, enjoy the quiet."
+                "multiplayer arrives. %s Press Escape to leave the hangout."
+                % music_note
             )
         elif tab == "More" and item.startswith("Hear repair status"):
             if game_logic.is_repairing(fighter):
@@ -1402,16 +1498,12 @@ class MainFrame(wx.Frame):
         elif tab == "Settings" and item.startswith("Sound effects:"):
             self.sound_on = not self.sound_on
             self.sounds.set_enabled(self.sound_on)
-            if self.sound_on and self.music_on:
-                self.sounds.start_music()
+            self._refresh_music()
             self.announce("Sound effects %s." % ("on" if self.sound_on else "off"))
             self.refresh_all()
         elif tab == "Settings" and item.startswith("Background music:"):
             self.music_on = not self.music_on
-            if self.music_on and self.sound_on:
-                self.sounds.start_music()
-            else:
-                self.sounds.stop_music()
+            self._refresh_music()
             self.announce("Background music %s." % ("on" if self.music_on else "off"))
             self.refresh_all()
         elif tab == "Settings" and item.startswith("Keep me signed in"):
@@ -1436,7 +1528,16 @@ class MainFrame(wx.Frame):
     def on_tab_changed(self, event):
         event.Skip()
         tab = self.current_tab()
+        if self._last_tab == "More" and tab != "More":
+            # Leaving the More tab leaves the hangout.
+            self._in_hangout = False
+        self._last_tab = tab
         self.refresh_list(tab)
+        # Switching tabs never starts music on its own; this
+        # only stops it when the player has left the activity
+        # it belongs to (or keeps the fight track while
+        # auto-fighting).
+        self._refresh_music()
         self.announce(self.TAB_HINTS[tab])
 
     def on_key(self, event):

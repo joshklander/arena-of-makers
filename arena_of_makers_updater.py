@@ -63,6 +63,7 @@ API_BASE = "https://api.github.com/repos/" + REPO
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 FOLDER_STATE_FILE = os.path.join(SCRIPT_DIR, "arena_updater_state.json")
 VERSION_FILE_NAME = "arena_version.json"
+GAME_FOLDER_NAME = "Arena of Makers"
 
 # Files the updater itself uses. They are never written by a sync, even if
 # a future version of the repository ever listed them, because overwriting
@@ -75,9 +76,39 @@ PROTECTED_FILES = {
 }
 
 
+def normalise_install_folder(folder):
+    """One "Arena of Makers" folder, never a nest of them.
+
+    A fresh install once wanted Arena of Makers inside Arena
+    of Makers inside Arena of Makers (2026-11-18): the default
+    added the name even when the updater was already sitting
+    inside a folder with that name, and a manual zip
+    extraction could add another level. Collapsing repeated
+    trailing folders of that name fixes both, and keeps a
+    folder the player picked by hand as they picked it."""
+    folder = (folder or "").strip()
+    if not folder:
+        folder = os.path.join(SCRIPT_DIR, GAME_FOLDER_NAME)
+    folder = os.path.abspath(folder)
+    parts = folder.split(os.sep)
+    while (
+        len(parts) > 1
+        and parts[-1].lower() == GAME_FOLDER_NAME.lower()
+        and parts[-2].lower() == GAME_FOLDER_NAME.lower()
+    ):
+        parts.pop()
+    return os.sep.join(parts)
+
+
 def default_install_folder():
-    """Where the game goes unless the user picks somewhere else."""
-    return os.path.join(SCRIPT_DIR, "Arena of Makers")
+    """Where the game goes unless the user picks somewhere else.
+
+    If the updater already sits inside a folder called Arena
+    of Makers, that folder is the install folder — appending
+    the name again would nest it one level deeper."""
+    return normalise_install_folder(
+        os.path.join(SCRIPT_DIR, GAME_FOLDER_NAME)
+    )
 
 
 def load_folder_choice():
@@ -86,7 +117,7 @@ def load_folder_choice():
         with open(FOLDER_STATE_FILE, "r", encoding="utf-8") as f:
             folder = json.load(f).get("install_folder")
         if folder:
-            return folder
+            return normalise_install_folder(folder)
     except (OSError, ValueError, AttributeError):
         pass
     return default_install_folder()
@@ -95,7 +126,7 @@ def load_folder_choice():
 def save_folder_choice(folder):
     try:
         with open(FOLDER_STATE_FILE, "w", encoding="utf-8") as f:
-            json.dump({"install_folder": folder}, f)
+            json.dump({"install_folder": normalise_install_folder(folder)}, f)
         return True
     except OSError:
         return False
@@ -286,9 +317,47 @@ def save_state(game_dir, head_sha, files):
         return False
 
 
+def _folder_has_game(folder):
+    """True when a folder holds a real install: the version
+    note the updater writes, plus main.py. The note alone is
+    not enough — a stray note in the wrong folder used to make
+    the updater think a game was installed when it was not."""
+    return (
+        os.path.exists(version_path(folder))
+        and os.path.exists(os.path.join(folder, "main.py"))
+    )
+
+
 def is_installed(game_dir):
     """True when this folder already has a game installed by this updater."""
-    return os.path.exists(version_path(game_dir))
+    return _folder_has_game(game_dir)
+
+
+def find_installed_folder(folder):
+    """Find the folder holding an installed game, or None.
+
+    The folder shown may not be the one the game ended up in:
+    after the nested-folder mess the version note could sit
+    one level down, in <folder>/Arena of Makers, or the shown
+    folder could itself be the inner one while the game sits
+    in its parent. Checks the shown folder, one level down,
+    and the parent, in that order. Returns the folder that
+    holds the game, so the updater can point at it and offer
+    "Check for updates" instead of "Install"."""
+    folder = normalise_install_folder(folder)
+    candidates = [folder, os.path.join(folder, GAME_FOLDER_NAME)]
+    parent = os.path.dirname(folder)
+    if parent and parent != folder:
+        candidates.append(parent)
+    seen = set()
+    for candidate in candidates:
+        candidate = os.path.abspath(candidate)
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        if _folder_has_game(candidate):
+            return candidate
+    return None
 
 
 def plan_sync(tree, game_dir):
@@ -341,20 +410,26 @@ def download_zipball(dest):
 
 
 def install_from_zip(zip_path, game_dir, log):
-    """Unpack a GitHub zipball into the game folder. Returns (ok, message).
+    """Unpack a GitHub zipball into the game folder.
 
-    Files are copied over one by one. Nothing already in the folder is
-    ever removed, so saves, settings and any other local-only files
-    survive an install untouched.
+    Returns (ok, message, installed_files). Files are copied
+    over one by one. Nothing already in the folder is ever
+    removed, so saves, settings and any other local-only files
+    survive an install untouched. The zipball's top folder is
+    stripped, so the game lands flat in the folder given, not
+    nested one level deeper. installed_files is the set of
+    files written, so a fresh install can write its version
+    note even when the file list from GitHub is not available.
     """
+    installed = set()
     try:
         with zipfile.ZipFile(zip_path, "r") as zf:
             names = zf.namelist()
             if not names:
-                return False, "The downloaded game file was empty."
+                return False, "The downloaded game file was empty.", installed
             top = names[0].split("/")[0]
             if zf.testzip() is not None:
-                return False, "The downloaded game file was damaged."
+                return False, "The downloaded game file was damaged.", installed
             tmpdir = tempfile.mkdtemp(prefix="arena-makers-install-")
             try:
                 zf.extractall(tmpdir)
@@ -368,11 +443,12 @@ def install_from_zip(zip_path, game_dir, log):
                         d = os.path.join(game_dir, rel)
                         os.makedirs(os.path.dirname(d), exist_ok=True)
                         shutil.copy2(s, d)
+                        installed.add(rel.replace(os.sep, "/"))
             finally:
                 shutil.rmtree(tmpdir, ignore_errors=True)
-        return True, ""
+        return True, "", installed
     except Exception as e:
-        return False, "Could not unpack the game: %s" % e
+        return False, "Could not unpack the game: %s" % e, installed
 
 
 def sync_game(game_dir, log):
@@ -385,8 +461,16 @@ def sync_game(game_dir, log):
     # never by syncing source files over it.
     if getattr(sys, "frozen", False):
         return update_exe_from_release(game_dir, log)
-    game_dir = os.path.abspath(game_dir)
-    installed = is_installed(game_dir)
+    game_dir = normalise_install_folder(game_dir)
+    # The game may be installed one level down, or in the
+    # parent, after the nested-folder mess: find it and use
+    # that folder, so an update runs against the real game.
+    found = find_installed_folder(game_dir)
+    if found is not None:
+        if found != game_dir:
+            log("Found your game in %s. Using that folder." % found)
+        game_dir = found
+    installed = found is not None
     head = get_head_sha()
     if head is None:
         log("Could not reach GitHub to check for updates. Try again later.")
@@ -400,18 +484,31 @@ def sync_game(game_dir, log):
             log(message)
             return False
         try:
-            ok, message = install_from_zip(tmp, game_dir, log)
+            ok, message, installed_files = install_from_zip(tmp, game_dir, log)
             if not ok:
                 log(message)
                 return False
         finally:
             if os.path.exists(tmp):
                 os.remove(tmp)
+        # Always write the version note, so the next launch
+        # offers "Check for updates" instead of "Install".
+        # The file list from GitHub is preferred; when it is
+        # not available, the files just installed will do.
         tree = get_tree()
         if tree is not None:
-            save_state(game_dir, head,
-                       {e["path"] for e in tree if e["path"] not in PROTECTED_FILES})
-        log("Arena of Makers is installed. You can play it now.")
+            files = {
+                e["path"] for e in tree if e["path"] not in PROTECTED_FILES
+            }
+        else:
+            files = installed_files
+        if not save_state(game_dir, head, files):
+            log("Installed the game, but could not save the version "
+                "note, so the updater may offer to install again. "
+                "Try running the updater once more.")
+            return False
+        log("Arena of Makers is installed in %s. You can play it now."
+            % game_dir)
         return True
 
     stored_head, _files = load_state(game_dir)
@@ -505,15 +602,26 @@ if wx is not None:  # pragma: no cover - needs a display and wxPython
             self.Show()
 
         def refresh_status(self):
-            if is_installed(self.game_dir):
-                _head, files = load_state(self.game_dir)
+            found = find_installed_folder(self.game_dir)
+            if found is not None:
+                if found != os.path.abspath(self.game_dir):
+                    # The game was one level down, or in the
+                    # parent: point the folder box at it, so the
+                    # next launch finds it straight away.
+                    self.game_dir = found
+                    self.folder_field.SetValue(found)
+                    save_folder_choice(found)
+                _head, files = load_state(found)
                 self.status.SetLabel(
-                    "Arena of Makers is installed in this folder "
-                    "(%d files)." % len(files))
+                    "Arena of Makers is installed in %s "
+                    "(%d files)." % (found, len(files)))
                 self.action_button.SetLabel("Check for updates")
             else:
                 self.status.SetLabel(
-                    "Arena of Makers is not installed in this folder yet.")
+                    "Arena of Makers is not installed in %s yet. "
+                    "The updater looked for the version note and "
+                    "main.py there, and one folder down, and did "
+                    "not find them." % self.game_dir)
                 self.action_button.SetLabel("Install Arena of Makers")
 
         def say(self, text):
@@ -526,7 +634,8 @@ if wx is not None:  # pragma: no cover - needs a display and wxPython
             self.folder_field.Enable(not working)
 
         def on_folder_typed(self, _event):
-            self.game_dir = self.folder_field.GetValue().strip()
+            self.game_dir = normalise_install_folder(
+                self.folder_field.GetValue())
             save_folder_choice(self.game_dir)
             self.refresh_status()
 
@@ -536,7 +645,7 @@ if wx is not None:  # pragma: no cover - needs a display and wxPython
                 defaultPath=self.game_dir,
                 style=wx.DD_DEFAULT_STYLE | wx.DD_NEW_DIR_BUTTON)
             if dlg.ShowModal() == wx.ID_OK:
-                self.game_dir = dlg.GetPath()
+                self.game_dir = normalise_install_folder(dlg.GetPath())
                 self.folder_field.SetValue(self.game_dir)
                 save_folder_choice(self.game_dir)
                 self.refresh_status()
@@ -545,7 +654,8 @@ if wx is not None:  # pragma: no cover - needs a display and wxPython
         def on_action(self, _event):
             if self.working:
                 return
-            self.game_dir = self.folder_field.GetValue().strip()
+            self.game_dir = normalise_install_folder(
+                self.folder_field.GetValue())
             if not self.game_dir:
                 self.status.SetLabel(
                     "Choose an install folder first, then press the button again.")

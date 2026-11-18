@@ -33,9 +33,15 @@ SOUND_FILES = {
     "pan_clang": ("pan_clang.wav", None),
     "win": ("win_jingle.wav", None),
     "loss": ("loss_sound.wav", None),
-    # The music loop. An .mp3 is expected (Pixabay downloads are mp3);
-    # a .wav with the same base name is accepted too.
+    # The music. Two tracks, one per place: the cozy cafe track for
+    # the hangout (Jazz Brunch) and the sci-fi track for fights
+    # (Mesmerizing Galaxy Loop). "music" is the old single name and
+    # stays as an alias for the hangout track, so older code and
+    # tests keep working: music_loop.mp3 is the same file as
+    # music_hangout.mp3.
     "music": ("music_loop.mp3", None),
+    "music_hangout": ("music_hangout.mp3", None),
+    "music_fight": ("music_fight.mp3", None),
 }
 
 MUSIC_VOLUME_FACTOR = 0.5  # Music plays at half the effects volume.
@@ -62,6 +68,10 @@ class SoundBank:
         self._sounds = {}
         self._music = None
         self._music_channel = None
+        # Music track per place: {"hangout": sound, "fight": sound}.
+        self._tracks = {}
+        # Which track is looping now: "hangout", "fight", or None.
+        self._music_name = None
         self.enabled = True
         self._volume = 0.4  # effects volume, 0.0 to 1.0
 
@@ -108,8 +118,13 @@ class SoundBank:
             except Exception:
                 pass
             self._sounds[name] = sound
-            if name == "music":
+            if name in ("music", "music_hangout"):
+                # The named hangout file wins over the old alias,
+                # because SOUND_FILES lists "music" first.
+                self._tracks["hangout"] = sound
                 self._music = sound
+            elif name == "music_fight":
+                self._tracks["fight"] = sound
         logging.info(
             "Sounds: loaded %d of %d: %s.",
             len(self._sounds),
@@ -125,7 +140,7 @@ class SoundBank:
         for name, sound in self._sounds.items():
             try:
                 level = self._volume
-                if name == "music":
+                if name in ("music", "music_hangout", "music_fight"):
                     level *= MUSIC_VOLUME_FACTOR
                 sound.set_volume(level)
             except Exception:
@@ -190,26 +205,49 @@ class SoundBank:
     def play_loss(self):
         return self.play("loss")
 
-    def start_music(self):
-        """Start the background music loop. Returns False when
-        there is no music file, sounds are off, or the mixer
-        cannot play it. The music uses its own channel, so it
-        never interrupts the voice narration."""
-        if not self.enabled or self._music is None:
+    @property
+    def current_music_track(self):
+        """Which music track is looping now: "hangout", "fight",
+        or None when nothing is playing."""
+        return self._music_name
+
+    def start_music(self, track="hangout"):
+        """Start one background music loop. track is "hangout"
+        (the cafe track) or "fight" (the sci-fi track); with no
+        track given it plays the hangout track, as before.
+        Returns False when there is no music file for that
+        track, sounds are off, or the mixer cannot play it.
+        Asking for the track that is already playing just
+        returns True, so switching tabs or starting another
+        fight never restarts the loop. The music uses its own
+        channel, so it never interrupts the voice narration."""
+        if track not in ("hangout", "fight"):
+            track = "hangout"
+        if not self.enabled:
             return False
+        sound = self._tracks.get(track)
+        if sound is None:
+            return False
+        if self._music_name == track and self._music_channel is not None:
+            return True
+        self.stop_music()
         try:
-            self._music.set_volume(self._volume * MUSIC_VOLUME_FACTOR)
+            sound.set_volume(self._volume * MUSIC_VOLUME_FACTOR)
         except Exception:
             pass
         try:
             channel = self._pygame.mixer.Channel(2)
-            channel.play(self._music, loops=-1)
+            channel.play(sound, loops=-1)
             self._music_channel = channel
+            self._music = sound
+            self._music_name = track
             return True
         except Exception:
             pass
         try:
-            self._music.play(loops=-1)
+            sound.play(loops=-1)
+            self._music = sound
+            self._music_name = track
             return True
         except Exception:
             return False
@@ -227,3 +265,4 @@ class SoundBank:
                 self._music.stop()
             except Exception:
                 pass
+        self._music_name = None

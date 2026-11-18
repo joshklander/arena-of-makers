@@ -1,14 +1,18 @@
 # Sounds and music — Arena of Makers
 
 **All 9 sound effects plus the music are in the `sounds/` folder
-next to `main.py` in Maren's local copy (added 2026-11-17/18), and
-SOUNDS.md documents them below. The audio files themselves are not
-on GitHub yet — Maren's GitHub connector cannot push binary files —
-so until they are uploaded (see PROPOSALS.md Phase 8), a fresh pull
-still has only the README in `sounds/`.** Once the audio files land,
-the game loads them automatically — no downloading needed, no code
-change needed. If a file is missing, the game just skips it and logs
-one plain-words line, so it still runs fine but silent.
+on GitHub, on main (uploaded 2026-11-18, commit dc3923b), and
+SOUNDS.md documents them below.** The game loads them
+automatically — no downloading needed, no code change needed. If
+a file is missing, the game just skips it and logs one
+plain-words line, so it still runs fine but silent.
+
+**One file is not on GitHub yet:** `robot_laser.wav` was replaced
+2026-11-18 with a more electric zap (see the table below). Maren's
+GitHub tools cannot push binary files, so the new file is in a zip
+(`arena-robot-laser-zap1.zip`, in the work folder) waiting for the
+browser upload, like the 11 sounds were. Until it is uploaded, a
+fresh pull still has the old retro laser.
 
 The Freesound picks from the first version of this file did not all
 work out: only the 3 robot sounds could be downloaded from Freesound
@@ -45,7 +49,7 @@ sound is used anywhere.
 
 | File | What it is | Used for | Source | Author | Licence |
 | --- | --- | --- | --- | --- | --- |
-| `robot_laser.wav` | Retro video game sfx - Laser, 0.17 s, 15 KB | Robot fighter hits | https://freesound.org/people/OwlStorm/sounds/404796/ | OwlStorm (credit Ashe Kirk / Owlish Media if you like) | CC0 |
+| `robot_laser.wav` | Electric zap, 1.02 s, 88 KB — converted from OGG, volume 0.9 (the recording is loud) | Robot fighter hits | Kenney Digital Audio pack, `Audio/zap1.ogg` — https://kenney.nl/assets/digital-audio | Kenney | CC0 |
 | `robot_servo.wav` | Servo 5, 0.75 s, 71 KB | Creature appears, robot fighter | https://freesound.org/s/740243/ | JoontheFloof | CC0 |
 | `robot_clank.wav` | snd_metal_smash.wav — a hard metallic crash, 1.67 s, 157 KB | Scrap Rat hits a robot fighter | https://freesound.org/people/gristi/sounds/562198/ | gristi | CC0 |
 | `chef_chop.wav` | Knife slice, 0.60 s, 104 KB — converted from OGG | Chef fighter hits | Kenney RPG Audio pack, `Audio/knifeSlice.ogg` — https://kenney.nl/assets/rpg-audio | Kenney | CC0 |
@@ -57,25 +61,33 @@ sound is used anywhere.
 | `music_hangout.mp3` | Jazz Brunch, 5:23, 9.9 MB (same file as `music_loop.mp3`) | **Staged for the future two-track change:** cozy café music for the hangout | Incompetech, same as above | Kevin MacLeod | CC-BY 4.0 — credit required, see below |
 | `music_fight.mp3` | Mesmerizing Galaxy Loop, 1:33, 2.9 MB | **Staged for the future two-track change:** sci-fi music for fights | Incompetech — https://incompetech.com/music/royalty-free/mp3-royaltyfree/Mesmerizing%20Galaxy%20Loop.mp3 | Kevin MacLeod | CC-BY 4.0 — credit required, see below |
 
-## Music — how it works right now, and what is staged
+## Music — how it works now (two tracks, wired in 2026-11-18)
 
-- **Right now** the game only reads `music_loop.mp3` (`sounds.py`,
-  `SOUND_FILES["music"]`), and plays it everywhere. That file is
-  Jazz Brunch, the cozy café track — it is the hangout track as
-  well as the current only track.
-- `music_hangout.mp3` and `music_fight.mp3` are **staged, not
-  wired in yet**. They are there so the two-track change (Phase 11,
-  per-location music) does not need another download round: when
-  the code is changed, the hangout plays `music_hangout.mp3`
-  (Jazz Brunch) and fights play `music_fight.mp3` (Mesmerizing
-  Galaxy Loop). Do not claim the two-track switch works yet — it
-  needs a small code change in `sounds.py` + `main.py`.
-- **Music start rule (Makenna, 2026-11-17):** music should only
-  start when you press Start in the hangout, or when you start
-  auto-battling with auto-fight on. It should never start just
-  from switching tabs, and never start automatically at launch.
-  That rule is not in the code yet either — it belongs with the
-  two-track change.
+- The game now has **two tracks** (`sounds.py`, `SOUND_FILES`):
+  the hangout plays `music_hangout.mp3` (Jazz Brunch, cozy café)
+  and fights play `music_fight.mp3` (Mesmerizing Galaxy Loop,
+  sci-fi). `music_loop.mp3` is the same file as
+  `music_hangout.mp3` and stays as an alias, so older code keeps
+  working.
+- **Music start rule (Makenna, 2026-11-17), now in the code
+  (`main.py`, `_refresh_music`):** music only starts for one
+  activity at a time — the hangout, or auto-fighting. It never
+  starts at launch and never starts just from switching tabs.
+  A manual fight has sound effects only, no music.
+- **Hangout Start, for now:** the hangout has no Start button
+  in the code yet, so "Visit the hangout" on the More tab is
+  the hangout's Start: entering the hangout starts the cafe
+  music, and leaving the More tab (or pressing Escape, which
+  goes Home) stops it. When quests add a real Start/Stop, the
+  music will follow that instead.
+- **The old laser:** the first robot laser was OwlStorm's
+  "Retro video game sfx - Laser" from Freesound
+  (https://freesound.org/people/OwlStorm/sounds/404796/, CC0),
+  0.17 s, a short beep. Makenna said it was not electric
+  enough, so it was replaced 2026-11-18 with Kenney's zap1
+  (see the table above). The old file is kept in the work
+  folder (`sounds-download/robot_laser_old.wav`) only as a
+  backup; it is not in the game.
 
 ## Music credits (CC-BY, required — keep these with the game)
 
@@ -120,5 +132,7 @@ sound is used anywhere.
 - **Volume** (Settings tab) turns voice, effects and music up
   or down together. Music always plays at half the effects
   volume, so it stays under the voice.
-- Idle fighting plays no fight sounds and speaks only the
-  result line, so it stays short and quiet.
+- Idle fighting narrates each fight round by round, with
+  fight sounds and the sci-fi track, like a manual fight
+  (changed 2026-11-17 evening, commit 17240de — before that
+  it only spoke the result line).

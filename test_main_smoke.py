@@ -232,8 +232,18 @@ class _Frame(_Widget):
 
 
 class _Dialog(_Widget):
+    # What ShowModal returns. Tests set this to ID_YES or
+    # ID_NO before calling code that asks a yes/no question.
+    modal_result = 1  # ID_OK
+
     def ShowModal(self):
-        return 1  # ID_OK
+        return type(self).modal_result
+
+    def EndModal(self, result):
+        type(self).modal_result = result
+
+    def CreateButtonSizer(self, flags):
+        return _Widget()
 
     def Destroy(self):
         pass
@@ -256,6 +266,7 @@ def _make_wx():
     wx.StaticText = _StaticText
     wx.RadioBox = _RadioBox
     wx.BoxSizer = _Widget
+    wx.Button = _Widget
     wx.Timer = _Timer
     wx.Window = type("Window", (), {"FindFocus": staticmethod(lambda: None)})
     wx.Bell = lambda: None
@@ -264,9 +275,14 @@ def _make_wx():
     wx.CallAfter = lambda fn, *args, **kwargs: fn(*args, **kwargs)
     wx.CallLater = lambda ms, fn, *args, **kwargs: fn(*args, **kwargs)
     wx.ID_OK = 1
+    wx.ID_YES = 5103
+    wx.ID_NO = 5104
+    wx.YES_NO = 2
+    wx.ICON_QUESTION = 4
     wx.OK = 1
     wx.CANCEL = 2
     wx.ICON_INFORMATION = 4
+    wx.EVT_BUTTON = 6
     wx.WXK_ESCAPE = 27
     wx.WXK_RETURN = 13
     wx.WXK_LEFT = 314
@@ -524,9 +540,59 @@ def main_test():
     shop_box.SetSelection(
         [i for i, item in enumerate(shop_items)
          if item.startswith("Max affordable: Laser Blaster up")][0])
+    credits_before = fighter["credits"]
     frame.activate_current()
     check("max affordable asks first and does not start on no",
           "max_upgrade" not in server["calls"])
+    check("saying no leaves the credits alone",
+          fighter["credits"] == credits_before)
+
+    # The same question answered yes must start the queue:
+    # Enter on Yes was once heard as No, and the game said
+    # "Nothing was bought" (2026-11-18). The dialog answers
+    # yes here, and the queue starts on the server.
+    sys.modules["wx"].Dialog.modal_result = sys.modules["wx"].ID_YES
+    check("yes means yes in the confirm dialog",
+          frame._confirm("Buy it?") is True)
+    sys.modules["wx"].Dialog.modal_result = sys.modules["wx"].ID_NO
+    check("no means no in the confirm dialog",
+          frame._confirm("Buy it?") is False)
+    sys.modules["wx"].Dialog.modal_result = sys.modules["wx"].ID_YES
+    frame.activate_current()
+    sys.modules["wx"].Dialog.modal_result = 1  # back to ID_OK
+    check("max affordable starts the queue on yes",
+          "max_upgrade" in server["calls"])
+    check("the queue is running after yes",
+          fighter.get("upgrade") is not None)
+    check("the credits were spent after yes",
+          fighter["credits"] < credits_before)
+
+    # Music rule (2026-11-18): no music at launch, hangout
+    # music only in the hangout, fight music only while
+    # auto-fighting, and nothing for a manual fight.
+    check("no music starts at launch",
+          frame.sounds.current_music_track is None)
+    frame.notebook.SetSelection(3)  # More tab
+    frame.on_tab_changed(types.SimpleNamespace(Skip=lambda: None))
+    frame.refresh_list("More")
+    more_box = frame.lists["More"]
+    more_box.SetSelection(frame.list_items("More").index("Visit the hangout"))
+    frame.activate_current()
+    check("entering the hangout starts the hangout music",
+          frame.sounds.current_music_track == "hangout")
+    frame.notebook.SetSelection(0)  # Home tab
+    frame.on_tab_changed(types.SimpleNamespace(Skip=lambda: None))
+    check("leaving the hangout stops the music",
+          frame.sounds.current_music_track is None)
+    frame.toggle_idle()
+    check("auto-fighting starts the fight music",
+          frame.sounds.current_music_track == "fight")
+    frame.toggle_idle()
+    check("stopping auto-fighting stops the music",
+          frame.sounds.current_music_track is None)
+    frame.do_fight()
+    check("a manual fight plays no music",
+          frame.sounds.current_music_track is None)
 
     # The fighter-creation dialog returns kind, name and gender.
     dialog = main.CreateFighterDialog(None)
@@ -1094,6 +1160,20 @@ def sounds_test():
           bank.start_music() is True
           and bank._music_channel is not None
           and bank._music_channel.loops == -1)
+    check("the default music track is the hangout track",
+          bank.current_music_track == "hangout")
+    check("the hangout track is the cafe track",
+          bank._music_channel.played
+          is bank._sounds["music_hangout"])
+    channel = bank._music_channel
+    check("asking for the same track again does not restart it",
+          bank.start_music("hangout") is True
+          and bank._music_channel is channel)
+    check("the fight track switches the music",
+          bank.start_music("fight") is True
+          and bank.current_music_track == "fight"
+          and bank._music_channel.played
+          is bank._sounds["music_fight"])
     check("music is quieter than the effects",
           bank._music.volume == 0.4 * sounds_module.MUSIC_VOLUME_FACTOR)
     bank.set_volume(100)
@@ -1104,6 +1184,20 @@ def sounds_test():
           bank._music_channel is None)
     check("no sound plays while sounds are off",
           bank.play("win") is False)
+
+    # With only the hangout track on disk, the fight track
+    # cannot start, and the hangout track still can.
+    hangout_only = tempfile.mkdtemp()
+    with open(os.path.join(hangout_only, "music_loop.mp3"), "wb") as handle:
+        handle.write(b"fake-sound")
+    bank = sounds_module.SoundBank(directory=hangout_only,
+                                   pygame_module=pygame)
+    bank.load()
+    check("the fight track does not start without its file",
+          bank.start_music("fight") is False)
+    check("the hangout track still starts from the old name",
+          bank.start_music("hangout") is True
+          and bank.current_music_track == "hangout")
     print("\nAll sound bank tests passed.")
 
 
