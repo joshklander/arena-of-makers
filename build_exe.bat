@@ -6,9 +6,9 @@ REM It installs what the game needs, then builds:
 REM   dist\ArenaOfMakers.exe         - the game, everything bundled in
 REM   dist\ArenaOfMakersUpdater.exe  - the updater, checks GitHub Releases
 REM
-REM Your .env file and arena_save.json are NOT bundled in and are
-REM NOT touched. Put your own .env file next to the exes when you
-REM run them, in the same folder as the exes.
+REM Your .env file is NOT bundled in and is NOT touched.
+REM Put your own .env file next to the exes when you run them,
+REM in the same folder as the exes. There is no local save file.
 
 cd /d "%~dp0"
 

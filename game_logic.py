@@ -10,7 +10,9 @@ Design rules from the design note, kept here in code:
 - Every timer is capped at 2 to 4 hours. The longest wait in the game is
   4 hours (MAX_TIMER_SECONDS); early waits are minutes.
 - Errors are plain sentences, never codes.
-- No secrets or API keys anywhere. The game saves locally only.
+- No secrets or API keys anywhere. The game never saves to a
+  local file: there is no arena_save.json, no local JSON at
+  all. Fighters live only in the one shared Supabase table.
 """
 
 import json
@@ -22,16 +24,8 @@ import time
 # The longest any upgrade or repair may take: 4 hours.
 MAX_TIMER_SECONDS = 4 * 3600
 
-SAVE_FILENAME = "arena_save.json"
-
 # One starter creature for the skeleton. More creatures come later.
 CREATURE_NAME = "Scrap Rat"
-
-
-def default_save_path():
-    """Save file next to this module, so it survives restarts."""
-    here = os.path.dirname(os.path.abspath(__file__))
-    return os.path.join(here, SAVE_FILENAME)
 
 
 def format_time(seconds):
@@ -338,30 +332,3 @@ def status_text(fighter, now=None):
     if upgrade:
         text += " " + upgrade
     return text
-
-
-def save_game(fighter, path=None):
-    """Write the fighter to a local JSON file. Returns the path used."""
-    if path is None:
-        path = default_save_path()
-    with open(path, "w", encoding="utf-8") as handle:
-        json.dump(fighter, handle, indent=2, sort_keys=True)
-    return path
-
-
-def load_game(path=None):
-    """Read the saved fighter, or None when there is no save yet."""
-    if path is None:
-        path = default_save_path()
-    if not os.path.exists(path):
-        return None
-    with open(path, "r", encoding="utf-8") as handle:
-        data = json.load(handle)
-    if not isinstance(data, dict) or "name" not in data or "kind" not in data:
-        return None
-    # Fill in any field an older save is missing, so old saves keep working.
-    fresh = new_fighter(data["name"], data["kind"])
-    fresh.update(data)
-    if fresh.get("gender") not in ("male", "female"):
-        fresh["gender"] = "male"
-    return fresh

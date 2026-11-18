@@ -34,7 +34,7 @@ When this updater is itself a frozen exe (built by the GitHub
 workflow, next to ArenaOfMakers.exe), it does NOT sync source files.
 Instead it checks the latest GitHub Release, downloads the new
 ArenaOfMakers.exe, and swaps it in for the old one. Your .env file
-and arena_save.json live next to the exe and are never touched.
+lives next to the exe and is never touched.
 The game must be closed first: Windows will not let a running exe
 be replaced, so the updater says so plainly and you press the
 button again after closing the game.
@@ -176,7 +176,7 @@ def update_exe_from_release(game_dir, log):
     """Download the newest game exe from GitHub Releases and swap it in.
 
     Returns True when the game exe now matches the latest release.
-    Never touches .env, arena_save.json, or arena_log.txt.
+    Never touches .env or arena_log.txt. There is no local save file.
     """
     game_dir = os.path.abspath(game_dir)
     game_exe = os.path.join(game_dir, GAME_EXE_NAME)

@@ -26,6 +26,7 @@ Joshua would read.
 import io
 import logging
 import os
+import random
 import sys
 import time
 import types
@@ -145,6 +146,7 @@ class _FakeMusic:
         self.loaded = []
         self.played = 0
         self.fail_load = False
+        self.busy = False
 
     def load(self, path):
         if self.fail_load:
@@ -153,9 +155,14 @@ class _FakeMusic:
 
     def play(self):
         self.played += 1
+        self.busy = True
+
+    def finish(self):
+        """Pretend the current line has finished sounding."""
+        self.busy = False
 
     def stop(self):
-        pass
+        self.busy = False
 
     def unload(self):
         pass
@@ -164,7 +171,47 @@ class _FakeMusic:
         pass
 
     def get_busy(self):
-        return self.played > 0
+        return self.busy
+
+
+class _FakeSound:
+    """Stand-in for pygame.mixer.Sound: records what would be played."""
+
+    def __init__(self, path):
+        self.path = path
+        self.played = 0
+        self.maxtime = None
+        self.loops = None
+        self.volume = None
+        self.stopped = False
+
+    def play(self, loops=0, maxtime=None):
+        self.played += 1
+        self.loops = loops
+        self.maxtime = maxtime
+
+    def stop(self):
+        self.stopped = True
+
+    def set_volume(self, value):
+        self.volume = value
+
+
+class _FakeChannel:
+    """Stand-in for pygame.mixer.Channel."""
+
+    def __init__(self, number):
+        self.number = number
+        self.played = None
+        self.loops = None
+        self.stopped = False
+
+    def play(self, sound, loops=0):
+        self.played = sound
+        self.loops = loops
+
+    def stop(self):
+        self.stopped = True
 
 
 class _Frame(_Widget):
@@ -247,7 +294,10 @@ def _make_wx():
 def _make_pygame():
     pygame = types.ModuleType("pygame")
     pygame.mixer = types.SimpleNamespace(
-        init=lambda: None, music=_FakeMusic()
+        init=lambda: None,
+        music=_FakeMusic(),
+        Sound=_FakeSound,
+        Channel=_FakeChannel,
     )
     return pygame
 
@@ -277,9 +327,24 @@ def wait_for_log(text, timeout=5.0):
 
 
 def main_test():
+    # Online only in the tests too: the window gets a fake
+    # online config, and the "server" is a dict in memory.
+    # No local save file is ever written.
+    import online_save as _online_save
+    saved_online = {}
+    def _fake_save(fighter, config):
+        saved_online["fighter"] = dict(fighter)
+        return True, "Saved online."
+    _online_save.save_fighter = _fake_save
+    _online_save.log_action = lambda *args, **kwargs: True
     fighter = game_logic.new_fighter("Bolt", "robot")
     fighter["points"] = 500
-    frame = main.MainFrame(fighter)
+    fighter["player_code"] = "BOLT42"
+    frame = main.MainFrame(
+        fighter,
+        online_config={"url": "https://example.supabase.co", "key": "sbp_fake"},
+        player_account={"username": "Bolt", "player_code": "BOLT42"},
+    )
 
     check("five tabs exist", main.MainFrame.TAB_NAMES == [
         "Home", "Combat", "Shop", "More", "Settings"])
@@ -301,9 +366,12 @@ def main_test():
     frame.activate_current()
     check("fight item runs a fight", fighter["wins"] + fighter["losses"] == wins_before + 1)
     check("fight was narrated to the log", "Scrap Rat" in frame.logs["Combat"].text)
-    check("fight saved the game", os.path.exists(main.SAVE_PATH))
-    loaded = game_logic.load_game(main.SAVE_PATH)
-    check("saved fighter loads back", loaded is not None and loaded["name"] == "Bolt")
+    check("fight saved the game online", saved_online.get("fighter") is not None)
+    check("saved fighter is Bolt online",
+          saved_online["fighter"]["name"] == "Bolt")
+    check("no local save file was created",
+          not os.path.exists(os.path.join(
+              os.path.dirname(os.path.abspath(__file__)), "arena_save.json")))
 
     # Idle fighting toggles on and off.
     frame.toggle_idle()
@@ -364,6 +432,8 @@ def main_test():
                                "main.py"), encoding="utf-8").read()
     check("no bell left in main.py", "Bell" not in source)
     check("no tone method left in main.py", "def tone" not in source)
+    check("no local save file in main.py", "arena_save.json" not in source)
+    check("no local save function in main.py", "save_game" not in source)
 
     # Settings: Enter on the Voice item switches the voice and saves it.
     frame.notebook.SetSelection(4)  # Settings tab
@@ -374,14 +444,16 @@ def main_test():
     settings_box.SetSelection(0)
     frame.activate_current()
     check("voice item switches to female", fighter["gender"] == "female")
-    check("voice item saves the switch",
-          game_logic.load_game(main.SAVE_PATH)["gender"] == "female")
+    check("voice item saves the switch online",
+          saved_online["fighter"]["gender"] == "female")
     check("settings now shows female",
           frame.list_items("Settings")[0].startswith("Voice: Female"))
     frame.activate_current()
     check("voice item switches back to male", fighter["gender"] == "male")
 
-    os.unlink(main.SAVE_PATH)
+    check("still no local save file at the end",
+          not os.path.exists(os.path.join(
+              os.path.dirname(os.path.abspath(__file__)), "arena_save.json")))
     print("\nAll window smoke tests passed.")
     print("NOTE: NVDA focus order, real screen-reader behaviour, and how")
     print("the window looks on Windows still need a live test by Joshua/McKenna.")
@@ -476,8 +548,6 @@ def voice_test():
     frame.on_close(mock.MagicMock())
     check("voice files are cleaned up on close",
           not os.path.exists(media.loaded[-1]))
-    if os.path.exists(main.SAVE_PATH):
-        os.unlink(main.SAVE_PATH)
     print("\nAll voice smoke tests passed.")
 
 
@@ -541,13 +611,169 @@ def voice_playback_failure_test():
     check("failed playback is logged in plain words",
           wait_for_log("the voice file could not be played"))
     frame.on_close(mock.MagicMock())
-    if os.path.exists(main.SAVE_PATH):
-        os.unlink(main.SAVE_PATH)
     print("\nAll voice playback failure tests passed.")
+
+
+def _wait_spoken(frame, text, timeout=5.0):
+    """True once the fake player has played a file for this text."""
+    media = sys.modules["pygame"].mixer.music
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        time.sleep(0.05)
+        if media.loaded:
+            try:
+                with open(media.loaded[-1], "rb") as handle:
+                    if handle.read() == ("fake-mp3:" + text).encode("utf-8"):
+                        return True
+            except (IndexError, OSError):
+                pass
+    return False
+
+
+def _finish_line_and_advance(frame):
+    """Pretend the spoken line finished, wait out the pause, and
+    let the one-second timer speak the next narration line."""
+    media = sys.modules["pygame"].mixer.music
+    media.finish()
+    frame.on_tick(mock.MagicMock())  # marks the line finished, starts the pause
+    time.sleep(1.0)
+    frame.on_tick(mock.MagicMock())  # pause is over, next line speaks
+
+
+def narration_test():
+    """Turn-by-turn narration: a manual fight speaks every round
+    line in order, with a pause, and an idle fight speaks only
+    its result line."""
+    import importlib
+    import voice_engine
+
+    sys.modules["edge_tts"] = _make_fake_edge_tts()
+    importlib.reload(voice_engine)
+    importlib.reload(main)
+    media = sys.modules["pygame"].mixer.music
+    media.fail_load = False
+    media.finish()
+
+    fighter = game_logic.new_fighter("Bolt", "robot")
+    frame = main.MainFrame(fighter)
+    check("voice is on for narration", frame.voice is not None)
+
+    # A manual fight queues every line, and speaks the first one.
+    frame.random = random.Random(7)
+    frame.do_fight()
+    lines = frame.logs["Combat"].text.strip().split("\n")
+    check("manual fight logs every round line", len(lines) >= 3)
+    check("manual fight speaks the first line first",
+          _wait_spoken(frame, lines[0]))
+    check("manual fight queues the rest in order",
+          list(frame._narration_queue) == lines[1:])
+
+    # Finish each line in turn: the next line must be the next
+    # line of the fight, never a skipped or repeated one.
+    spoken = [lines[0]]
+    while frame._narration_queue:
+        _finish_line_and_advance(frame)
+        check("next narration line is the next fight line",
+              _wait_spoken(frame, lines[len(spoken)]))
+        spoken.append(lines[len(spoken)])
+    check("every fight line was spoken, in order", spoken == lines)
+    check("narration queue is empty at the end", frame._narration_queue == [])
+
+    # A single announce cancels a narration in progress.
+    frame.random = random.Random(7)
+    frame.do_fight()
+    check("a second fight queues its lines again", bool(frame._narration_queue))
+    frame.announce("Idle fighting off.")
+    check("announce cancels the narration queue", frame._narration_queue == [])
+
+    # An idle fight speaks only its result line, and queues nothing.
+    # First wait for the "Idle fighting off." line above to finish
+    # reaching the player, so the count below is not still moving.
+    check("the cancelling line reaches the player first",
+          _wait_spoken(frame, "Idle fighting off."))
+    frame.random = random.Random(7)
+    before = len(media.loaded)
+    frame.do_fight(idle=True)
+    check("idle fight queues no narration", frame._narration_queue == [])
+    idle_lines = frame.logs["Combat"].text.strip().split("\n")
+    check("idle fight speaks only its result line",
+          _wait_spoken(frame, idle_lines[-1]))
+    time.sleep(0.5)
+    check("idle fight does not speak round lines afterwards",
+          len(media.loaded) == before + 1)
+
+    frame.on_close(mock.MagicMock())
+    print("\nAll turn-by-turn narration tests passed.")
+
+
+def sounds_test():
+    """The sound bank: missing files are skipped without a crash,
+    loaded files play the right sound for robot and chef, music
+    loops on its own channel, and turning sounds off stops it."""
+    import importlib
+    import sounds as sounds_module
+
+    importlib.reload(sounds_module)
+    pygame = sys.modules["pygame"]
+
+    # No files at all: nothing plays, nothing crashes.
+    import tempfile
+    empty_dir = tempfile.mkdtemp()
+    bank = sounds_module.SoundBank(directory=empty_dir, pygame_module=pygame)
+    bank.load()
+    check("sound bank loads nothing from an empty folder",
+          bank.loaded_names == [])
+    check("playing a missing sound returns False",
+          bank.play("robot_laser") is False)
+    check("music does not start with no music file",
+          bank.start_music() is False)
+
+    # Dummy files for every pick: the bank loads them all.
+    full_dir = tempfile.mkdtemp()
+    for _name, (filename, _maxtime) in sounds_module.SOUND_FILES.items():
+        with open(os.path.join(full_dir, filename), "wb") as handle:
+            handle.write(b"fake-sound")
+    bank = sounds_module.SoundBank(directory=full_dir, pygame_module=pygame)
+    bank.load()
+    check("sound bank loads every pick when the files are there",
+          len(bank.loaded_names) == len(sounds_module.SOUND_FILES))
+    check("robot hit plays the laser",
+          bank.play_hit("robot") and bank._sounds["robot_laser"].played == 1)
+    check("chef hit plays the chopping sound",
+          bank.play_hit("chef") and bank._sounds["chef_chop"].played == 1)
+    check("chopping plays only its first moments",
+          bank._sounds["chef_chop"].maxtime == 1500)
+    check("creature hit on a robot plays the metal clank",
+          bank.play_creature_hit("robot")
+          and bank._sounds["robot_clank"].played == 1)
+    check("creature hit on a chef plays the pan clang",
+          bank.play_creature_hit("chef")
+          and bank._sounds["pan_clang"].played == 1)
+    check("win plays the win jingle",
+          bank.play_win() and bank._sounds["win"].played == 1)
+    check("loss plays the loss sound",
+          bank.play_loss() and bank._sounds["loss"].played == 1)
+    check("music starts and loops",
+          bank.start_music() is True
+          and bank._music_channel is not None
+          and bank._music_channel.loops == -1)
+    check("music is quieter than the effects",
+          bank._music.volume == 0.4 * sounds_module.MUSIC_VOLUME_FACTOR)
+    bank.set_volume(100)
+    check("volume turns the music up too, still at half",
+          bank._music.volume == 1.0 * sounds_module.MUSIC_VOLUME_FACTOR)
+    bank.set_enabled(False)
+    check("turning sounds off stops the music",
+          bank._music_channel is None)
+    check("no sound plays while sounds are off",
+          bank.play("win") is False)
+    print("\nAll sound bank tests passed.")
 
 
 if __name__ == "__main__":
     main_test()
     voice_test()
+    narration_test()
+    sounds_test()
     voice_failure_test()
     voice_playback_failure_test()

@@ -139,37 +139,22 @@ def main():
     check("upgrade refused when broke",
           game_logic.start_upgrade(poor, "weapon", now=1000000.0) is not None)
 
-    # Save and load roundtrip.
-    fd, path = tempfile.mkstemp(suffix=".json")
-    os.close(fd)
-    try:
-        saved = game_logic.new_fighter("Saver", "chef", "female")
-        saved["points"] = 42
-        saved["level"] = 3
-        game_logic.save_game(saved, path)
-        loaded = game_logic.load_game(path)
-        check("save/load roundtrip keeps name", loaded["name"] == "Saver")
-        check("save/load roundtrip keeps kind", loaded["kind"] == "chef")
-        check("save/load roundtrip keeps gender", loaded["gender"] == "female")
-        check("save/load roundtrip keeps points", loaded["points"] == 42)
-        check("save/load roundtrip keeps level", loaded["level"] == 3)
-        check("save/load roundtrip keeps weapon", loaded["weapon_name"] == "Trusty Spatula")
-        # An older save with no gender at all loads as male.
-        old = {"name": "Oldie", "kind": "robot", "level": 1}
-        with open(path, "w", encoding="utf-8") as handle:
-            json.dump(old, handle)
-        check("old save without gender loads as male",
-              game_logic.load_game(path)["gender"] == "male")
-        # A save with a nonsense gender also loads as male.
-        old["gender"] = "nonsense"
-        with open(path, "w", encoding="utf-8") as handle:
-            json.dump(old, handle)
-        check("save with bad gender loads as male",
-              game_logic.load_game(path)["gender"] == "male")
-    finally:
-        os.unlink(path)
-    check("missing save loads as nothing",
-          game_logic.load_game(os.path.join(tempfile.gettempdir(), "no-such-save-aom.json")) is None)
+    # No local save at all: game_logic has no save/load
+    # functions, and a fighter is plain JSON data, ready to
+    # go online to the one shared Supabase table.
+    check("no local save function in game_logic",
+          not hasattr(game_logic, "save_game"))
+    check("no local load function in game_logic",
+          not hasattr(game_logic, "load_game"))
+    saved = game_logic.new_fighter("Saver", "chef", "female")
+    saved["points"] = 42
+    saved["level"] = 3
+    import json as _json
+    roundtrip = _json.loads(_json.dumps(saved))
+    check("fighter is plain JSON for the online save",
+          roundtrip["name"] == "Saver" and roundtrip["points"] == 42)
+    check("fighter keeps kind online", roundtrip["kind"] == "chef")
+    check("fighter keeps gender online", roundtrip["gender"] == "female")
 
     # Status text is one plain summary.
     text = game_logic.status_text(saved)

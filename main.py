@@ -12,12 +12,24 @@ does something once; Shift plus the same letter starts the idle loop.
     R         hear repair status (More tab)
 
 Run it with:  python main.py
-It needs Python, wxPython, edge-tts and pygame. The save lives in arena_save.json next
-to this file, on this computer only. No accounts, no passwords, no
-server, and no keys of any kind in the code: the repository is public.
-If the game hits a problem, the details are written to arena_log.txt
-next to this file, so nobody has to open a command prompt to see what
-went wrong.
+It needs Python, wxPython, edge-tts and pygame. Arena of Makers is
+online-only: player saves live in Supabase, and every game action
+(fights, upgrades, key presses, setting changes) is sent to the
+server, in that same shared players table, in each player's row. The game will not start without
+a .env file next to it holding SUPABASE_URL and
+SUPABASE_PUBLISHABLE_KEY, in the right shape: the launch check in
+supabase_config.py says so in plain words when something is
+missing or wrong, and never prints or logs the key. Everything
+lives in one shared Supabase table, called players: one row
+per player, holding the account, the fighter, and that
+player's game actions. No key of any
+kind lives in the code: the repository is public, and .env is
+ignored by git. If the game hits a problem, the details are
+written to arena_log.txt next to this file, so nobody has to open
+a command prompt to see what went wrong. A player can export
+their own data at any time from the More tab: it writes a JSON
+file next to the game with only that player's fighter and their
+own game actions, never anyone else's.
 
 Voice: narration is spoken with real Microsoft Edge text-to-speech
 (the free edge-tts package, no key, no account). The player picks a
@@ -30,8 +42,11 @@ writes one plain line to arena_log.txt saying why. For diagnosis the
 game also logs every speak attempt there: which Python is running it,
 whether edge-tts and pygame are installed, which voice and volume are set, whether
 each line's sound file was made and how big it was, and whether the
-player started playing it. Sound effects are still to come, only from
-Pixabay and freesound.org, using material marked free to use.
+player started playing it. Sound effects and music come only from
+Pixabay and freesound.org, using material marked free to use; the
+picks and their licences are listed in SOUNDS.md, and the files
+live in sounds/ next to this file. The game runs fine with no sound
+files at all.
 """
 
 import logging
@@ -51,15 +66,23 @@ except ImportError:
     # text only.
     pygame = None
 
+import account
 import game_logic
+import online_save
+import sounds
+import supabase_config
 import voice_engine
 
 APP_TITLE = "Arena of Makers"
-SAVE_PATH = game_logic.default_save_path()
 LOG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "arena_log.txt")
 
 # Idle fighting does one fight about every 5 seconds.
 IDLE_FIGHT_GAP = 5
+
+# Turn-by-turn narration: the pause, in seconds, between spoken
+# round lines in a manual fight. The game's one-second timer is
+# what advances the narration, so the real gap is about a second.
+TURN_PAUSE_SECONDS = 0.8
 
 
 def setup_logging():
@@ -163,6 +186,111 @@ class CreateFighterDialog(wx.Dialog):
         return kind, name, gender
 
 
+class CreateAccountDialog(wx.Dialog):
+    """After the online key check, every launch: sign in with
+    a username and a player code, or make a new account in
+    the same dialog. A new account picks a username, a gender
+    (which picks the voice), a player code of their own (or
+    one the game suggests), and whether they are a robot or
+    a chef fighter. No password is asked for. The username
+    is also the fighter's name. Nothing from this dialog is
+    saved on this computer: the account lives only online."""
+
+    def __init__(self, parent):
+        super().__init__(parent, title="Make your account")
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        hint = wx.StaticText(
+            self,
+            label=(
+                "Welcome to Arena of Makers. Pick a username, a "
+                "voice, a player code, and your fighter type. "
+                "Friends can look you up by your player code."
+            ),
+        )
+        hint.Wrap(420)
+        sizer.Add(hint, 0, wx.ALL, 10)
+
+        sizer.Add(wx.StaticText(self, label="Username:"), 0, wx.LEFT | wx.RIGHT, 10)
+        self.name_ctrl = wx.TextCtrl(self)
+        sizer.Add(self.name_ctrl, 0, wx.ALL | wx.EXPAND, 10)
+
+        self.gender_box = wx.RadioBox(
+            self,
+            label="Voice",
+            choices=["Male voice", "Female voice"],
+            majorDimension=1,
+            style=wx.RA_SPECIFY_COLS,
+        )
+        sizer.Add(self.gender_box, 0, wx.ALL | wx.EXPAND, 10)
+
+        self.kind_box = wx.RadioBox(
+            self,
+            label="Fighter type",
+            choices=["Robot fighter", "Chef fighter"],
+            majorDimension=1,
+            style=wx.RA_SPECIFY_COLS,
+        )
+        sizer.Add(self.kind_box, 0, wx.ALL | wx.EXPAND, 10)
+
+        sizer.Add(wx.StaticText(self, label="Player code (4 to 8 letters and numbers):"), 0, wx.LEFT | wx.RIGHT, 10)
+        self.code_ctrl = wx.TextCtrl(self)
+        self.code_ctrl.SetValue(account.generate_player_code())
+        sizer.Add(self.code_ctrl, 0, wx.ALL | wx.EXPAND, 10)
+
+        self.new_code_button = wx.Button(self, label="Make a code for me")
+        self.new_code_button.Bind(wx.EVT_BUTTON, self.on_new_code)
+        sizer.Add(self.new_code_button, 0, wx.ALL, 10)
+
+        buttons = self.CreateButtonSizer(wx.OK | wx.CANCEL)
+        sizer.Add(buttons, 0, wx.ALL | wx.ALIGN_RIGHT, 10)
+
+        self.SetSizer(sizer)
+        sizer.Fit(self)
+        wx.CallAfter(self.name_ctrl.SetFocus)
+
+    def on_new_code(self, event):
+        self.code_ctrl.SetValue(account.generate_player_code())
+
+    def get_result(self):
+        """Return (username, gender, kind, player_code), or None
+        when the username or the code is not usable."""
+        name = self.name_ctrl.GetValue().strip()
+        if not name:
+            return None
+        code = account.clean_player_code(self.code_ctrl.GetValue())
+        if account.validate_player_code(code):
+            return None
+        kind = "robot" if self.kind_box.GetSelection() == 0 else "chef"
+        gender = "male" if self.gender_box.GetSelection() == 0 else "female"
+        return name, gender, kind, code
+
+
+class FindPlayerDialog(wx.Dialog):
+    """Look a player up by their player code."""
+
+    def __init__(self, parent):
+        super().__init__(parent, title="Look up a player")
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        hint = wx.StaticText(
+            self,
+            label="Type a friend's player code, and the game will tell you their username.",
+        )
+        hint.Wrap(420)
+        sizer.Add(hint, 0, wx.ALL, 10)
+        sizer.Add(wx.StaticText(self, label="Player code:"), 0, wx.LEFT | wx.RIGHT, 10)
+        self.code_ctrl = wx.TextCtrl(self)
+        sizer.Add(self.code_ctrl, 0, wx.ALL | wx.EXPAND, 10)
+        buttons = self.CreateButtonSizer(wx.OK | wx.CANCEL)
+        sizer.Add(buttons, 0, wx.ALL | wx.ALIGN_RIGHT, 10)
+        self.SetSizer(sizer)
+        sizer.Fit(self)
+        wx.CallAfter(self.code_ctrl.SetFocus)
+
+    def get_result(self):
+        code = self.code_ctrl.GetValue().strip()
+        return code or None
+
+
 class MainFrame(wx.Frame):
     """One window, five tabs, one list on each tab."""
 
@@ -176,19 +304,45 @@ class MainFrame(wx.Frame):
         "Settings": "Settings. Voice, sound effects, and volume.",
     }
 
-    def __init__(self, fighter):
+    def __init__(self, fighter, online_config=None, player_account=None):
         super().__init__(None, title=APP_TITLE, size=(640, 480))
         self.fighter = fighter
+        # The account made on first launch: {"username": ...,
+        # "player_code": ...}. The fighter carries the player
+        # code too, so an online save can be traced to its player.
+        self.player_account = player_account
+        if player_account:
+            self.fighter["player_code"] = player_account["player_code"]
+            self.fighter["username"] = player_account["username"]
+        # Online-only: the Supabase URL and publishable key from
+        # the player's own .env file, checked at launch in
+        # run_game(). None in the headless tests, where there is
+        # no .env and no server: those tests use the local save only.
+        self.online_config = online_config
+        self.online_status = (
+            "Online: Supabase" if online_config else "Offline: no online key"
+        )
         self.random = random.Random()
         self.idle_fighting = False
         self.last_idle_fight = 0.0
         self.sound_on = True
+        self.music_on = True
         self.volume = 40
         self.was_repairing = game_logic.is_repairing(fighter)
         self.voice = None
         self._player_ready = False
         self._voice_file = None
         self._voice_play_failed = False
+        # Turn-by-turn narration: lines waiting to be spoken, in
+        # order. Only one line is ever handed to the voice at a
+        # time, and the next one is not spoken until the mixer has
+        # finished playing the current one (checked in on_tick).
+        self._narration_queue = []
+        self._narration_pause = TURN_PAUSE_SECONDS
+        self._narration_waiting = False  # a line is being made
+        self._narration_playing = False  # a line is sounding now
+        self._narration_next_at = 0.0
+        self.sounds = sounds.SoundBank(pygame_module=pygame)
 
         self.notebook = wx.Notebook(self)
         self.lists = {}
@@ -230,6 +384,14 @@ class MainFrame(wx.Frame):
         self.timer.Start(1000)  # once a second
 
         self.voice = self._setup_voice()
+
+        # Sound effects and music use the same mixer the voice
+        # already opened. With no sound files in sounds/ this just
+        # logs that nothing was loaded, and the game plays on.
+        self.sounds.load()
+        self.sounds.set_volume(self.volume)
+        if self.sound_on and self.music_on:
+            self.sounds.start_music()
 
         self.refresh_all()
         self.announce("Welcome to Arena of Makers, %s." % fighter["name"])
@@ -278,16 +440,27 @@ class MainFrame(wx.Frame):
                 "Visit the hangout",
                 "Hear repair status (press R)",
                 "Quests (coming soon)",
+                "Export my data (save a copy on this computer)",
+                "Look up a player by code",
+                "See all players",
+                "Fight a player by code",
+                "My player code: %s" % (
+                    self.player_account["player_code"]
+                    if self.player_account else "no account yet"
+                ),
+                self.online_status,
                 "Hear my fighter status",
             ]
         if tab == "Settings":
             sound = "on" if self.sound_on else "off"
+            music = "on" if self.music_on else "off"
             gender = self.fighter.get("gender", "male")
             voice_name = "Male" if gender == "male" else "Female"
             voice_state = "" if self.voice is not None else " (voice off)"
             return [
                 "Voice: %s%s (press Enter to change)" % (voice_name, voice_state),
                 "Sound effects: %s" % sound,
+                "Background music: %s" % music,
                 "Lower volume (now %d percent)" % self.volume,
                 "Raise volume (now %d percent)" % self.volume,
             ]
@@ -408,8 +581,16 @@ class MainFrame(wx.Frame):
                     error,
                     size,
                 )
+            # Playback failed, so this narrated line is over: let
+            # the narration move on to the next line, if any.
+            self._narration_waiting = False
+            self._narration_playing = False
+            self._narration_next_at = 0.0
             return
         self._voice_play_failed = False
+        # This line is now sounding. The narration waits for it.
+        self._narration_waiting = False
+        self._narration_playing = True
         logging.info("Voice: playing voice file (%d bytes).", size)
         wx.CallLater(300, self._log_voice_busy)
 
@@ -425,26 +606,295 @@ class MainFrame(wx.Frame):
             "Voice: mixer is %s.", "playing" if busy else "not playing"
         )
 
+    def _cancel_narration(self):
+        """Stop any turn-by-turn narration in progress. A single
+        announce() always wins over a queued narration, so a new
+        message is never stuck behind a long fight."""
+        self._narration_queue = []
+        self._narration_waiting = False
+        self._narration_playing = False
+        self._narration_next_at = 0.0
+
     def announce(self, text):
-        """Show it in plain words, and speak it when the voice is on."""
+        """Show it in plain words, and speak it when the voice is on.
+        This is a single line: it cancels any narration in progress
+        and, through voice.speak(), drops any older line still
+        waiting, so it can never pile up a backlog."""
+        self._cancel_narration()
         self.message_line.SetLabel(text)
         if self.voice is not None:
             self.voice.speak(text)
+
+    def announce_sequence(self, lines, pause_seconds=TURN_PAUSE_SECONDS):
+        """Speak lines one at a time, in order, with a short pause
+        between them. This is how a manual fight is narrated turn
+        by turn. It does not block the window: the first line is
+        spoken now, and _advance_narration() (called from the
+        one-second timer in on_tick) speaks each next line only
+        once the mixer has finished the current one. The Combat
+        text log already holds every line, so the log and the
+        voice tell the same story. With no voice, only the last
+        line is shown, as before."""
+        lines = [line for line in (lines or []) if (line or "").strip()]
+        if not lines:
+            return
+        if self.voice is None:
+            self.message_line.SetLabel(lines[-1])
+            return
+        self._cancel_narration()
+        self._narration_queue = list(lines)
+        self._narration_pause = pause_seconds
+        self._narration_next_at = 0.0
+        self._speak_next_narration()
+
+    def _speak_next_narration(self):
+        """Speak the next queued narration line, and play the
+        sound effect that goes with it. Only ever called when no
+        line is currently sounding."""
+        if not self._narration_queue or self.voice is None:
+            return
+        line = self._narration_queue.pop(0)
+        self._play_sound_for_line(line)
+        self.message_line.SetLabel(line)
+        self._narration_waiting = True
+        self.voice.speak(line)
+
+    def _advance_narration(self, now):
+        """Called once a second from on_tick. Speaks the next
+        narration line when the current one has finished playing
+        and the pause after it has passed. Does nothing while a
+        line is still being made or is still sounding."""
+        if not self._narration_queue:
+            return
+        if self._narration_waiting:
+            return
+        if pygame is None:
+            return
+        try:
+            busy = pygame.mixer.music.get_busy()
+        except Exception:
+            busy = False
+        if busy:
+            self._narration_playing = True
+            return
+        if self._narration_playing:
+            # The line just finished: start the pause, then wait.
+            self._narration_playing = False
+            self._narration_next_at = now + self._narration_pause
+            return
+        if now < self._narration_next_at:
+            return
+        self._speak_next_narration()
+
+    def _play_sound_for_line(self, line):
+        """The sound effect for one narration line, or nothing
+        when sounds are off or the file is missing. Robot and
+        chef fighters hear different sounds for the same hit."""
+        if not self.sound_on:
+            return
+        kind = self.fighter.get("kind", "robot")
+        if "You won!" in line:
+            self.sounds.play_win()
+        elif "You lost." in line:
+            self.sounds.play_loss()
+        elif "appears!" in line:
+            self.sounds.play_intro(kind)
+        elif "hits the Scrap Rat" in line:
+            self.sounds.play_hit(kind)
+        elif "The Scrap Rat hits" in line:
+            self.sounds.play_creature_hit(kind)
 
     def log(self, lines):
         """Add fight narration to the Combat log."""
         if "Combat" in self.logs:
             self.logs["Combat"].AppendText("\n".join(lines) + "\n")
 
+    def _log_online(self, action, detail=None):
+        """Send one game action to the server, if online. A
+        failed send never stops the game: online_save logs it."""
+        if self.online_config:
+            online_save.log_action(
+                self.online_config, self.fighter["name"], action, detail,
+                player_code=self.fighter.get("player_code"),
+            )
+
     def save(self):
-        game_logic.save_game(self.fighter, SAVE_PATH)
+        # Online only. There is no local save file, and this
+        # never creates one. If there is no online key, or the
+        # online save fails, the game says so plainly instead
+        # of quietly writing a local file.
+        if not self.online_config:
+            self.online_status = "Online save failed: no online key."
+            logging.error("Save failed: no online key, and no local file is used.")
+            return
+        ok, message = online_save.save_fighter(
+            self.fighter, self.online_config
+        )
+        self.online_status = (
+            "Online: saved to Supabase"
+            if ok
+            else "Online save failed: " + message
+        )
+        if not ok:
+            logging.error("Save: %s", message)
+
+    def do_export(self):
+        """Export this player's own data only: their fighter and
+        their own game actions, never anyone else's data."""
+        if not self.online_config:
+            self.announce(
+                "Export needs the online key. The game did not start "
+                "with a .env file, so there is nothing to export from."
+            )
+            return
+        try:
+            path, error = online_save.export_user_data(
+                self.online_config, self.fighter
+            )
+        except Exception as error:
+            logging.error("Export failed (%s: %s).", type(error).__name__, error)
+            self.announce("Export failed. Check arena_log.txt for details.")
+            return
+        if error:
+            self.announce("Export failed. " + error)
+            return
+        self._log_online(
+            "export_data", {"file": os.path.basename(path)}
+        )
+        self.announce(
+            "Your data was exported to %s, next to the game. It holds "
+            "only your fighter and your own game actions, not anyone "
+            "else's." % os.path.basename(path)
+        )
+
+    def do_lookup(self):
+        """Look a friend up by their player code, and hear their username."""
+        if not self.online_config:
+            self.announce(
+                "Looking up a player needs the online key. The game "
+                "did not start with a .env file."
+            )
+            return
+        dialog = FindPlayerDialog(None)
+        if dialog.ShowModal() != wx.ID_OK:
+            dialog.Destroy()
+            return
+        code = dialog.get_result()
+        dialog.Destroy()
+        if code is None:
+            self.announce("Type a player code first.")
+            return
+        found, error = account.lookup_player(self.online_config, code)
+        if error:
+            self.announce(error)
+            return
+        fighter = found.get("fighter") or {}
+        if fighter:
+            self.announce(
+                "Player %s is %s, a level %d %s. %d wins, %d losses. "
+                "Their player code is %s."
+                % (found["player_code"], found["username"],
+                   fighter.get("level", 1), fighter.get("kind", ""),
+                   fighter.get("wins", 0), fighter.get("losses", 0),
+                   found["player_code"])
+            )
+        else:
+            self.announce(
+                "Player %s is %s. They have no fighter yet. "
+                "Their player code is %s."
+                % (found["player_code"], found["username"], found["player_code"])
+            )
+
+    def do_list_players(self):
+        """See everyone in the one shared table, so players can
+        look each other up, fight each other, and help each other."""
+        if not self.online_config:
+            self.announce("Seeing all players needs the online key.")
+            return
+        players, error = online_save.list_players(self.online_config)
+        if error:
+            self.announce(error)
+            return
+        if not players:
+            self.announce("No players yet. You are the first.")
+            return
+        lines = []
+        for row in players:
+            fighter = row.get("fighter") or {}
+            if fighter:
+                lines.append(
+                    "%s, code %s, level %d %s"
+                    % (row.get("username"), row.get("player_code"),
+                       fighter.get("level", 1), fighter.get("kind", ""))
+                )
+            else:
+                lines.append(
+                    "%s, code %s, no fighter yet"
+                    % (row.get("username"), row.get("player_code"))
+                )
+        self.announce(
+            "%d players: %s." % (len(players), "; ".join(lines))
+        )
+
+    def do_fight_player(self):
+        """Fight another player, found by their player code, in
+        the same shared table. The fight is against a creature
+        at your level, and the result is logged to the server
+        with that player's code, so you can tell them about it."""
+        if not self.online_config:
+            self.announce("Fighting a player needs the online key.")
+            return
+        dialog = FindPlayerDialog(None)
+        if dialog.ShowModal() != wx.ID_OK:
+            dialog.Destroy()
+            return
+        code = dialog.get_result()
+        dialog.Destroy()
+        if code is None:
+            self.announce("Type a player code first.")
+            return
+        found, error = account.lookup_player(self.online_config, code)
+        if error:
+            self.announce(error)
+            return
+        fighter = found.get("fighter") or {}
+        if not fighter:
+            self.announce(
+                "%s has no fighter yet, so there is nobody to fight."
+                % found["username"]
+            )
+            return
+        self.announce(
+            "Fighting %s, level %d %s."
+            % (found["username"], fighter.get("level", 1), fighter.get("kind", ""))
+        )
+        self._log_online(
+            "fight_player",
+            {"opponent_code": found["player_code"],
+             "opponent": found["username"],
+             "opponent_level": fighter.get("level", 1)},
+        )
+        self.do_fight()
 
     # -- actions -------------------------------------------------------
 
-    def do_fight(self):
+    def do_fight(self, idle=False):
+        """Fight one creature. A manual fight (F, or Enter on the
+        fight item) is narrated turn by turn, round by round.
+        An idle fight speaks only its last line -- the result --
+        and plays no fight sounds, so idle fighting every 5
+        seconds can never build a speech or sound backlog."""
         result = game_logic.fight(self.fighter, rng=self.random)
         self.log(result["lines"])
-        self.announce(result["lines"][-1])
+        if idle:
+            self.announce(result["lines"][-1])
+        else:
+            self.announce_sequence(result["lines"])
+        self._log_online(
+            "fight",
+            {"won": result["won"], "xp": result["xp"],
+             "points": result["points"], "idle": idle},
+        )
         self.save()
         self.refresh_all()
 
@@ -463,6 +913,9 @@ class MainFrame(wx.Frame):
             self.announce("Idle fighting on. Press Escape to stop.")
         else:
             self.announce("Idle fighting off.")
+        self._log_online(
+            "idle_on" if self.idle_fighting else "idle_off"
+        )
         self.refresh_all()
 
     def do_upgrade(self, slot):
@@ -478,6 +931,9 @@ class MainFrame(wx.Frame):
                 upgrade["level"],
                 game_logic.format_time(upgrade["finish"] - time.time()),
             )
+        )
+        self._log_online(
+            "upgrade_" + slot, {"level": upgrade["level"]}
         )
         self.save()
         self.refresh_all()
@@ -522,6 +978,25 @@ class MainFrame(wx.Frame):
                 self.announce("No repairs running. Your fighter is ready.")
         elif tab == "More" and item == "Quests (coming soon)":
             self.announce("Quests are coming soon. The hangout is open meanwhile.")
+        elif tab == "More" and item.startswith("Export my data"):
+            self.do_export()
+        elif tab == "More" and item.startswith("Look up a player"):
+            self.do_lookup()
+        elif tab == "More" and item.startswith("See all players"):
+            self.do_list_players()
+        elif tab == "More" and item.startswith("Fight a player"):
+            self.do_fight_player()
+        elif tab == "More" and item.startswith("My player code"):
+            if self.player_account:
+                self.announce(
+                    "Your username is %s, and your player code is %s."
+                    % (self.player_account["username"],
+                       self.player_account["player_code"])
+                )
+            else:
+                self.announce("You do not have an account yet.")
+        elif tab == "More" and item.startswith("Online"):
+            self.announce(self.online_status)
         elif tab == "Settings" and item.startswith("Voice:"):
             gender = "female" if self.fighter.get("gender", "male") == "male" else "male"
             self.fighter["gender"] = gender
@@ -532,14 +1007,27 @@ class MainFrame(wx.Frame):
             self.refresh_all()
         elif tab == "Settings" and item.startswith("Sound effects:"):
             self.sound_on = not self.sound_on
+            self.sounds.set_enabled(self.sound_on)
+            if self.sound_on and self.music_on:
+                self.sounds.start_music()
             self.announce("Sound effects %s." % ("on" if self.sound_on else "off"))
+            self.refresh_all()
+        elif tab == "Settings" and item.startswith("Background music:"):
+            self.music_on = not self.music_on
+            if self.music_on and self.sound_on:
+                self.sounds.start_music()
+            else:
+                self.sounds.stop_music()
+            self.announce("Background music %s." % ("on" if self.music_on else "off"))
             self.refresh_all()
         elif tab == "Settings" and item.startswith("Lower volume"):
             self.volume = max(0, self.volume - 10)
+            self.sounds.set_volume(self.volume)
             self.announce("Volume %d percent." % self.volume)
             self.refresh_all()
         elif tab == "Settings" and item.startswith("Raise volume"):
             self.volume = min(100, self.volume + 10)
+            self.sounds.set_volume(self.volume)
             self.announce("Volume %d percent." % self.volume)
             self.refresh_all()
 
@@ -559,6 +1047,17 @@ class MainFrame(wx.Frame):
         key = event.GetKeyCode()
         focused = wx.Window.FindFocus()
         on_list = isinstance(focused, wx.ListBox)
+        # Every game key press goes to the server, with the tab
+        # it was pressed on. Only keys that do something in the
+        # game are logged: F, Shift F, U, A, R, Return, Escape.
+        if on_list and key in (
+            ord("f"), ord("F"), ord("u"), ord("a"), ord("r"),
+            wx.WXK_RETURN, wx.WXK_ESCAPE,
+        ):
+            label = chr(key) if 32 <= key < 127 else str(key)
+            self._log_online(
+                "key_press", {"key": label, "tab": self.current_tab()}
+            )
 
         if key == wx.WXK_ESCAPE:
             if self.idle_fighting:
@@ -605,11 +1104,13 @@ class MainFrame(wx.Frame):
         event.Skip()
 
     def on_tick(self, event):
-        """Once a second: idle fights, finished upgrades, finished repairs."""
+        """Once a second: turn-by-turn narration, idle fights,
+        finished upgrades, finished repairs."""
         now = time.time()
+        self._advance_narration(now)
         if self.idle_fighting and now - self.last_idle_fight >= IDLE_FIGHT_GAP:
             self.last_idle_fight = now
-            self.do_fight()
+            self.do_fight(idle=True)
             if game_logic.is_repairing(self.fighter):
                 self.idle_fighting = False
                 self.announce("Idle fighting stopped while your fighter repairs.")
@@ -631,6 +1132,8 @@ class MainFrame(wx.Frame):
     def on_close(self, event):
         self.save()
         self.timer.Stop()
+        self._cancel_narration()
+        self.sounds.stop_music()
         if self.voice is not None:
             self.voice.stop()
             if self._player_ready:
@@ -641,8 +1144,109 @@ class MainFrame(wx.Frame):
 
 def run_game():
     app = wx.App()
-    fighter = game_logic.load_game(SAVE_PATH)
+    # Launch gate: online-only. No .env, no key in the right
+    # shape, no game. The message says what is missing, in
+    # plain words, and never shows the key.
+    config, error = supabase_config.check_online_config()
+    if error:
+        logging.error("Launch: online check failed.")
+        wx.MessageBox(
+            error,
+            "Arena of Makers - online check",
+            wx.OK | wx.ICON_INFORMATION,
+        )
+        return
+
+    # Sign in every launch: the player types their username
+    # and player code, and the game looks the account up
+    # online, in the one shared players table. There is no
+    # local account file and no local save file to fall back
+    # to, so if the code is not found online, this is a new
+    # account, and it is made online here, with the username,
+    # gender, kind and code the player picked in this same
+    # dialog. If that online creation fails, the game says
+    # so and stops: it does not make a local file instead.
+    dialog = CreateAccountDialog(None)
+    if dialog.ShowModal() != wx.ID_OK:
+        dialog.Destroy()
+        return
+    result = dialog.get_result()
+    dialog.Destroy()
+    if result is None:
+        wx.MessageBox(
+            "Give yourself a username, and a player code of "
+            "4 to 8 letters and numbers.",
+            "Arena of Makers",
+            wx.OK | wx.ICON_INFORMATION,
+        )
+        return
+    username, gender, kind, code = result
+    player_account, lookup_error = account.lookup_player(config, code)
+    if player_account is not None and player_account["username"] != username:
+        wx.MessageBox(
+            "That player code belongs to %s, not %s. Check the code and try again."
+            % (player_account["username"], username),
+            "Arena of Makers",
+            wx.OK | wx.ICON_INFORMATION,
+        )
+        return
+    new_account = None
+    if player_account is None:
+        made, create_error = account.create_account(
+            config, username, code, gender=gender, kind=kind
+        )
+        if made is None:
+            wx.MessageBox(
+                "Your account could not be made online: %s "
+                "The game does not make a local file instead, "
+                "so check the players table is set up in Supabase "
+                "and try again." % create_error,
+                "Arena of Makers",
+                wx.OK | wx.ICON_INFORMATION,
+            )
+            return
+        player_account = made
+        new_account = (username, gender, kind)
+    else:
+        player_account["username"] = username
+
+    fighter = None
+    if new_account is None:
+        # Returning player: load their fighter from their row
+        # in the one shared players table. No local file.
+        online_fighter, load_error = online_save.load_fighter(
+            config, player_code=player_account["player_code"]
+        )
+        if load_error:
+            wx.MessageBox(
+                "Your fighter could not be loaded online: %s "
+                "The game does not use a local file instead."
+                % load_error,
+                "Arena of Makers",
+                wx.OK | wx.ICON_INFORMATION,
+            )
+            return
+        fighter = online_fighter
+    if fighter is None and new_account is not None:
+        username, gender, kind = new_account
+        try:
+            fighter = game_logic.new_fighter(username, kind, gender)
+        except ValueError as error:
+            wx.MessageBox(str(error), "Arena of Makers", wx.OK | wx.ICON_INFORMATION)
+            return
+        ok, save_error = online_save.save_fighter(fighter, config)
+        if not ok:
+            wx.MessageBox(
+                "Your fighter could not be saved online: %s "
+                "The game does not make a local file instead."
+                % save_error,
+                "Arena of Makers",
+                wx.OK | wx.ICON_INFORMATION,
+            )
+            return
     if fighter is None:
+        # A returning player with an account but no fighter
+        # yet: make one with the fighter dialog.
         dialog = CreateFighterDialog(None)
         if dialog.ShowModal() != wx.ID_OK:
             dialog.Destroy()
@@ -662,8 +1266,21 @@ def run_game():
         except ValueError as error:
             wx.MessageBox(str(error), "Arena of Makers", wx.OK | wx.ICON_INFORMATION)
             return
-        game_logic.save_game(fighter, SAVE_PATH)
-    frame = MainFrame(fighter)
+        ok, save_error = online_save.save_fighter(fighter, config)
+        if not ok:
+            wx.MessageBox(
+                "Your fighter could not be saved online: %s "
+                "The game does not make a local file instead."
+                % save_error,
+                "Arena of Makers",
+                wx.OK | wx.ICON_INFORMATION,
+            )
+            return
+    # Fill in any field an older save is missing.
+    if fighter is not None and player_account is not None:
+        fighter.setdefault("player_code", player_account["player_code"])
+        fighter.setdefault("username", player_account["username"])
+    frame = MainFrame(fighter, online_config=config, player_account=player_account)
     frame.Show()
     app.MainLoop()
 

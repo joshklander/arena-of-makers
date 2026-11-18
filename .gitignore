@@ -1,2 +1,6 @@
 # Personal save files stay local and private - do not push them.
 arena_save.json
+.env
+arena_account.json
+
+__pycache__/

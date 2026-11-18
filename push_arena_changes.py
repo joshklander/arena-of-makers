@@ -12,8 +12,8 @@ Two things to know:
 - The repo is public, so the log is visible to anyone. It holds
   Windows file paths and plain game messages, but no passwords.
 
-Nothing else is ever pushed: your save file (arena_save.json) and
-temporary files stay on your computer.
+Nothing else is ever pushed: your .env file and temporary
+files stay on your computer. There is no local save file.
 """
 
 import datetime
@@ -32,10 +32,19 @@ TRACKED_FILES = [
     "push_arena_changes.bat",
     "test_game_logic.py",
     "test_main_smoke.py",
+    "supabase_config.py",
+    "online_save.py",
+    "account.py",
+    "test_key.py",
+    "test_online_save.py",
+    "supabase_schema.sql",
+    "SOUNDS.md",
+    "sounds.py",
+    "build_exe.py",
+    "build_exe.bat",
 ]
 
 LOG_FILE = "arena_log.txt"
-SAVE_FILE = "arena_save.json"
 
 
 def say(text):
@@ -78,8 +87,7 @@ def main():
         say("nothing here to push from.")
         say("To get a copy you can push from, run this once:")
         say("git clone https://github.com/joshklander/arena-of-makers.git")
-        say("Then copy your " + SAVE_FILE + " into the new folder")
-        say("so you keep your fighter, and run this script there.")
+        say("Your fighter lives online, so there is no save file to copy.")
         return 1
 
     say("Pulling the newest version from GitHub first...")
@@ -135,7 +143,7 @@ def main():
     if log_included:
         say("The log went with them, so Muse can read it from GitHub.")
         say("Remember the repo is public, so anyone can see the log.")
-    say("Your save file was not pushed. It stays on this computer.")
+    say("Your .env file was not pushed. It stays on this computer.")
     return 0
 
 

@@ -8,7 +8,7 @@ Builds, in the dist/ folder next to this file:
   ArenaOfMakers.exe         - the game, everything bundled in
   ArenaOfMakersUpdater.exe  - the updater, checks GitHub Releases
 
-Your .env file and arena_save.json are NOT bundled in and are NOT
+Your .env file is NOT bundled in and is NOT
 touched. Put your own .env file next to the exes when you run them.
 """
 
