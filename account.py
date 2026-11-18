@@ -1,212 +1,194 @@
 """Player accounts for Arena of Makers.
 
-On first launch, after the online key check, the game asks
-the player to make an account: a username, and a player code.
-The player code is picked by the player, on first launch,
-when they make their account. They type their own code, or
-press "Make a code for me" and the game suggests one: six
-letters and numbers that are easy to read out with a screen
-reader, with no confusing characters in it: no 0, no O, no 1,
-no I, no L. For example: K7M2Q9. A code is 4 to 8 letters
-and numbers, so a player can pick something they will
-remember, like their initials and a number.
+Every launch, after the online key check, the player signs in
+with a username, a player code and a password. When the code
+has no account yet, the same details make a new one.
 
-Friends look a player up by that code, not by their username:
-the code is unique, and a username can change. The account
-lives only in Supabase, in the one shared players table, so
-it is the same account on any computer. The game keeps no
-local copy of it: there is no local JSON file at all. Every
-launch, the player types their username and player code,
-and the game looks the account up online. That is also why
-the game cannot start without the key in .env: with no key,
-there is nowhere to look the account up, and no local file
-to fall back to.
+The player code is picked by the player when they make their
+account. They type their own code, or press "Make a code for
+me" and the game suggests one. A code is exactly 4 digits,
+like 4827. Leading zeros count, so 0042 is a code too.
 
-No password is involved. The publishable key in .env is what
-lets the game talk to Supabase; the player code is only a
-lookup code, not a secret and not a password.
+The player code is public. Friends look a player up by it.
+The password is what proves who you are.
+
+Password safety:
+- The password box hides what is typed, so neither the
+  screen nor a screen reader shows it.
+- The password goes to the server once, over HTTPS, to sign
+  in or make the account, and is then dropped. It is never
+  saved on this computer, never logged, and never shown.
+- The server never stores the password itself, only a bcrypt
+  hash of it, and no server function ever sends that back.
+- Five wrong tries lock the account for ten minutes.
+
+Signing in gives back a session token. The game keeps it in
+memory only, in config["session"], and it ends when the game
+closes.
 """
 
-import json
-import logging
-import os
 import random
-import string
-import urllib.error
-import urllib.request
 
-# Easy to read out: no 0/O, no 1/I/L.
-_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
-_CODE_LENGTH = 6
+import online_save
+
+_CODE_DIGITS = "0123456789"
+_CODE_LENGTH = 4
+
+PASSWORD_MIN = 8
+PASSWORD_MAX = 72
 
 
 def generate_player_code(rng=None):
-    """Suggest a new six-character player code."""
+    """Suggest a new 4-digit player code."""
     if rng is None:
         rng = random.SystemRandom()
-    return "".join(rng.choice(_CODE_ALPHABET) for _ in range(_CODE_LENGTH))
-
-
-def validate_player_code(code):
-    """Plain-words reason a chosen code is not usable, or None
-    when it is fine. A code is 4 to 8 letters and numbers."""
-    code = (code or "").strip().upper().replace("-", "").replace(" ", "")
-    if not code:
-        return "a player code is missing"
-    if len(code) < 4 or len(code) > 8:
-        return "a player code is 4 to 8 letters and numbers"
-    if not code.isalnum():
-        return "a player code is only letters and numbers"
-    return None
+    return "".join(rng.choice(_CODE_DIGITS) for _ in range(_CODE_LENGTH))
 
 
 def clean_player_code(code):
     return (code or "").strip().upper().replace("-", "").replace(" ", "")
 
 
-def _headers(config):
+def validate_player_code(code):
+    """Plain-words reason a chosen code is not usable, or None
+    when it is fine. A code is exactly 4 digits."""
+    code = clean_player_code(code)
+    if not code:
+        return "a player code is missing"
+    if len(code) != _CODE_LENGTH or not all(c in _CODE_DIGITS for c in code):
+        return "a player code is 4 digits, like 4827"
+    return None
+
+
+def validate_password(password):
+    """Plain-words reason a new password is not usable, or None.
+    Never repeats the password."""
+    password = password or ""
+    if len(password) < PASSWORD_MIN:
+        return "Pick a password of at least %d characters." % PASSWORD_MIN
+    if len(password.encode("utf-8")) > PASSWORD_MAX:
+        return "Pick a password no longer than %d characters." % PASSWORD_MAX
+    return None
+
+
+def _session_from(data):
+    """The parts of a sign-in answer the game keeps."""
     return {
-        "apikey": config["key"],
-        "Authorization": "Bearer " + config["key"],
-        "Content-Type": "application/json",
-        "Prefer": "return=representation",
+        "token": data["token"],
+        "remember_token": data.get("remember_token"),
+        "account": data.get("account") or {},
+        "fighter": data.get("fighter"),
+        "messages": data.get("messages") or [],
     }
 
 
-def create_account(config, username, player_code=None, gender=None, kind=None, timeout=15):
-    """Create an account online and return (account, error).
+def resume(config, remember_token, timeout=15):
+    """Sign in with a saved remember token, with no password.
+    Returns (session, error, forget). session also holds a new
+    remember_token to save in place of the old one. forget is
+    True when the server says the saved token no longer works,
+    so it should be removed from this computer."""
+    data, error = online_save.rpc(config, "arena_resume", {
+        "p_remember_token": remember_token or "",
+    }, timeout)
+    if error:
+        return None, error, bool(data and data.get("forget"))
+    return _session_from(data), None, False
 
-    account is {"username": ..., "player_code": ...,
-    "gender": ..., "kind": ...} when it worked, else None.
-    gender and kind, when given, are stored in the same row
-    in the one shared players table, with the username and
-    the player code. error is a plain-words message when it
-    did not work, else None. A taken username or a taken player
-    code is reported in plain words, so the player can pick a
-    different one. When no code is given, a code is suggested
-    and a taken one is just retried with a new code, up to
-    five times.
+
+def remember_this_computer(config, timeout=15):
+    """Turn on keep me signed in, for the signed-in player.
+    Returns (remember_token, error)."""
+    data, error = online_save.rpc(config, "arena_remember", {
+        "p_token": config.get("session") or "",
+    }, timeout)
+    if error:
+        return None, error
+    return data.get("remember_token"), None
+
+
+def forget_this_computer(config, remember_token, timeout=15):
+    """Turn off keep me signed in: the token stops working on
+    the server. Returns True when the server agreed."""
+    if not remember_token:
+        return True
+    _data, error = online_save.rpc(config, "arena_forget", {
+        "p_remember_token": remember_token,
+    }, timeout)
+    return error is None
+
+
+def sign_in(config, player_code, username, password, timeout=15):
+    """Sign in. Returns (session, error, no_account).
+
+    session is {"token", "account", "fighter", "messages"}
+    when it worked, else None. no_account is True when nobody
+    has that player code yet, so the caller can offer to make
+    the account instead. error is a plain-words message.
     """
+    data, error = online_save.rpc(config, "arena_sign_in", {
+        "p_player_code": clean_player_code(player_code),
+        "p_username": (username or "").strip(),
+        "p_password": password or "",
+    }, timeout)
+    if error:
+        return None, error, False
+    if data.get("no_account"):
+        return None, None, True
+    return _session_from(data), None, False
+
+
+def create_account(config, username, player_code=None, password=None,
+                   gender=None, kind=None, timeout=15):
+    """Make a new account, with its level 1 fighter, on the
+    server. Returns (session, error), like sign_in. When no
+    code is given, the server picks a free one."""
     username = (username or "").strip()
     if not username:
         return None, "Give yourself a username first."
     if len(username) > 30:
         return None, "Pick a username no longer than 30 letters."
-    chosen = clean_player_code(player_code) if player_code else ""
-    if player_code:
-        code_error = validate_player_code(chosen)
+    code = clean_player_code(player_code) if player_code else None
+    if code:
+        code_error = validate_player_code(code)
         if code_error:
             return None, "That code does not work: %s." % code_error
-    url = config["url"].rstrip("/") + "/rest/v1/players"
-    for _attempt in range(5):
-        code = chosen or generate_player_code()
-        row = {"player_code": code, "username": username,
-               "fighter": {}, "events": []}
-        if gender:
-            row["gender"] = gender
-        if kind:
-            row["kind"] = kind
-        body = json.dumps(row).encode("utf-8")
-        request = urllib.request.Request(url, data=body, method="POST")
-        for key, value in _headers(config).items():
-            request.add_header(key, value)
-        try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
-                response.read()
-            account = {"username": username, "player_code": code}
-            if gender:
-                account["gender"] = gender
-            if kind:
-                account["kind"] = kind
-            logging.info(
-                "Account created online: username %s, player code %s.",
-                username, code,
-            )
-            return account, None
-        except urllib.error.HTTPError as error:
-            if error.code == 409:
-                # A taken code is retried; a taken username is
-                # told to the player. Supabase's message says
-                # which column clashed.
-                try:
-                    detail = error.read().decode("utf-8", "replace")
-                except Exception:
-                    detail = ""
-                if "username" in detail:
-                    return None, (
-                        "That username is already taken. "
-                        "Pick a different username."
-                    )
-                if "player_code" in detail:
-                    if chosen:
-                        return None, (
-                            "That player code is already taken. "
-                            "Pick a different code, or press "
-                            "Make a code for me."
-                        )
-                    continue
-                continue
-            if error.code in (401, 403):
-                return None, "Supabase rejected the key."
-            try:
-                detail = error.read().decode("utf-8", "replace")
-            except Exception:
-                detail = ""
-            if "players" in detail:
-                return None, "The players table is not set up in Supabase yet."
-            return None, "Supabase answered with an error while making the account."
-        except Exception as error:
-            logging.error(
-                "Account creation failed: could not reach Supabase (%s: %s).",
-                type(error).__name__, error,
-            )
-            return None, "Could not reach Supabase to make the account."
-    return None, "I could not make a free player code. Try again."
+    password_error = validate_password(password)
+    if password_error:
+        return None, password_error
+    data, error = online_save.rpc(config, "arena_create_account", {
+        "p_username": username,
+        "p_player_code": code,
+        "p_password": password,
+        "p_gender": gender,
+        "p_kind": kind,
+    }, timeout)
+    if error:
+        return None, error
+    return _session_from(data), None
 
 
 def lookup_player(config, player_code, timeout=15):
-    """Look a player up by their player code.
+    """Look a player up by their player code. Needs a session.
 
-    Returns (account, error). account is {"username": ...,
-    "player_code": ..., "fighter": ...} when that code exists,
-    else None. The fighter is included so a player can see
-    the person they found: their level, wins, and losses,
-    and can fight them or help them from the same shared row.
-    error is a plain-words message when something went wrong,
-    else None.
+    Returns (account, error). account is {"username",
+    "player_code", "gender", "kind", "fighter"}, where the
+    fighter holds only public parts: name, kind, level, wins,
+    losses, and gear.
     """
     code = clean_player_code(player_code)
     if not code:
         return None, "Type a player code first."
-    url = (
-        config["url"].rstrip("/")
-        + "/rest/v1/players?select=username,player_code,gender,kind,fighter"
-        + "&player_code=eq." + code
-        + "&limit=1"
-    )
-    request = urllib.request.Request(url)
-    request.add_header("apikey", config["key"])
-    request.add_header("Authorization", "Bearer " + config["key"])
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            rows = json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as error:
-        if error.code in (401, 403):
-            return None, "Supabase rejected the key."
-        return None, "Supabase answered with an error while looking up that code."
-    except Exception as error:
-        logging.error(
-            "Player lookup failed: could not reach Supabase (%s: %s).",
-            type(error).__name__, error,
-        )
-        return None, "Could not reach Supabase to look up that code."
-    if not rows:
-        return None, "No player has that code. Check the code and try again."
-    row = rows[0]
+    data, error = online_save.rpc(config, "arena_lookup_player", {
+        "p_token": config.get("session") or "",
+        "p_player_code": code,
+    }, timeout)
+    if error:
+        return None, error
     return {
-        "username": row.get("username"),
-        "player_code": row.get("player_code"),
-        "gender": row.get("gender"),
-        "kind": row.get("kind"),
-        "fighter": row.get("fighter") or {},
+        "username": data.get("username"),
+        "player_code": data.get("player_code"),
+        "gender": data.get("gender"),
+        "kind": data.get("kind"),
+        "fighter": data.get("fighter") or {},
     }, None

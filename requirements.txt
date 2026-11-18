@@ -3,3 +3,6 @@
 wxPython
 edge-tts
 pygame
+# keyring keeps the "Keep me signed in" token in Windows
+# Credential Manager. Without it, that setting is not offered.
+keyring

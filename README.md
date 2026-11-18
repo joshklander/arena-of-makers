@@ -37,7 +37,7 @@ OK or what is wrong, and never prints the key.
 
 On first launch you make an account in one go: pick a
 username, a gender (which picks the voice), your own player
-code (4 to 8 letters and numbers, or press "Make a code for
+code (4 digits, like 4827, or press "Make a code for
 me"), and whether you are a robot or a chef. Your username is
 also your fighter's name. Friends look you up by your player
 code, from the More tab. Accounts live only in Supabase, in that same one shared

@@ -1,13 +1,13 @@
 """Supabase online check for Arena of Makers.
 
 Arena of Makers is an exclusively online game: player saves live
-in Supabase, not only on one computer. The game never asks for a
+in Supabase, and the server runs the game rules. The game never asks for a
 key in chat, and it never sends a key to Muse. Each player keeps
 their own copy of a small file called .env next to the game, with
 two lines in it:
 
     SUPABASE_URL=https://yurdzzinmibgnoanxtkm.supabase.co
-    SUPABASE_PUBLISHABLE_KEY=sbp_...
+    SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
 
 The project URL is the one for the Arena of Makers project. The
 publishable key is the one from Project Settings, then API Keys.
@@ -75,8 +75,8 @@ def _key_shape_error(key):
     or None when the shape looks right. Never echoes the key."""
     if not key:
         return "the publishable key is missing"
-    if key.startswith("sbp_"):
-        if len(key) < 20:
+    if key.startswith("sb_publishable_"):
+        if len(key) < 30:
             return "the publishable key is too short to be a real key"
         return None
     if key.startswith("eyJ"):
@@ -86,7 +86,7 @@ def _key_shape_error(key):
         return None
     return (
         "the publishable key does not look like a Supabase publishable "
-        "key: it should start with sbp_ or with eyJ"
+        "key: it should start with sb_publishable_ or with eyJ"
     )
 
 
@@ -154,24 +154,26 @@ def check_online_config(path=None):
 
 
 def test_connection(config, timeout=15):
-    """Ping the Supabase REST API with the key from .env.
+    """Ping the Arena of Makers server with the key from .env.
 
-    Returns (ok, message). ok is True when the server answered
-    and did not reject the key. A 401 means the key was rejected.
-    Any other HTTP answer means the server was reached and the
-    key was accepted, even if the shared players table is not set up
-    yet (that comes back as a table error, not a key error).
-    A network error means the game is offline. The key is never
-    in the message or the log.
+    Returns (ok, message). It calls the server's arena_state
+    function with no session, which only answers "signed out",
+    so it reads and changes nothing. A 401 or 403 means the key
+    was rejected. A 404 means the key works but the server
+    functions are not set up yet. A network error means the
+    game is offline. The key is never in the message or the log.
     """
-    url = config["url"].rstrip("/") + "/rest/v1/players?select=player_code&limit=1"
-    request = urllib.request.Request(url)
+    url = config["url"].rstrip("/") + "/rest/v1/rpc/arena_state"
+    request = urllib.request.Request(
+        url, data=json.dumps({"p_token": ""}).encode("utf-8"), method="POST"
+    )
     request.add_header("apikey", config["key"])
     request.add_header("Authorization", "Bearer " + config["key"])
+    request.add_header("Content-Type", "application/json")
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             response.read()
-            return True, "Supabase answered, and the key was accepted."
+            return True, "Supabase answered, the key was accepted, and the game's server is set up."
     except urllib.error.HTTPError as error:
         if error.code in (401, 403):
             logging.error(
@@ -184,18 +186,18 @@ def test_connection(config, timeout=15):
                 "key from Project Settings, then API Keys, not the "
                 "secret key."
             )
-        # The server answered, so the key got through. A 404 here
-        # usually means the shared players table is not set up yet.
-        logging.info(
-            "Online test: Supabase answered with HTTP %d; the key "
-            "was accepted, but the shared players table may not be set up yet.",
-            error.code,
-        )
-        return True, (
-            "Supabase answered and the key was accepted, but the "
-            "shared players table may not be set up yet. Run "
-            "supabase_schema.sql in Supabase, SQL Editor, to make it."
-        )
+        if error.code == 404:
+            logging.info(
+                "Online test: the key was accepted, but the server "
+                "functions are not set up yet."
+            )
+            return True, (
+                "Supabase answered and the key was accepted, but the "
+                "game's server is not set up yet. Run "
+                "supabase_schema.sql in Supabase, SQL Editor."
+            )
+        logging.error("Online test: Supabase answered with HTTP %d.", error.code)
+        return False, "Supabase answered with an error (HTTP %d)." % error.code
     except Exception as error:
         logging.error(
             "Online test failed: could not reach Supabase (%s: %s).",

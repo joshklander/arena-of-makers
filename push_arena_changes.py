@@ -35,6 +35,8 @@ TRACKED_FILES = [
     "supabase_config.py",
     "online_save.py",
     "account.py",
+    "remember.py",
+    "README.md",
     "test_key.py",
     "test_online_save.py",
     "supabase_schema.sql",

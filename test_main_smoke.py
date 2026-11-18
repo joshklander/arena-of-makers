@@ -275,6 +275,7 @@ def _make_wx():
     wx.TE_MULTILINE = 1
     wx.TE_READONLY = 2
     wx.TE_RICH2 = 4
+    wx.TE_PASSWORD = 8
     wx.RA_SPECIFY_COLS = 1
     wx.VERTICAL = 1
     wx.HORIZONTAL = 2
@@ -328,22 +329,58 @@ def wait_for_log(text, timeout=5.0):
 
 def main_test():
     # Online only in the tests too: the window gets a fake
-    # online config, and the "server" is a dict in memory.
-    # No local save file is ever written.
+    # online config, and the "server" is a fake in memory that
+    # runs the real rules on its own copy of the fighter, the
+    # way the real server does. The window only shows what the
+    # server sends back. No network, no password, no token, and
+    # no local save file is ever written.
+    import copy
     import online_save as _online_save
-    saved_online = {}
-    def _fake_save(fighter, config):
-        saved_online["fighter"] = dict(fighter)
-        return True, "Saved online."
-    _online_save.save_fighter = _fake_save
-    _online_save.log_action = lambda *args, **kwargs: True
     fighter = game_logic.new_fighter("Bolt", "robot")
     fighter["points"] = 500
-    fighter["player_code"] = "BOLT42"
+    fighter["player_code"] = "4242"
+    server = {"fighter": copy.deepcopy(fighter), "calls": []}
+
+    def _fake_fight(config, opponent_code=None):
+        server["calls"].append("fight")
+        result = game_logic.fight(server["fighter"], rng=random.Random(3))
+        result["fighter"] = copy.deepcopy(server["fighter"])
+        return result, None
+
+    def _fake_upgrade(config, slot):
+        server["calls"].append("upgrade")
+        error = game_logic.start_upgrade(server["fighter"], slot)
+        return copy.deepcopy(server["fighter"]), [], error
+
+    def _fake_state(config):
+        server["calls"].append("state")
+        messages = []
+        done = game_logic.finish_upgrade_if_ready(server["fighter"])
+        if done:
+            messages.append(done)
+        if 0 < server["fighter"]["repair_until"] <= time.time():
+            server["fighter"]["hp"] = server["fighter"]["max_hp"]
+            server["fighter"]["repair_until"] = 0
+            messages.append("Repairs finished. Your fighter is back to full health.")
+        return copy.deepcopy(server["fighter"]), messages, None
+
+    def _fake_voice(config, gender):
+        server["calls"].append("voice")
+        server["fighter"]["gender"] = gender
+        return copy.deepcopy(server["fighter"]), None
+
+    _online_save.fight = _fake_fight
+    _online_save.start_upgrade = _fake_upgrade
+    _online_save.refresh_state = _fake_state
+    _online_save.set_voice = _fake_voice
+    _online_save.heartbeat = lambda *args, **kwargs: True
+    _online_save.sign_out = lambda *args, **kwargs: True
+    _online_save.log_action = lambda *args, **kwargs: True
     frame = main.MainFrame(
         fighter,
-        online_config={"url": "https://example.supabase.co", "key": "sbp_fake"},
-        player_account={"username": "Bolt", "player_code": "BOLT42"},
+        online_config={"url": "https://example.supabase.co",
+                       "key": "sb_publishable_fake", "session": "a" * 64},
+        player_account={"username": "Bolt", "player_code": "4242"},
     )
 
     check("five tabs exist", main.MainFrame.TAB_NAMES == [
@@ -366,9 +403,15 @@ def main_test():
     frame.activate_current()
     check("fight item runs a fight", fighter["wins"] + fighter["losses"] == wins_before + 1)
     check("fight was narrated to the log", "Scrap Rat" in frame.logs["Combat"].text)
-    check("fight saved the game online", saved_online.get("fighter") is not None)
-    check("saved fighter is Bolt online",
-          saved_online["fighter"]["name"] == "Bolt")
+    check("fight ran on the server", server["calls"].count("fight") == 1)
+    check("window shows the server's fighter",
+          fighter["wins"] + fighter["losses"]
+          == server["fighter"]["wins"] + server["fighter"]["losses"])
+    fighter["points"] = 999999  # a cheat in the game's memory
+    server["fighter"]["repair_until"] = 0
+    frame.do_fight()
+    check("a cheat in memory is wiped by the next server answer",
+          fighter["points"] == server["fighter"]["points"] != 999999)
     check("no local save file was created",
           not os.path.exists(os.path.join(
               os.path.dirname(os.path.abspath(__file__)), "arena_save.json")))
@@ -388,18 +431,24 @@ def main_test():
           shop_box.GetString(0).startswith("Upgrade Laser Blaster"))
     frame.activate_current()
     check("shop item starts an upgrade", fighter["upgrade"] is not None)
+    check("upgrade ran on the server", "upgrade" in server["calls"])
     check("upgrade targets the weapon", fighter["upgrade"]["slot"] == "weapon")
 
     # The one-second tick finishes the upgrade once its time is up.
     fighter["upgrade"]["finish"] = 0.0  # pretend the wait is over
+    server["fighter"]["upgrade"]["finish"] = 0.0
     frame.on_tick(mock.MagicMock())
+    check("tick asks the server when an upgrade is due", "state" in server["calls"])
     check("tick finishes a ready upgrade", fighter["upgrade"] is None)
     check("weapon level rose after upgrade", fighter["weapon_level"] == 2)
 
     # The tick heals the fighter back to full health when repairs end.
     fighter["repair_until"] = time.time() - 10  # repair already over
+    server["fighter"]["repair_until"] = fighter["repair_until"]
     frame.was_repairing = True
     fighter["hp"] = 1
+    server["fighter"]["hp"] = 1
+    frame._last_timer_check = 0
     frame.on_tick(mock.MagicMock())
     check("tick heals after repairs finish", fighter["hp"] == fighter["max_hp"])
 
@@ -444,12 +493,39 @@ def main_test():
     settings_box.SetSelection(0)
     frame.activate_current()
     check("voice item switches to female", fighter["gender"] == "female")
-    check("voice item saves the switch online",
-          saved_online["fighter"]["gender"] == "female")
+    check("voice item saves the switch on the server",
+          server["fighter"]["gender"] == "female")
     check("settings now shows female",
           frame.list_items("Settings")[0].startswith("Voice: Female"))
     frame.activate_current()
     check("voice item switches back to male", fighter["gender"] == "male")
+
+    # Settings: keep me signed in turns on and off, through the
+    # server and a stand-in password store.
+    import account as _account
+    import remember as _remember
+    store = {}
+    _remember.keyring = types.SimpleNamespace(
+        get_password=lambda s, n: store.get(n),
+        set_password=lambda s, n, v: store.__setitem__(n, v),
+        delete_password=lambda s, n: store.pop(n),
+    )
+    forgotten = []
+    _account.remember_this_computer = lambda config: ("e" * 64, None)
+    _account.forget_this_computer = lambda config, token: forgotten.append(token) or True
+    frame.refresh_list("Settings")
+    items = frame.list_items("Settings")
+    keep_index = [i for i, item in enumerate(items)
+                  if item.startswith("Keep me signed in")][0]
+    check("keep me signed in starts off", items[keep_index].endswith(": off"))
+    settings_box.SetSelection(keep_index)
+    frame.activate_current()
+    check("keep me signed in turns on", frame.remembered is True)
+    check("the token went to the password store", list(store.values()) == ["e" * 64])
+    frame.activate_current()
+    check("keep me signed in turns off", frame.remembered is False)
+    check("turning it off removes the token here", store == {})
+    check("turning it off tells the server", forgotten == ["e" * 64])
 
     check("still no local save file at the end",
           not os.path.exists(os.path.join(

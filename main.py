@@ -13,18 +13,19 @@ does something once; Shift plus the same letter starts the idle loop.
 
 Run it with:  python main.py
 It needs Python, wxPython, edge-tts and pygame. Arena of Makers is
-online-only: player saves live in Supabase, and every game action
-(fights, upgrades, key presses, setting changes) is sent to the
-server, in that same shared players table, in each player's row. The game will not start without
-a .env file next to it holding SUPABASE_URL and
-SUPABASE_PUBLISHABLE_KEY, in the right shape: the launch check in
-supabase_config.py says so in plain words when something is
-missing or wrong, and never prints or logs the key. Everything
-lives in one shared Supabase table, called players: one row
-per player, holding the account, the fighter, and that
-player's game actions. No key of any
-kind lives in the code: the repository is public, and .env is
-ignored by git. If the game hits a problem, the details are
+online-only, and the server is the only judge of a fighter: every
+fight, upgrade and timer runs on the Supabase server, through the
+arena_* functions in supabase_schema.sql. The game shows what the
+server sends back, so changing the game cannot change a fighter.
+Players sign in with a username, a player code and a password.
+The password box hides what is typed, and the password is never
+saved, logged or shown; the server keeps only a hash of it. The
+game will not start without a .env file next to it holding
+SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY, in the right shape: the
+launch check in supabase_config.py says so in plain words when
+something is missing or wrong, and never prints or logs the key.
+No secret of any kind lives in the code: the repository is public,
+and .env is ignored by git. If the game hits a problem, the details are
 written to arena_log.txt next to this file, so nobody has to open
 a command prompt to see what went wrong. A player can export
 their own data at any time from the More tab: it writes a JSON
@@ -69,6 +70,7 @@ except ImportError:
 import account
 import game_logic
 import online_save
+import remember
 import sounds
 import supabase_config
 import voice_engine
@@ -78,6 +80,11 @@ LOG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "arena_log.t
 
 # Idle fighting does one fight about every 5 seconds.
 IDLE_FIGHT_GAP = 5
+
+# How often the game tells the server this player is still
+# online. The server counts a player as online for 2 minutes
+# after their last check-in.
+HEARTBEAT_GAP = 45
 
 # Turn-by-turn narration: the pause, in seconds, between spoken
 # round lines in a manual fight. The game's one-second timer is
@@ -188,23 +195,29 @@ class CreateFighterDialog(wx.Dialog):
 
 class CreateAccountDialog(wx.Dialog):
     """After the online key check, every launch: sign in with
-    a username and a player code, or make a new account in
-    the same dialog. A new account picks a username, a gender
-    (which picks the voice), a player code of their own (or
-    one the game suggests), and whether they are a robot or
-    a chef fighter. No password is asked for. The username
-    is also the fighter's name. Nothing from this dialog is
-    saved on this computer: the account lives only online."""
+    a username, a player code and a password, or make a new
+    account in the same dialog. A new account also picks a
+    gender (which picks the voice) and whether they are a
+    robot or a chef fighter; a returning player's choices
+    come from the server instead. The username is also the
+    fighter's name.
+
+    The password box hides what is typed. The password is
+    never saved on this computer, never logged and never
+    shown: it goes to the server once, then is dropped.
+    Nothing from this dialog is saved on this computer."""
 
     def __init__(self, parent):
-        super().__init__(parent, title="Make your account")
+        super().__init__(parent, title="Sign in or make your account")
         sizer = wx.BoxSizer(wx.VERTICAL)
         hint = wx.StaticText(
             self,
             label=(
-                "Welcome to Arena of Makers. Pick a username, a "
-                "voice, a player code, and your fighter type. "
-                "Friends can look you up by your player code."
+                "Welcome to Arena of Makers. Type your username, "
+                "player code and password to sign in. New here? "
+                "Pick them now, plus a voice and fighter type, and "
+                "your account is made. Friends can look you up by "
+                "your player code. Never share your password."
             ),
         )
         hint.Wrap(420)
@@ -232,7 +245,7 @@ class CreateAccountDialog(wx.Dialog):
         )
         sizer.Add(self.kind_box, 0, wx.ALL | wx.EXPAND, 10)
 
-        sizer.Add(wx.StaticText(self, label="Player code (4 to 8 letters and numbers):"), 0, wx.LEFT | wx.RIGHT, 10)
+        sizer.Add(wx.StaticText(self, label="Player code (4 digits):"), 0, wx.LEFT | wx.RIGHT, 10)
         self.code_ctrl = wx.TextCtrl(self)
         self.code_ctrl.SetValue(account.generate_player_code())
         sizer.Add(self.code_ctrl, 0, wx.ALL | wx.EXPAND, 10)
@@ -240,6 +253,22 @@ class CreateAccountDialog(wx.Dialog):
         self.new_code_button = wx.Button(self, label="Make a code for me")
         self.new_code_button.Bind(wx.EVT_BUTTON, self.on_new_code)
         sizer.Add(self.new_code_button, 0, wx.ALL, 10)
+
+        sizer.Add(
+            wx.StaticText(self, label="Password (at least 8 characters, hidden):"),
+            0, wx.LEFT | wx.RIGHT, 10,
+        )
+        self.password_ctrl = wx.TextCtrl(self, style=wx.TE_PASSWORD)
+        sizer.Add(self.password_ctrl, 0, wx.ALL | wx.EXPAND, 10)
+
+        # Only offered when this computer has a password store.
+        # Off unless the player ticks it.
+        self.keep_box = None
+        if remember.available():
+            self.keep_box = wx.CheckBox(
+                self, label="Keep me signed in on this computer"
+            )
+            sizer.Add(self.keep_box, 0, wx.ALL, 10)
 
         buttons = self.CreateButtonSizer(wx.OK | wx.CANCEL)
         sizer.Add(buttons, 0, wx.ALL | wx.ALIGN_RIGHT, 10)
@@ -251,18 +280,57 @@ class CreateAccountDialog(wx.Dialog):
     def on_new_code(self, event):
         self.code_ctrl.SetValue(account.generate_player_code())
 
+    def keep_signed_in(self):
+        return bool(self.keep_box is not None and self.keep_box.GetValue())
+
     def get_result(self):
-        """Return (username, gender, kind, player_code), or None
-        when the username or the code is not usable."""
+        """Return (username, gender, kind, player_code, password),
+        or None when the username, code or password is empty or
+        not usable. The password box is cleared once read."""
         name = self.name_ctrl.GetValue().strip()
-        if not name:
+        password = self.password_ctrl.GetValue()
+        self.password_ctrl.SetValue("")
+        if not name or not password:
             return None
         code = account.clean_player_code(self.code_ctrl.GetValue())
         if account.validate_player_code(code):
             return None
         kind = "robot" if self.kind_box.GetSelection() == 0 else "chef"
         gender = "male" if self.gender_box.GetSelection() == 0 else "female"
-        return name, gender, kind, code
+        return name, gender, kind, code, password
+
+
+class ConfirmPasswordDialog(wx.Dialog):
+    """New accounts only: type the password once more, so a
+    typing slip in a hidden box does not lock the player out."""
+
+    def __init__(self, parent, player_code):
+        super().__init__(parent, title="Make a new account")
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        hint = wx.StaticText(
+            self,
+            label=(
+                "Nobody has the player code %s yet, so this makes a new "
+                "account. Type your password again to confirm it."
+                % player_code
+            ),
+        )
+        hint.Wrap(420)
+        sizer.Add(hint, 0, wx.ALL, 10)
+        sizer.Add(wx.StaticText(self, label="Password again (hidden):"),
+                  0, wx.LEFT | wx.RIGHT, 10)
+        self.password_ctrl = wx.TextCtrl(self, style=wx.TE_PASSWORD)
+        sizer.Add(self.password_ctrl, 0, wx.ALL | wx.EXPAND, 10)
+        buttons = self.CreateButtonSizer(wx.OK | wx.CANCEL)
+        sizer.Add(buttons, 0, wx.ALL | wx.ALIGN_RIGHT, 10)
+        self.SetSizer(sizer)
+        sizer.Fit(self)
+        wx.CallAfter(self.password_ctrl.SetFocus)
+
+    def get_result(self):
+        password = self.password_ctrl.GetValue()
+        self.password_ctrl.SetValue("")
+        return password
 
 
 class FindPlayerDialog(wx.Dialog):
@@ -304,8 +372,11 @@ class MainFrame(wx.Frame):
         "Settings": "Settings. Voice, sound effects, and volume.",
     }
 
-    def __init__(self, fighter, online_config=None, player_account=None):
+    def __init__(self, fighter, online_config=None, player_account=None,
+                 remembered=False):
         super().__init__(None, title=APP_TITLE, size=(640, 480))
+        # True when "Keep me signed in on this computer" is on.
+        self.remembered = remembered
         self.fighter = fighter
         # The account made on first launch: {"username": ...,
         # "player_code": ...}. The fighter carries the player
@@ -318,10 +389,15 @@ class MainFrame(wx.Frame):
         # the player's own .env file, checked at launch in
         # run_game(). None in the headless tests, where there is
         # no .env and no server: those tests use the local save only.
+        # online_config also holds the session token, in memory
+        # only. With it, every fight and upgrade runs on the
+        # server, which is the only judge of the fighter.
         self.online_config = online_config
         self.online_status = (
             "Online: Supabase" if online_config else "Offline: no online key"
         )
+        self.last_heartbeat = time.time()
+        self._last_timer_check = 0.0
         self.random = random.Random()
         self.idle_fighting = False
         self.last_idle_fight = 0.0
@@ -442,7 +518,7 @@ class MainFrame(wx.Frame):
                 "Quests (coming soon)",
                 "Export my data (save a copy on this computer)",
                 "Look up a player by code",
-                "See all players",
+                "See who is online",
                 "Fight a player by code",
                 "My player code: %s" % (
                     self.player_account["player_code"]
@@ -463,6 +539,11 @@ class MainFrame(wx.Frame):
                 "Background music: %s" % music,
                 "Lower volume (now %d percent)" % self.volume,
                 "Raise volume (now %d percent)" % self.volume,
+                "Keep me signed in on this computer: %s" % (
+                    ("on" if self.remembered else "off")
+                    if remember.available() and self.online_config
+                    else "not available"
+                ),
             ]
         return []
 
@@ -718,25 +799,29 @@ class MainFrame(wx.Frame):
                 player_code=self.fighter.get("player_code"),
             )
 
-    def save(self):
-        # Online only. There is no local save file, and this
-        # never creates one. If there is no online key, or the
-        # online save fails, the game says so plainly instead
-        # of quietly writing a local file.
-        if not self.online_config:
-            self.online_status = "Online save failed: no online key."
-            logging.error("Save failed: no online key, and no local file is used.")
+    def use_server_fighter(self, server_fighter):
+        """Show the fighter exactly as the server has it. The
+        game never saves a fighter itself: the server changes
+        it, and the game only copies the server's answer. The
+        dict is updated in place, so every part of the window
+        sees the same fighter."""
+        if not server_fighter:
             return
-        ok, message = online_save.save_fighter(
-            self.fighter, self.online_config
-        )
-        self.online_status = (
-            "Online: saved to Supabase"
-            if ok
-            else "Online save failed: " + message
-        )
-        if not ok:
-            logging.error("Save: %s", message)
+        code = self.fighter.get("player_code")
+        username = self.fighter.get("username")
+        self.fighter.clear()
+        self.fighter.update(server_fighter)
+        if code:
+            self.fighter.setdefault("player_code", code)
+        if username:
+            self.fighter.setdefault("username", username)
+
+    def server_problem(self, error):
+        """Say a server problem in plain words, and keep it for
+        the Online line on the More tab."""
+        self.online_status = "Online problem: " + error
+        logging.error("Server: %s", error)
+        self.announce(error)
 
     def do_export(self):
         """Export this player's own data only: their fighter and
@@ -806,34 +891,28 @@ class MainFrame(wx.Frame):
             )
 
     def do_list_players(self):
-        """See everyone in the one shared table, so players can
-        look each other up, fight each other, and help each other."""
+        """Hear who else is online right now, with their codes,
+        so you can look them up or fight them."""
         if not self.online_config:
-            self.announce("Seeing all players needs the online key.")
+            self.announce("Seeing who is online needs the online key.")
             return
-        players, error = online_save.list_players(self.online_config)
+        players, error = online_save.list_online_players(self.online_config)
         if error:
             self.announce(error)
             return
         if not players:
-            self.announce("No players yet. You are the first.")
+            self.announce("Nobody else is online right now.")
             return
-        lines = []
-        for row in players:
-            fighter = row.get("fighter") or {}
-            if fighter:
-                lines.append(
-                    "%s, code %s, level %d %s"
-                    % (row.get("username"), row.get("player_code"),
-                       fighter.get("level", 1), fighter.get("kind", ""))
-                )
-            else:
-                lines.append(
-                    "%s, code %s, no fighter yet"
-                    % (row.get("username"), row.get("player_code"))
-                )
+        lines = [
+            "%s, code %s, level %s %s"
+            % (row.get("username"), row.get("player_code"),
+               row.get("level") or 1, row.get("kind") or "")
+            for row in players
+        ]
+        count = len(players)
         self.announce(
-            "%d players: %s." % (len(players), "; ".join(lines))
+            "%d %s online: %s."
+            % (count, "player" if count == 1 else "players", "; ".join(lines))
         )
 
     def do_fight_player(self):
@@ -868,34 +947,79 @@ class MainFrame(wx.Frame):
             "Fighting %s, level %d %s."
             % (found["username"], fighter.get("level", 1), fighter.get("kind", ""))
         )
-        self._log_online(
-            "fight_player",
-            {"opponent_code": found["player_code"],
-             "opponent": found["username"],
-             "opponent_level": fighter.get("level", 1)},
-        )
-        self.do_fight()
+        self.do_fight(opponent_code=found["player_code"])
 
     # -- actions -------------------------------------------------------
 
-    def do_fight(self, idle=False):
+    def do_fight(self, idle=False, opponent_code=None):
         """Fight one creature. A manual fight (F, or Enter on the
         fight item) is narrated turn by turn, round by round.
         An idle fight speaks only its last line -- the result --
         and plays no fight sounds, so idle fighting every 5
-        seconds can never build a speech or sound backlog."""
-        result = game_logic.fight(self.fighter, rng=self.random)
+        seconds can never build a speech or sound backlog.
+
+        Online, the server runs the fight with its own dice and
+        sends back the lines and the new fighter; the server
+        also records the fight. Only the headless tests, which
+        have no server, run the fight here, and nothing they do
+        is ever saved."""
+        if self.online_config:
+            result, error = online_save.fight(
+                self.online_config, opponent_code=opponent_code
+            )
+            if error:
+                if idle:
+                    self.idle_fighting = False
+                self.server_problem(error)
+                self.refresh_all()
+                return
+            self.use_server_fighter(result.get("fighter"))
+        else:
+            result = game_logic.fight(self.fighter, rng=self.random)
         self.log(result["lines"])
         if idle:
             self.announce(result["lines"][-1])
         else:
             self.announce_sequence(result["lines"])
-        self._log_online(
-            "fight",
-            {"won": result["won"], "xp": result["xp"],
-             "points": result["points"], "idle": idle},
-        )
-        self.save()
+        self.refresh_all()
+
+    def toggle_keep_signed_in(self):
+        """Turn keep me signed in on or off. On: the server
+        makes a remember token, kept in Windows Credential
+        Manager. Off: the token is deleted there and on the
+        server, so it stops working at once."""
+        if not (remember.available() and self.online_config):
+            self.announce(
+                "Keep me signed in is not available on this computer. "
+                "It needs the keyring package."
+            )
+            return
+        if self.remembered:
+            token = remember.load_token(self.online_config)
+            account.forget_this_computer(self.online_config, token)
+            remember.forget_token(self.online_config)
+            self.remembered = False
+            self.announce(
+                "Keep me signed in is off. Next time, you will sign in "
+                "with your password."
+            )
+        else:
+            token, error = account.remember_this_computer(self.online_config)
+            if error:
+                self.server_problem(error)
+                return
+            if not remember.save_token(self.online_config, token):
+                account.forget_this_computer(self.online_config, token)
+                self.announce(
+                    "Keep me signed in could not be saved on this computer, "
+                    "so it is still off."
+                )
+                return
+            self.remembered = True
+            self.announce(
+                "Keep me signed in is on. Next time, the game signs you in "
+                "by itself. Turn this off on a shared computer."
+            )
         self.refresh_all()
 
     def toggle_idle(self):
@@ -919,9 +1043,18 @@ class MainFrame(wx.Frame):
         self.refresh_all()
 
     def do_upgrade(self, slot):
-        error = game_logic.start_upgrade(self.fighter, slot)
+        """Start a timed upgrade. Online, the server checks the
+        points, takes the cost and sets the finish time."""
+        if self.online_config:
+            server_fighter, _messages, error = online_save.start_upgrade(
+                self.online_config, slot
+            )
+            self.use_server_fighter(server_fighter)
+        else:
+            error = game_logic.start_upgrade(self.fighter, slot)
         if error:
             self.announce(error)
+            self.refresh_all()
             return
         upgrade = self.fighter["upgrade"]
         self.announce(
@@ -932,10 +1065,6 @@ class MainFrame(wx.Frame):
                 game_logic.format_time(upgrade["finish"] - time.time()),
             )
         )
-        self._log_online(
-            "upgrade_" + slot, {"level": upgrade["level"]}
-        )
-        self.save()
         self.refresh_all()
 
     def activate_current(self):
@@ -982,7 +1111,7 @@ class MainFrame(wx.Frame):
             self.do_export()
         elif tab == "More" and item.startswith("Look up a player"):
             self.do_lookup()
-        elif tab == "More" and item.startswith("See all players"):
+        elif tab == "More" and item.startswith("See who is online"):
             self.do_list_players()
         elif tab == "More" and item.startswith("Fight a player"):
             self.do_fight_player()
@@ -999,10 +1128,18 @@ class MainFrame(wx.Frame):
             self.announce(self.online_status)
         elif tab == "Settings" and item.startswith("Voice:"):
             gender = "female" if self.fighter.get("gender", "male") == "male" else "male"
-            self.fighter["gender"] = gender
+            if self.online_config:
+                server_fighter, error = online_save.set_voice(
+                    self.online_config, gender
+                )
+                if error:
+                    self.server_problem(error)
+                    return
+                self.use_server_fighter(server_fighter)
+            else:
+                self.fighter["gender"] = gender
             if self.voice is not None:
                 self.voice.set_voice(voice_engine.voice_for_gender(gender))
-            self.save()
             self.announce("Voice set to %s." % gender)
             self.refresh_all()
         elif tab == "Settings" and item.startswith("Sound effects:"):
@@ -1020,6 +1157,8 @@ class MainFrame(wx.Frame):
                 self.sounds.stop_music()
             self.announce("Background music %s." % ("on" if self.music_on else "off"))
             self.refresh_all()
+        elif tab == "Settings" and item.startswith("Keep me signed in"):
+            self.toggle_keep_signed_in()
         elif tab == "Settings" and item.startswith("Lower volume"):
             self.volume = max(0, self.volume - 10)
             self.sounds.set_volume(self.volume)
@@ -1115,22 +1254,58 @@ class MainFrame(wx.Frame):
                 self.idle_fighting = False
                 self.announce("Idle fighting stopped while your fighter repairs.")
                 self.refresh_all()
-        done = game_logic.finish_upgrade_if_ready(self.fighter, now)
-        if done:
-            self.announce(done)
-            self.save()
-            self.refresh_all()
-        repairing = game_logic.is_repairing(self.fighter, now)
-        if self.was_repairing and not repairing:
-            self.fighter["hp"] = self.fighter["max_hp"]
-            self.announce("Repairs finished. Your fighter is back to full health.")
-            self.save()
-            self.refresh_all()
-        self.was_repairing = repairing
+        if self.online_config:
+            self._tick_online(now)
+        else:
+            done = game_logic.finish_upgrade_if_ready(self.fighter, now)
+            if done:
+                self.announce(done)
+                self.refresh_all()
+            repairing = game_logic.is_repairing(self.fighter, now)
+            if self.was_repairing and not repairing:
+                self.fighter["hp"] = self.fighter["max_hp"]
+                self.announce("Repairs finished. Your fighter is back to full health.")
+                self.refresh_all()
+        self.was_repairing = game_logic.is_repairing(self.fighter, now)
         self.SetStatusText(game_logic.status_text(self.fighter, now))
 
+    def _tick_online(self, now):
+        """When this computer's clock says an upgrade or repair
+        is done, ask the server: the server's clock decides,
+        and it finishes them. Otherwise, check in now and then
+        so friends can see this player is online."""
+        upgrade = self.fighter.get("upgrade")
+        upgrade_due = bool(upgrade) and now >= upgrade.get("finish", 0)
+        repair_due = (
+            self.fighter.get("repair_until", 0) > 0
+            and not game_logic.is_repairing(self.fighter, now)
+        )
+        if upgrade_due or repair_due:
+            # Ask at most every few seconds, in case the two
+            # clocks disagree a little.
+            if now - self._last_timer_check < 3:
+                return
+            self._last_timer_check = now
+            server_fighter, messages, error = online_save.refresh_state(
+                self.online_config
+            )
+            self.last_heartbeat = now
+            if error:
+                self.server_problem(error)
+                return
+            self.use_server_fighter(server_fighter)
+            for message in messages:
+                self.announce(message)
+            if messages:
+                self.refresh_all()
+            return
+        if now - self.last_heartbeat >= HEARTBEAT_GAP:
+            self.last_heartbeat = now
+            online_save.heartbeat(self.online_config)
+
     def on_close(self, event):
-        self.save()
+        if self.online_config:
+            online_save.sign_out(self.online_config)
         self.timer.Stop()
         self._cancel_narration()
         self.sounds.stop_music()
@@ -1157,130 +1332,106 @@ def run_game():
         )
         return
 
-    # Sign in every launch: the player types their username
-    # and player code, and the game looks the account up
-    # online, in the one shared players table. There is no
-    # local account file and no local save file to fall back
-    # to, so if the code is not found online, this is a new
-    # account, and it is made online here, with the username,
-    # gender, kind and code the player picked in this same
-    # dialog. If that online creation fails, the game says
-    # so and stops: it does not make a local file instead.
-    dialog = CreateAccountDialog(None)
-    if dialog.ShowModal() != wx.ID_OK:
-        dialog.Destroy()
-        return
-    result = dialog.get_result()
-    dialog.Destroy()
-    if result is None:
-        wx.MessageBox(
-            "Give yourself a username, and a player code of "
-            "4 to 8 letters and numbers.",
-            "Arena of Makers",
-            wx.OK | wx.ICON_INFORMATION,
-        )
-        return
-    username, gender, kind, code = result
-    player_account, lookup_error = account.lookup_player(config, code)
-    if player_account is not None and player_account["username"] != username:
-        wx.MessageBox(
-            "That player code belongs to %s, not %s. Check the code and try again."
-            % (player_account["username"], username),
-            "Arena of Makers",
-            wx.OK | wx.ICON_INFORMATION,
-        )
-        return
-    new_account = None
-    if player_account is None:
-        made, create_error = account.create_account(
-            config, username, code, gender=gender, kind=kind
-        )
-        if made is None:
+    # Sign in: the player types their username,
+    # player code and password. When nobody has that code yet,
+    # the same details make a new account, after the password
+    # is typed once more. The server makes the level 1 fighter
+    # with the account. There is no local account file and no
+    # local save file to fall back to.
+    #
+    # The password is only ever held in a local variable here,
+    # sent to the server once over HTTPS, and then dropped. It
+    # is never logged, saved or shown.
+    # Keep me signed in: when a remember token is saved in
+    # Windows Credential Manager, try it first, with no dialog.
+    session = None
+    keep_signed_in = False
+    remembered = False
+    saved_token = remember.load_token(config)
+    if saved_token:
+        session, error, forget = account.resume(config, saved_token)
+        del saved_token
+        if session is not None:
+            remembered = remember.save_token(config, session["remember_token"])
+        elif forget:
+            remember.forget_token(config)
+        else:
             wx.MessageBox(
-                "Your account could not be made online: %s "
-                "The game does not make a local file instead, "
-                "so check the players table is set up in Supabase "
-                "and try again." % create_error,
+                error or "Signing in did not work. Try again.",
                 "Arena of Makers",
                 wx.OK | wx.ICON_INFORMATION,
             )
             return
-        player_account = made
-        new_account = (username, gender, kind)
-    else:
-        player_account["username"] = username
 
-    fighter = None
-    if new_account is None:
-        # Returning player: load their fighter from their row
-        # in the one shared players table. No local file.
-        online_fighter, load_error = online_save.load_fighter(
-            config, player_code=player_account["player_code"]
-        )
-        if load_error:
-            wx.MessageBox(
-                "Your fighter could not be loaded online: %s "
-                "The game does not use a local file instead."
-                % load_error,
-                "Arena of Makers",
-                wx.OK | wx.ICON_INFORMATION,
-            )
-            return
-        fighter = online_fighter
-    if fighter is None and new_account is not None:
-        username, gender, kind = new_account
-        try:
-            fighter = game_logic.new_fighter(username, kind, gender)
-        except ValueError as error:
-            wx.MessageBox(str(error), "Arena of Makers", wx.OK | wx.ICON_INFORMATION)
-            return
-        ok, save_error = online_save.save_fighter(fighter, config)
-        if not ok:
-            wx.MessageBox(
-                "Your fighter could not be saved online: %s "
-                "The game does not make a local file instead."
-                % save_error,
-                "Arena of Makers",
-                wx.OK | wx.ICON_INFORMATION,
-            )
-            return
-    if fighter is None:
-        # A returning player with an account but no fighter
-        # yet: make one with the fighter dialog.
-        dialog = CreateFighterDialog(None)
+    if session is None:
+        dialog = CreateAccountDialog(None)
         if dialog.ShowModal() != wx.ID_OK:
             dialog.Destroy()
             return
         result = dialog.get_result()
+        keep_signed_in = dialog.keep_signed_in()
         dialog.Destroy()
         if result is None:
             wx.MessageBox(
-                "Give your fighter a name first.",
+                "Type a username, a 4-digit player code, and a password.",
                 "Arena of Makers",
                 wx.OK | wx.ICON_INFORMATION,
             )
             return
-        kind, name, gender = result
-        try:
-            fighter = game_logic.new_fighter(name, kind, gender)
-        except ValueError as error:
-            wx.MessageBox(str(error), "Arena of Makers", wx.OK | wx.ICON_INFORMATION)
-            return
-        ok, save_error = online_save.save_fighter(fighter, config)
-        if not ok:
+        username, gender, kind, code, password = result
+        session, error, no_account = account.sign_in(config, code, username, password)
+        if no_account:
+            problem = account.validate_password(password)
+            if problem is None:
+                confirm = ConfirmPasswordDialog(None, code)
+                if confirm.ShowModal() != wx.ID_OK:
+                    confirm.Destroy()
+                    return
+                again = confirm.get_result()
+                confirm.Destroy()
+                if again != password:
+                    problem = (
+                        "The two passwords were not the same, so no account "
+                        "was made. Start the game again and retype them."
+                    )
+                del again
+            if problem is None:
+                session, error = account.create_account(
+                    config, username, code, password, gender=gender, kind=kind
+                )
+            else:
+                error = problem
+        del password
+        if session is None:
             wx.MessageBox(
-                "Your fighter could not be saved online: %s "
-                "The game does not make a local file instead."
-                % save_error,
+                error or "Signing in did not work. Try again.",
                 "Arena of Makers",
                 wx.OK | wx.ICON_INFORMATION,
             )
             return
-    # Fill in any field an older save is missing.
-    if fighter is not None and player_account is not None:
-        fighter.setdefault("player_code", player_account["player_code"])
-        fighter.setdefault("username", player_account["username"])
-    frame = MainFrame(fighter, online_config=config, player_account=player_account)
+    # The session token lives in memory only, with the URL and
+    # the publishable key. It is never written to disk or logged.
+    config["session"] = session["token"]
+    player_account = session["account"]
+    fighter = session["fighter"]
+    if not fighter:
+        wx.MessageBox(
+            "The server did not send your fighter. Try again.",
+            "Arena of Makers",
+            wx.OK | wx.ICON_INFORMATION,
+        )
+        return
+    logging.info("Signed in as player code %s.", player_account.get("player_code"))
+    if keep_signed_in and not remembered:
+        token, keep_error = account.remember_this_computer(config)
+        if token and remember.save_token(config, token):
+            remembered = True
+        else:
+            if token:
+                account.forget_this_computer(config, token)
+            logging.warning("Keep me signed in could not be turned on.")
+    frame = MainFrame(fighter, online_config=config,
+                      player_account=player_account, remembered=remembered)
     frame.Show()
     app.MainLoop()
 

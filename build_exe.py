@@ -56,6 +56,10 @@ def main():
             "ArenaOfMakers",
             "--add-data",
             sounds_data,
+            # keyring finds its Windows backend at run time, so
+            # name it here or the exe may not include it.
+            "--hidden-import",
+            "keyring.backends.Windows",
             "main.py",
         ],
         "Building the game exe...",

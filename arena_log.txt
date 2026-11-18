@@ -43,3 +43,172 @@
 2026-11-16 22:20:06,959 INFO: Voice: mixer is playing.
 2026-11-16 22:20:23,497 INFO: Voice thread stopped.
 2026-11-16 22:20:23,549 INFO: Arena of Makers closed.
+2026-11-17 18:52:39,285 INFO: Arena of Makers started.
+2026-11-17 18:52:39,287 ERROR: Online check failed: no .env file next to the game (C:\Users\Josh\Saved Games\Arena of Makers\.env).
+2026-11-17 18:52:39,288 ERROR: Launch: online check failed.
+2026-11-17 18:53:04,371 INFO: Arena of Makers closed.
+2026-11-17 18:55:10,543 INFO: Arena of Makers started.
+2026-11-17 18:55:10,557 ERROR: Online check failed: the publishable key does not look like a Supabase publishable key: it should start with sbp_ or with eyJ.
+2026-11-17 18:55:10,557 ERROR: Launch: online check failed.
+2026-11-17 18:55:59,307 INFO: Arena of Makers closed.
+2026-11-17 19:36:32,034 INFO: Arena of Makers started.
+2026-11-17 19:36:32,038 INFO: Online check passed: Supabase URL is a project URL and a publishable key is present in the right shape.
+2026-11-17 19:37:03,416 INFO: Arena of Makers closed.
+2026-11-17 19:42:55,685 INFO: Arena of Makers started.
+2026-11-17 19:42:55,688 INFO: Online check passed: Supabase URL is a project URL and a publishable key is present in the right shape.
+2026-11-17 19:43:38,314 INFO: Signed in as player code 5575.
+2026-11-17 19:43:38,386 INFO: Voice startup: Python C:\Program Files\Python313\python.exe; edge-tts installed; pygame installed; voice en-US-GuyNeural; volume 40 percent.
+2026-11-17 19:43:38,416 INFO: Voice: engine started, voice en-US-GuyNeural.
+2026-11-17 19:43:38,417 INFO: Sound missing, skipped: robot_laser.wav
+2026-11-17 19:43:38,417 INFO: Sound missing, skipped: robot_servo.wav
+2026-11-17 19:43:38,417 INFO: Sound missing, skipped: robot_clank.wav
+2026-11-17 19:43:38,417 INFO: Sound missing, skipped: chef_chop.wav
+2026-11-17 19:43:38,417 INFO: Sound missing, skipped: chef_sizzle.wav
+2026-11-17 19:43:38,417 INFO: Sound missing, skipped: pan_clang.wav
+2026-11-17 19:43:38,417 INFO: Sound missing, skipped: win_jingle.wav
+2026-11-17 19:43:38,417 INFO: Sound missing, skipped: loss_sound.wav
+2026-11-17 19:43:38,417 INFO: Sound missing, skipped: music_loop.mp3
+2026-11-17 19:43:38,417 INFO: Sounds: loaded 0 of 9: none.
+2026-11-17 19:43:38,426 INFO: Voice: speaking "Welcome to Arena of Makers, Freddy." with en-US-GuyNeural.
+2026-11-17 19:43:39,095 INFO: Voice: made "Welcome to Arena of Makers, Freddy." with en-US-GuyNeural (19440 bytes).
+2026-11-17 19:43:39,104 INFO: Voice: playing voice file (19440 bytes).
+2026-11-17 19:43:39,415 INFO: Voice: mixer is playing.
+2026-11-17 19:43:46,483 INFO: Voice: speaking "Combat. Fight one creature, or let idle ..." with en-US-GuyNeural.
+2026-11-17 19:43:47,688 INFO: Voice: made "Combat. Fight one creature, or let idle ..." with en-US-GuyNeural (32976 bytes).
+2026-11-17 19:43:47,695 INFO: Voice: playing voice file (32976 bytes).
+2026-11-17 19:43:47,997 INFO: Voice: mixer is playing.
+2026-11-17 19:43:55,180 INFO: Voice: speaking "A Scrap Rat appears! Level 1." with en-US-GuyNeural.
+2026-11-17 19:43:56,087 INFO: Voice: made "A Scrap Rat appears! Level 1." with en-US-GuyNeural (24336 bytes).
+2026-11-17 19:43:56,097 INFO: Voice: playing voice file (24336 bytes).
+2026-11-17 19:43:56,411 INFO: Voice: mixer is playing.
+2026-11-17 19:44:01,410 INFO: Voice: speaking "Round 1: Freddy hits the Scrap Rat for 1..." with en-US-GuyNeural.
+2026-11-17 19:44:02,218 INFO: Voice: made "Round 1: Freddy hits the Scrap Rat for 1..." with en-US-GuyNeural (22752 bytes).
+2026-11-17 19:44:02,228 INFO: Voice: playing voice file (22752 bytes).
+2026-11-17 19:44:02,546 INFO: Voice: mixer is playing.
+2026-11-17 19:44:07,415 INFO: Voice: speaking "Round 1: The Scrap Rat hits Freddy for 3..." with en-US-GuyNeural.
+2026-11-17 19:44:08,520 INFO: Voice: made "Round 1: The Scrap Rat hits Freddy for 3..." with en-US-GuyNeural (21312 bytes).
+2026-11-17 19:44:08,531 INFO: Voice: playing voice file (21312 bytes).
+2026-11-17 19:44:08,840 INFO: Voice: mixer is playing.
+2026-11-17 19:44:13,415 INFO: Voice: speaking "Round 2: Freddy hits the Scrap Rat for 1..." with en-US-GuyNeural.
+2026-11-17 19:44:14,511 INFO: Voice: made "Round 2: Freddy hits the Scrap Rat for 1..." with en-US-GuyNeural (21888 bytes).
+2026-11-17 19:44:14,520 INFO: Voice: playing voice file (21888 bytes).
+2026-11-17 19:44:14,828 INFO: Voice: mixer is playing.
+2026-11-17 19:44:19,406 INFO: Voice: speaking "Round 2: The Scrap Rat hits Freddy for 4..." with en-US-GuyNeural.
+2026-11-17 19:44:20,299 INFO: Voice: made "Round 2: The Scrap Rat hits Freddy for 4..." with en-US-GuyNeural (21744 bytes).
+2026-11-17 19:44:20,307 INFO: Voice: playing voice file (21744 bytes).
+2026-11-17 19:44:20,623 INFO: Voice: mixer is playing.
+2026-11-17 19:44:25,412 INFO: Voice: speaking "Round 3: Freddy hits the Scrap Rat for 1..." with en-US-GuyNeural.
+2026-11-17 19:44:26,416 INFO: Voice: made "Round 3: Freddy hits the Scrap Rat for 1..." with en-US-GuyNeural (22752 bytes).
+2026-11-17 19:44:26,427 INFO: Voice: playing voice file (22752 bytes).
+2026-11-17 19:44:26,735 INFO: Voice: mixer is playing.
+2026-11-17 19:44:31,410 INFO: Voice: speaking "You won! You earned 25 experience and 15..." with en-US-GuyNeural.
+2026-11-17 19:44:32,183 INFO: Voice: made "You won! You earned 25 experience and 15..." with en-US-GuyNeural (32112 bytes).
+2026-11-17 19:44:32,192 INFO: Voice: playing voice file (32112 bytes).
+2026-11-17 19:44:32,505 INFO: Voice: mixer is playing.
+2026-11-17 19:45:14,916 INFO: Voice thread stopped.
+2026-11-17 19:45:14,970 INFO: Arena of Makers closed.
+2026-11-17 19:45:23,817 INFO: Arena of Makers started.
+2026-11-17 19:45:23,821 INFO: Online check passed: Supabase URL is a project URL and a publishable key is present in the right shape.
+2026-11-17 19:45:51,458 INFO: Signed in as player code 5575.
+2026-11-17 19:45:51,548 INFO: Voice startup: Python C:\Program Files\Python313\python.exe; edge-tts installed; pygame installed; voice en-US-GuyNeural; volume 40 percent.
+2026-11-17 19:45:51,587 INFO: Voice: engine started, voice en-US-GuyNeural.
+2026-11-17 19:45:51,587 INFO: Sound missing, skipped: robot_laser.wav
+2026-11-17 19:45:51,587 INFO: Sound missing, skipped: robot_servo.wav
+2026-11-17 19:45:51,587 INFO: Sound missing, skipped: robot_clank.wav
+2026-11-17 19:45:51,587 INFO: Sound missing, skipped: chef_chop.wav
+2026-11-17 19:45:51,587 INFO: Sound missing, skipped: chef_sizzle.wav
+2026-11-17 19:45:51,588 INFO: Sound missing, skipped: pan_clang.wav
+2026-11-17 19:45:51,588 INFO: Sound missing, skipped: win_jingle.wav
+2026-11-17 19:45:51,588 INFO: Sound missing, skipped: loss_sound.wav
+2026-11-17 19:45:51,588 INFO: Sound missing, skipped: music_loop.mp3
+2026-11-17 19:45:51,588 INFO: Sounds: loaded 0 of 9: none.
+2026-11-17 19:45:51,599 INFO: Voice: speaking "Welcome to Arena of Makers, Freddy." with en-US-GuyNeural.
+2026-11-17 19:45:52,354 INFO: Voice: made "Welcome to Arena of Makers, Freddy." with en-US-GuyNeural (19440 bytes).
+2026-11-17 19:45:52,364 INFO: Voice: playing voice file (19440 bytes).
+2026-11-17 19:45:52,673 INFO: Voice: mixer is playing.
+2026-11-17 19:46:20,447 INFO: Voice thread stopped.
+2026-11-17 19:46:20,493 INFO: Arena of Makers closed.
+2026-11-17 19:56:05,926 INFO: Arena of Makers started.
+2026-11-17 19:56:05,929 INFO: Online check passed: Supabase URL is a project URL and a publishable key is present in the right shape.
+2026-11-17 19:56:29,988 INFO: Signed in as player code 5575.
+2026-11-17 19:56:30,046 INFO: Voice startup: Python C:\Program Files\Python313\python.exe; edge-tts installed; pygame installed; voice en-US-GuyNeural; volume 40 percent.
+2026-11-17 19:56:30,077 INFO: Voice: engine started, voice en-US-GuyNeural.
+2026-11-17 19:56:30,077 INFO: Sound missing, skipped: robot_laser.wav
+2026-11-17 19:56:30,077 INFO: Sound missing, skipped: robot_servo.wav
+2026-11-17 19:56:30,077 INFO: Sound missing, skipped: robot_clank.wav
+2026-11-17 19:56:30,077 INFO: Sound missing, skipped: chef_chop.wav
+2026-11-17 19:56:30,077 INFO: Sound missing, skipped: chef_sizzle.wav
+2026-11-17 19:56:30,077 INFO: Sound missing, skipped: pan_clang.wav
+2026-11-17 19:56:30,077 INFO: Sound missing, skipped: win_jingle.wav
+2026-11-17 19:56:30,077 INFO: Sound missing, skipped: loss_sound.wav
+2026-11-17 19:56:30,077 INFO: Sound missing, skipped: music_loop.mp3
+2026-11-17 19:56:30,077 INFO: Sounds: loaded 0 of 9: none.
+2026-11-17 19:56:30,091 INFO: Voice: speaking "Welcome to Arena of Makers, Freddy." with en-US-GuyNeural.
+2026-11-17 19:56:30,814 INFO: Voice: made "Welcome to Arena of Makers, Freddy." with en-US-GuyNeural (19440 bytes).
+2026-11-17 19:56:30,824 INFO: Voice: playing voice file (19440 bytes).
+2026-11-17 19:56:31,144 INFO: Voice: mixer is playing.
+2026-11-17 19:56:38,439 INFO: Voice thread stopped.
+2026-11-17 19:56:38,500 INFO: Arena of Makers closed.
+2026-11-17 19:56:44,301 INFO: Arena of Makers started.
+2026-11-17 19:56:44,304 INFO: Online check passed: Supabase URL is a project URL and a publishable key is present in the right shape.
+2026-11-17 19:57:27,208 INFO: Signed in as player code 5575.
+2026-11-17 19:57:27,267 INFO: Voice startup: Python C:\Program Files\Python313\python.exe; edge-tts installed; pygame installed; voice en-US-GuyNeural; volume 40 percent.
+2026-11-17 19:57:27,293 INFO: Voice: engine started, voice en-US-GuyNeural.
+2026-11-17 19:57:27,293 INFO: Sound missing, skipped: robot_laser.wav
+2026-11-17 19:57:27,293 INFO: Sound missing, skipped: robot_servo.wav
+2026-11-17 19:57:27,293 INFO: Sound missing, skipped: robot_clank.wav
+2026-11-17 19:57:27,293 INFO: Sound missing, skipped: chef_chop.wav
+2026-11-17 19:57:27,293 INFO: Sound missing, skipped: chef_sizzle.wav
+2026-11-17 19:57:27,293 INFO: Sound missing, skipped: pan_clang.wav
+2026-11-17 19:57:27,293 INFO: Sound missing, skipped: win_jingle.wav
+2026-11-17 19:57:27,293 INFO: Sound missing, skipped: loss_sound.wav
+2026-11-17 19:57:27,293 INFO: Sound missing, skipped: music_loop.mp3
+2026-11-17 19:57:27,293 INFO: Sounds: loaded 0 of 9: none.
+2026-11-17 19:57:27,302 INFO: Voice: speaking "Welcome to Arena of Makers, Freddy." with en-US-GuyNeural.
+2026-11-17 19:57:28,206 INFO: Voice: made "Welcome to Arena of Makers, Freddy." with en-US-GuyNeural (19440 bytes).
+2026-11-17 19:57:28,215 INFO: Voice: playing voice file (19440 bytes).
+2026-11-17 19:57:28,527 INFO: Voice: mixer is playing.
+2026-11-17 19:57:30,414 INFO: Voice thread stopped.
+2026-11-17 19:57:30,460 INFO: Arena of Makers closed.
+2026-11-17 20:02:03,696 INFO: Arena of Makers started.
+2026-11-17 20:02:03,700 INFO: Online check passed: Supabase URL is a project URL and a publishable key is present in the right shape.
+2026-11-17 20:02:25,458 INFO: Signed in as player code 5575.
+2026-11-17 20:02:25,792 INFO: Voice startup: Python C:\Program Files\Python313\python.exe; edge-tts installed; pygame installed; voice en-US-GuyNeural; volume 40 percent.
+2026-11-17 20:02:25,821 INFO: Voice: engine started, voice en-US-GuyNeural.
+2026-11-17 20:02:25,822 INFO: Sound missing, skipped: robot_laser.wav
+2026-11-17 20:02:25,822 INFO: Sound missing, skipped: robot_servo.wav
+2026-11-17 20:02:25,822 INFO: Sound missing, skipped: robot_clank.wav
+2026-11-17 20:02:25,822 INFO: Sound missing, skipped: chef_chop.wav
+2026-11-17 20:02:25,822 INFO: Sound missing, skipped: chef_sizzle.wav
+2026-11-17 20:02:25,822 INFO: Sound missing, skipped: pan_clang.wav
+2026-11-17 20:02:25,822 INFO: Sound missing, skipped: win_jingle.wav
+2026-11-17 20:02:25,822 INFO: Sound missing, skipped: loss_sound.wav
+2026-11-17 20:02:25,822 INFO: Sound missing, skipped: music_loop.mp3
+2026-11-17 20:02:25,822 INFO: Sounds: loaded 0 of 9: none.
+2026-11-17 20:02:25,830 INFO: Voice: speaking "Welcome to Arena of Makers, Freddy." with en-US-GuyNeural.
+2026-11-17 20:02:26,747 INFO: Voice: made "Welcome to Arena of Makers, Freddy." with en-US-GuyNeural (19440 bytes).
+2026-11-17 20:02:26,754 INFO: Voice: playing voice file (19440 bytes).
+2026-11-17 20:02:27,063 INFO: Voice: mixer is playing.
+2026-11-17 20:02:37,984 INFO: Voice thread stopped.
+2026-11-17 20:02:38,028 INFO: Arena of Makers closed.
+2026-11-17 20:02:44,862 INFO: Arena of Makers started.
+2026-11-17 20:02:44,865 INFO: Online check passed: Supabase URL is a project URL and a publishable key is present in the right shape.
+2026-11-17 20:02:45,368 INFO: Signed in as player code 5575.
+2026-11-17 20:02:45,429 INFO: Voice startup: Python C:\Program Files\Python313\python.exe; edge-tts installed; pygame installed; voice en-US-GuyNeural; volume 40 percent.
+2026-11-17 20:02:45,455 INFO: Voice: engine started, voice en-US-GuyNeural.
+2026-11-17 20:02:45,455 INFO: Sound missing, skipped: robot_laser.wav
+2026-11-17 20:02:45,455 INFO: Sound missing, skipped: robot_servo.wav
+2026-11-17 20:02:45,455 INFO: Sound missing, skipped: robot_clank.wav
+2026-11-17 20:02:45,455 INFO: Sound missing, skipped: chef_chop.wav
+2026-11-17 20:02:45,455 INFO: Sound missing, skipped: chef_sizzle.wav
+2026-11-17 20:02:45,455 INFO: Sound missing, skipped: pan_clang.wav
+2026-11-17 20:02:45,455 INFO: Sound missing, skipped: win_jingle.wav
+2026-11-17 20:02:45,455 INFO: Sound missing, skipped: loss_sound.wav
+2026-11-17 20:02:45,456 INFO: Sound missing, skipped: music_loop.mp3
+2026-11-17 20:02:45,456 INFO: Sounds: loaded 0 of 9: none.
+2026-11-17 20:02:45,462 INFO: Voice: speaking "Welcome to Arena of Makers, Freddy." with en-US-GuyNeural.
+2026-11-17 20:02:46,174 INFO: Voice: made "Welcome to Arena of Makers, Freddy." with en-US-GuyNeural (19440 bytes).
+2026-11-17 20:02:46,180 INFO: Voice: playing voice file (19440 bytes).
+2026-11-17 20:02:46,510 INFO: Voice: mixer is playing.
+2026-11-17 20:02:50,590 INFO: Voice thread stopped.
+2026-11-17 20:02:50,634 INFO: Arena of Makers closed.
