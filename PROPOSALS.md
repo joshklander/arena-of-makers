@@ -96,6 +96,31 @@ No multiplayer work has started yet.
 
 ---
 
+## Progress tracker — updated 2026-11-17 evening
+
+Read this first. Each phase is Done, In progress, or Not started.
+Update this table (and the date) whenever a phase changes, so the next
+person — Maren, Josh's Muse, or Kiro — can pick up without getting lost.
+
+| Phase | Status | What it means | Evidence / next step |
+| --- | --- | --- | --- |
+| 1. Personal save out of the public repo | Done — 2026-11-17 | `arena_save.json` (Josh's Freddy) removed; `.gitignore` added; `arena_log.txt` stays public on purpose | Commits 8a0399e, b3faebf |
+| 2. Turn-by-turn voice for fights | Done — 2026-11-17 | Manual fights speak each round, ~1 sec pause, then win/loss; idle fights stay short, result only | Commit f5d876e; confirmed working by Makenna 2026-11-17 |
+| 3. Online-only game, Supabase saves | Done — 2026-11-17 | No local JSON; saves in shared Supabase `players` table; launch key check with plain-words error; account creation (username, gender, player code, robot/chef); own-data export only | Commit f5d876e; project `arena-of-makers`, ref `yurdzzinmibgnoanxtkm` |
+| 4. Password sign-in + anti-cheat | Done — 2026-11-17 (Kiro) | Username + 4-digit code + password (min 8 chars, bcrypt hash only, 5 wrong tries lock 10 min); session token in memory only; private `arena_private` schema, game can only call `arena_*` functions | Commit 29ad230 "Kiro made changes." |
+| 5. Auto-login ("Keep me signed in") | Done — 2026-11-17 (Kiro) | Remember token in Windows Credential Manager via `keyring`, password never stored; token rotates each launch, expires after 30 days unused | Commit 29ad230; new file `remember.py` |
+| 6. Tables created + Josh's account | Done — 2026-11-17 | Josh used Kiro CLI tools to create the tables from the new schema and created his account on his computer | Working live; no SQL Editor run needed |
+| 7. Sound effects + music — code | Done — 2026-11-17 | `sounds.py` wired in; robot laser/servo/clank, chef chop/sizzle/pan clang, win/loss, lofi music loop; on by default, turn-offable in Settings | Commit f5d876e; picks in SOUNDS.md, all royalty-free (CC0 / Pixabay) |
+| 8. Sound effects + music — files | Not started | **No audio files in the repo yet.** `sounds/` has only a README. Game runs silent. Download attempt from Maren's environment failed 0/9 (Freesound 403, Pixabay AccessDenied; full Freesound files need a free account) | NEXT: on a home computer, download all 9 from SOUNDS.md into `sounds/` next to `main.py` |
+| 9. Makenna pulls the update + creates her account | In progress | Makenna still has to pull commit 29ad230 onto her own computer, install new requirement `keyring`, and create her account (4-digit code + password, robot fighter) | NEXT: pull, run, create account, test turn-by-turn + sign-in |
+| 10. Exe build + Release | In progress | Updater ready for exe mode; local PyInstaller build ready (`build_exe.bat`); GitHub Actions workflow file still needs Josh (admin) to add it — Maren got 403 twice | NEXT: test straight Python first, then build exe; Josh adds `.github/workflows/build-exe.yml` |
+| 11. Per-location music | Not started | Different music track per location (arena, hangout, shop, etc.), like Magic Worlds' kitchen and other places | Idea from Makenna, 2026-11-17 |
+| 12. Music for auto-fighting, effects only for manual | Not started | Background track while idle/auto fighting is on; just fight sound effects when fighting manually | Idea from Makenna, 2026-11-17 |
+| 13. More creatures / NPCs | Not started | Only Scrap Rat exists now. Add multiple random NPC creatures, in idle and manual fighting | Idea from Makenna, 2026-11-17 |
+| 14. Random challenges from online players | Not started | When multiple players are online, they can randomly challenge another online player, in idle and/or manual fighting | Idea from Makenna, 2026-11-17 |
+
+**Next up, in order:** (a) Makenna pulls + creates her account (Phase 9), (b) download the 9 sound files on a home computer (Phase 8), (c) test the exe build (Phase 10). Phases 11–14 are ideas for after that, not started yet.
+
 ## Status update — 2026-11-17 evening (Makenna, with Maren)
 
 This section is the handover note. If anyone's tokens/credits run out — Maren's, Josh's Muse, or Kiro — read this file first, then SOUNDS.md and README.md, to pick up where we left off. Do not overwrite Kiro's work in commit 29ad230.
