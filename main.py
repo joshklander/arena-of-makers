@@ -12,6 +12,8 @@ does something once; Shift plus the same letter starts the idle loop.
     Shift+U   max affordable weapon upgrade (Shop tab)
     Shift+A   max affordable armor upgrade (Shop tab)
     R         hear repair status (More tab)
+    S         start or stop quests (hangout, More tab)
+    1 / 2     choose a free gift upgrade: weapon or armor (More tab)
 
 Stats live on the Home tab, in the same list as the fighter
 status: move with the arrow keys, press Enter on a stat to
@@ -79,6 +81,7 @@ import account
 import arena_of_makers_updater
 import game_logic
 import online_save
+import quests
 import remember
 import sounds
 import supabase_config
@@ -109,6 +112,10 @@ HEARTBEAT_GAP = 45
 # round lines in a manual fight. The game's one-second timer is
 # what advances the narration, so the real gap is about a second.
 TURN_PAUSE_SECONDS = 0.8
+
+# Hangout quests (Phase 18): how often the quest giver speaks
+# a progress update while a quest runs, in seconds.
+QUEST_PROGRESS_GAP = 300
 
 
 def setup_logging():
@@ -478,6 +485,18 @@ class MainFrame(wx.Frame):
         # switching tabs. _in_hangout is True from "Visit the
         # hangout" until the player leaves the More tab.
         self._in_hangout = False
+        # Hangout quests (Phase 18): _quests_active is True
+        # from Start until Stop (or leaving the hangout).
+        # _quest_current is the quest running now, with the
+        # server's started_at and finish_at in it. Stopping
+        # only stops the loop here: the quest stays saved on
+        # the server, and Start picks it up again.
+        self._quests_active = False
+        self._quest_current = None
+        self._quest_board = []
+        self._quest_rep = {}
+        self._quest_gift_pending = None
+        self._quest_last_progress_at = 0.0
         self._last_tab = "Home"
         self.sound_on = True
         self.music_on = True
@@ -639,10 +658,29 @@ class MainFrame(wx.Frame):
             items.append("Hear my fighter status")
             return items
         if tab == "More":
-            return [
-                "Visit the hangout",
+            items = ["Visit the hangout"]
+            if self._in_hangout:
+                # Hangout quests (Phase 18): a real Start and
+                # Stop, plus one more quest and the board.
+                # Every quest is open to robots and chefs
+                # alike — fighter kind never locks anyone out.
+                if self._quest_gift_pending:
+                    items.append(
+                        "Choose my free gift: weapon upgrade (press 1)")
+                    items.append(
+                        "Choose my free gift: armor upgrade (press 2)")
+                if self._quests_active:
+                    items.append("Stop quests (press S)")
+                else:
+                    items.append("Start quests (press S)")
+                items.append("Find me another quest")
+                items.append("Hear my quests")
+                for line in quests.reputation_summary(self._quest_rep):
+                    items.append(line)
+            else:
+                items.append("Quests live in the hangout")
+            items += [
                 "Hear repair status (press R)",
-                "Quests (coming soon)",
                 "Export my data (save a copy on this computer)",
                 "Look up a player by code",
                 "See who is online",
@@ -654,6 +692,7 @@ class MainFrame(wx.Frame):
                 self.online_status,
                 "Hear my fighter status",
             ]
+            return items
         if tab == "Settings":
             sound = "on" if self.sound_on else "off"
             music = "on" if self.music_on else "off"
@@ -856,6 +895,16 @@ class MainFrame(wx.Frame):
         starts. Only when nothing is speaking does a line speak
         at once. (Closing the game is the one exception: on_close
         cancels narration outright.)"""
+        self.announce_as(text, None)
+
+    def announce_as(self, text, voice_name):
+        """Say it in a given Edge voice, or the player's own
+        voice when voice_name is None. Quest givers speak in
+        their own voice (Bolt, Marge, Pip, Dot, Gus, Belle);
+        the player's fighter keeps the voice they chose.
+        Narration entries are (text, voice) pairs, so a
+        giver's line queued behind a fight is still spoken
+        in the giver's voice when its turn comes."""
         text = (text or "").strip()
         if not text:
             return
@@ -863,7 +912,7 @@ class MainFrame(wx.Frame):
             self.message_line.SetLabel(text)
             return
         if self._narration_busy():
-            self._narration_queue.append(text)
+            self._narration_queue.append((text, voice_name))
             return
         self.message_line.SetLabel(text)
         self._cancel_narration()
@@ -872,6 +921,12 @@ class MainFrame(wx.Frame):
         # the voice is still synthesising it. _play_voice_file
         # clears this the moment the line starts sounding.
         self._narration_waiting = True
+        if voice_name:
+            self.voice.set_voice(voice_name)
+        else:
+            self.voice.set_voice(
+                voice_engine.voice_for_gender(
+                    self.fighter.get("gender", "male")))
         self.voice.speak(text)
 
     def announce_sequence(self, lines, pause_seconds=TURN_PAUSE_SECONDS):
@@ -891,7 +946,7 @@ class MainFrame(wx.Frame):
             self.message_line.SetLabel(lines[-1])
             return
         self._cancel_narration()
-        self._narration_queue = list(lines)
+        self._narration_queue = [(line, None) for line in lines]
         self._narration_pause = pause_seconds
         self._narration_next_at = 0.0
         self._speak_next_narration()
@@ -902,10 +957,16 @@ class MainFrame(wx.Frame):
         line is currently sounding."""
         if not self._narration_queue or self.voice is None:
             return
-        line = self._narration_queue.pop(0)
+        line, voice_name = self._narration_queue.pop(0)
         self._play_sound_for_line(line)
         self.message_line.SetLabel(line)
         self._narration_waiting = True
+        if voice_name:
+            self.voice.set_voice(voice_name)
+        else:
+            self.voice.set_voice(
+                voice_engine.voice_for_gender(
+                    self.fighter.get("gender", "male")))
         self.voice.speak(line)
 
     def _advance_narration(self, now):
@@ -1230,35 +1291,291 @@ class MainFrame(wx.Frame):
 
     def _refresh_music(self):
         """Play the music for what the player is doing right
-        now, or stop it. Hangout music in the hangout, fight
-        music while auto-fighting is on, nothing anywhere else:
-        a manual fight has sound effects only, switching tabs
-        starts nothing, and launch starts nothing. Turning
-        music or sound effects off in Settings stops it too.
-        Asking for the track that is already playing does not
-        restart it, so the loop never jumps.
+        now, or stop it. Hangout music only once quests have
+        started in the hangout, fight music while
+        auto-fighting is on, nothing anywhere else: entering
+        the hangout alone starts nothing, a manual fight has
+        sound effects only, switching tabs starts nothing,
+        and launch starts nothing. Turning music or sound
+        effects off in Settings stops it too. Asking for the
+        track that is already playing does not restart it,
+        so the loop never jumps.
 
         The music belongs to the whole session, not to one
-        fight: while auto-fighting stays on, the fight track
-        plays on continuously across every fight — it is never
-        stopped and restarted between fights, or at the end of
-        a single won fight, or between rounds. It stops only
-        when the session ends: auto-fight turned off by hand,
-        a loss that starts repairs, a failed fight, leaving
-        the hangout, or the hangout's Stop. The hangout works
-        the same way: its music plays from Start until Stop
-        (or leaving), even while a quest is saved or paused.
-        Every place that ends auto-fighting must call this,
-        or the music keeps playing after the fighting stops."""
+        fight or one quest: while auto-fighting stays on, the
+        fight track plays on continuously across every fight
+        — it is never stopped and restarted between fights,
+        or at the end of a single won fight, or between
+        rounds. It stops only when the session ends:
+        auto-fight turned off by hand, a loss that starts
+        repairs, a failed fight, leaving the hangout, or the
+        hangout's Stop. The hangout works the same way: its
+        music plays from Start until Stop (or leaving),
+        continuously across every quest, even while a quest
+        is saved or paused. Every place that ends
+        auto-fighting or quests must call this, or the music
+        keeps playing after the activity stops."""
         if not self.sound_on or not self.music_on:
             self.sounds.stop_music()
             return
         if self.idle_fighting:
             self.sounds.start_music("fight")
-        elif self._in_hangout:
+        elif self._in_hangout and self._quests_active:
             self.sounds.start_music("hangout")
         else:
             self.sounds.stop_music()
+
+    # -- hangout quests (Phase 18) -------------------------------------
+
+    def _apply_quest_data(self, data):
+        """Take the server's quest answer into the window:
+        board, reputation, any waiting gift, and the fighter
+        as the server has it. The active quest, when the
+        server has one, is the saved quest to pick up."""
+        data = data or {}
+        if data.get("quests") is not None:
+            self._quest_board = list(data["quests"])
+        if data.get("reputation") is not None:
+            self._quest_rep = dict(data["reputation"])
+        self._quest_gift_pending = data.get("gift_pending")
+        if data.get("fighter"):
+            self.use_server_fighter(data["fighter"])
+        if data.get("active"):
+            self._quest_current = data["active"]
+
+    def start_quests(self):
+        """Press Start in the hangout: quests run
+        automatically in the idle loop, one after another,
+        endlessly generated, while you stay in the hangout.
+        Quests are not fights, never need health, and work
+        while repairing and while upgrading. The cozy cafe
+        track plays from Start until Stop. The server deals
+        the board and starts each quest; the game only shows
+        what the server sends back."""
+        if not self._in_hangout:
+            self.announce(
+                "Go to the hangout first. It is on the More tab, "
+                "under Visit the hangout.")
+            return
+        if self._quests_active:
+            self.announce("Quests are already started.")
+            return
+        if not self.online_config:
+            self.announce(
+                "Quests need the online key. The game did not start "
+                "with a .env file, so there is nothing to do quests from.")
+            return
+        data, error = online_save.get_quests(self.online_config)
+        if error:
+            self.server_problem(error)
+            return
+        self._apply_quest_data(data)
+        self._quests_active = True
+        self._refresh_music()
+        self.announce(
+            "Quests started. I will keep giving you tasks while you are here.")
+        self._begin_next_quest()
+        self.refresh_all()
+
+    def stop_quests(self):
+        """Press Stop: the quest flow stops cleanly. The quest
+        in progress stays saved on the server — it just will
+        not complete unless you are in the loop. Press Start
+        again and the loop picks it up. The music stops too."""
+        if not self._quests_active:
+            self.announce("Quests are not running.")
+            return
+        self._quests_active = False
+        self._quest_current = None
+        self._refresh_music()
+        self.announce(
+            "Quests stopped. Come back any time — there will always "
+            "be another task waiting.")
+        self.refresh_all()
+
+    def _begin_next_quest(self):
+        """Start the next quest in the loop: the saved one
+        first when there is one, otherwise the first quest
+        on the board, dealing a fresh one when the board
+        is empty. Quests keep coming, one after another."""
+        if not self._quests_active:
+            return
+        if self._quest_current:
+            self._begin_quest(self._quest_current)
+            return
+        if not self._quest_board:
+            data, error = online_save.new_quest(self.online_config)
+            if error:
+                self.server_problem(error)
+                self._quests_active = False
+                self._refresh_music()
+                return
+            self._apply_quest_data(data)
+            if data.get("quest"):
+                self._quest_board.append(data["quest"])
+        if not self._quest_board:
+            self.announce("There are no quests on the board right now.")
+            return
+        self._begin_quest(self._quest_board[0])
+
+    def _begin_quest(self, quest):
+        """Start one quest, in the giver's own voice. A
+        co-op quest (the Grand Hangout Fair) is joined first,
+        so the server knows this player helped. The server
+        records when the quest started, so it can check the
+        quest really took its time."""
+        quest = quest or {}
+        if quest.get("coop"):
+            _data, error = online_save.join_quest(
+                self.online_config, quest["id"])
+            if error:
+                self.announce(error)
+                self._quests_active = False
+                self._refresh_music()
+                self.refresh_all()
+                return
+        data, error = online_save.start_quest(
+            self.online_config, quest["id"])
+        if error:
+            self.announce(error)
+            self._quests_active = False
+            self._refresh_music()
+            self.refresh_all()
+            return
+        if data.get("fighter"):
+            self.use_server_fighter(data["fighter"])
+        started = data.get("quest") or quest
+        self._quest_current = started
+        self._quest_last_progress_at = time.time()
+        giver = started.get("giver", "Bolt")
+        voice = started.get("giver_voice")
+        self.announce_as(
+            "%s asks: %s That quest takes about %s."
+            % (giver, started.get("description", ""),
+               game_logic.format_time(
+                   (started.get("duration_minutes") or 15) * 60)),
+            voice)
+        self.refresh_all()
+
+    def _complete_current_quest(self):
+        """The quest's time is up: ask the server to finish
+        it. The server checks the board, the time, and the
+        co-op join — and never checks repairs, so a quest
+        completes while repairing exactly like a healthy one.
+        Then the next quest starts at once."""
+        quest = self._quest_current
+        if not quest:
+            return
+        data, error = online_save.complete_quest(
+            self.online_config, quest["id"])
+        if error:
+            # The server's clock says it is not done yet.
+            # Keep the quest and say so, in plain words.
+            self.announce(error)
+            return
+        self._quest_current = None
+        self._apply_quest_data(data)
+        voice = data.get("giver_voice")
+        if data.get("message"):
+            self.announce_as(data["message"], voice)
+        if data.get("tier_line"):
+            self.announce_as(data["tier_line"], voice)
+        if data.get("gift_pending"):
+            self.announce(
+                "A free gift is waiting. Press 1 for a free weapon "
+                "upgrade, or 2 for a free armor upgrade.")
+        self._begin_next_quest()
+        self.refresh_all()
+
+    def _quest_progress_update(self, now):
+        """Every 5 minutes, the giver speaks a progress
+        update in their own voice, so the player always
+        knows where the quest stands without asking."""
+        quest = self._quest_current
+        if not quest:
+            return
+        finish = quest.get("finish_at") or 0
+        started = quest.get("started_at") or now
+        total = max(1.0, finish - started)
+        done = max(0.0, min(1.0, (now - started) / total))
+        self.announce_as(
+            "Your quest is about %d percent done. About %s left."
+            % (int(done * 100),
+               game_logic.format_time(max(0.0, finish - now))),
+            quest.get("giver_voice"))
+        self._quest_last_progress_at = now
+
+    def find_another_quest(self):
+        """Find me another quest: the server deals one fresh
+        quest, endlessly generated, and adds it to the board.
+        No daily cap; a quest can only be completed once."""
+        if not self._in_hangout:
+            self.announce(
+                "Go to the hangout first. It is on the More tab, "
+                "under Visit the hangout.")
+            return
+        if not self.online_config:
+            self.announce("Quests need the online key.")
+            return
+        data, error = online_save.new_quest(self.online_config)
+        if error:
+            self.server_problem(error)
+            return
+        self._apply_quest_data(data)
+        quest = data.get("quest")
+        if quest:
+            self._quest_board.append(quest)
+            self.announce_as(
+                "A new quest: %s, %s, %s credits. %s asks: %s"
+                % (quest.get("name"), quest.get("difficulty"),
+                   quests.quest_reward(
+                       quest.get("difficulty"),
+                       self.fighter.get("level", 1)),
+                   quest.get("giver"), quest.get("description")),
+                quest.get("giver_voice"))
+        self.refresh_all()
+
+    def hear_quests(self):
+        """Hear the board, one quest at a time, in plain words:
+        name, difficulty, credits, and who gives it. The board
+        stays short: 5 to start, one more at a time."""
+        if not self._quest_board:
+            self.announce(
+                "No quests on the board yet. Press Start and the "
+                "first quest will be given to you.")
+            return
+        lines = []
+        for quest in self._quest_board[:5]:
+            lines.append(
+                "%s, %s, %s credits, from %s."
+                % (quest.get("name"), quest.get("difficulty"),
+                   quests.quest_reward(
+                       quest.get("difficulty"),
+                       self.fighter.get("level", 1)),
+                   quest.get("giver")))
+        self.announce("; ".join(lines))
+
+    def choose_quest_gift(self, slot):
+        """Take a free gift upgrade from a quest giver (Friend
+        tier): weapon or armor, your choice, instant. No
+        credits, no time, no queue."""
+        if not self._quest_gift_pending:
+            self.announce("No free gift is waiting for you right now.")
+            return
+        if not self.online_config:
+            self.announce("Quests need the online key.")
+            return
+        data, error = online_save.choose_quest_gift(
+            self.online_config, slot)
+        if error:
+            self.announce(error)
+            return
+        self._quest_gift_pending = None
+        if data.get("fighter"):
+            self.use_server_fighter(data["fighter"])
+        if data.get("message"):
+            self.announce(data["message"])
+        self.refresh_all()
 
     def _confirm(self, text):
         """Ask yes or no with a plain-words question. Returns
@@ -1461,21 +1778,34 @@ class MainFrame(wx.Frame):
         elif tab == "Shop" and item.startswith("Upgrading "):
             self.announce(game_logic.upgrade_status(fighter) or "No upgrade is running.")
         elif tab == "More" and item == "Visit the hangout":
-            # Entering the hangout starts its music: this is
-            # the hangout's Start, until quests give it a
-            # Start/Stop of their own. Leaving the More tab
-            # stops it again (see on_tab_changed).
+            # Entering the hangout alone starts nothing: the
+            # cafe music plays only once quests have started
+            # (see _refresh_music), and quests only start
+            # when the player presses Start. Leaving the More
+            # tab leaves the hangout (see on_tab_changed).
             self._in_hangout = True
             self._refresh_music()
-            if self.sound_on and self.music_on:
-                music_note = "The cafe music is playing."
-            else:
-                music_note = "The music is off, so it is quiet."
             self.announce(
-                "You are in the hangout. Other players will join here when "
-                "multiplayer arrives. %s Press Escape to leave the hangout."
-                % music_note
-            )
+                "You are in the hangout. Press Start when you want "
+                "tasks, or just sit and listen to the music.")
+        elif tab == "More" and item.startswith("Start quests"):
+            self.start_quests()
+        elif tab == "More" and item.startswith("Stop quests"):
+            self.stop_quests()
+        elif tab == "More" and item.startswith("Find me another quest"):
+            self.find_another_quest()
+        elif tab == "More" and item.startswith("Hear my quests"):
+            self.hear_quests()
+        elif tab == "More" and item.startswith(
+                "Choose my free gift: weapon"):
+            self.choose_quest_gift("weapon")
+        elif tab == "More" and item.startswith(
+                "Choose my free gift: armor"):
+            self.choose_quest_gift("armor")
+        elif tab == "More" and item.startswith("Quests live in the hangout"):
+            self.announce(
+                "Quests live in the hangout. Press Enter on Visit the "
+                "hangout, then press Start when you want tasks.")
         elif tab == "More" and item.startswith("Hear repair status"):
             if game_logic.is_repairing(fighter):
                 self.announce(
@@ -1486,8 +1816,6 @@ class MainFrame(wx.Frame):
                 )
             else:
                 self.announce("No repairs running. Your fighter is ready.")
-        elif tab == "More" and item == "Quests (coming soon)":
-            self.announce("Quests are coming soon. The hangout is open meanwhile.")
         elif tab == "More" and item.startswith("Export my data"):
             self.do_export()
         elif tab == "More" and item.startswith("Look up a player"):
@@ -1557,7 +1885,13 @@ class MainFrame(wx.Frame):
         event.Skip()
         tab = self.current_tab()
         if self._last_tab == "More" and tab != "More":
-            # Leaving the More tab leaves the hangout.
+            # Leaving the More tab leaves the hangout, and
+            # stops the quest loop cleanly: the quest in
+            # progress stays saved on the server, and Start
+            # picks it up again. The music stops too.
+            if self._quests_active:
+                self._quests_active = False
+                self._quest_current = None
             self._in_hangout = False
         self._last_tab = tab
         self.refresh_list(tab)
@@ -1594,6 +1928,11 @@ class MainFrame(wx.Frame):
                 # auto-fight session, not to the Combat tab.
                 self._refresh_music()
                 self.refresh_all()
+            elif self._quests_active:
+                # Escape in the hangout stops quests, the
+                # same as the Stop button: the quest stays
+                # saved on the server, and the music stops.
+                self.stop_quests()
             elif self.current_tab() != "Home":
                 self.notebook.SetSelection(0)
             return
@@ -1637,6 +1976,25 @@ class MainFrame(wx.Frame):
             else:
                 self.announce("No repairs running. Your fighter is ready.")
             return
+        if on_list and self.current_tab() == "More":
+            if key == ord("s"):
+                if self._quests_active:
+                    self.stop_quests()
+                else:
+                    self.start_quests()
+                return
+            if key == ord("S"):
+                if self._quests_active:
+                    self.stop_quests()
+                else:
+                    self.start_quests()
+                return
+            if key == ord("1") and self._quest_gift_pending:
+                self.choose_quest_gift("weapon")
+                return
+            if key == ord("2") and self._quest_gift_pending:
+                self.choose_quest_gift("armor")
+                return
         event.Skip()
 
     def on_tick(self, event):
@@ -1651,6 +2009,20 @@ class MainFrame(wx.Frame):
         instead of waiting out another full gap."""
         now = time.time()
         self._advance_narration(now)
+        # Hangout quests (Phase 18): the loop runs here, once
+        # a second. A quest whose time is up finishes on the
+        # server and the next one starts at once; every 5
+        # minutes the giver speaks a progress update. Quests
+        # never need health, so repairing never stops them.
+        if self._quests_active and self._quest_current:
+            finish = self._quest_current.get("finish_at") or 0
+            if finish and now >= finish:
+                self._complete_current_quest()
+            elif (now - self._quest_last_progress_at
+                    >= QUEST_PROGRESS_GAP):
+                self._quest_progress_update(now)
+        elif self._quests_active and not self._quest_current:
+            self._begin_next_quest()
         if self.idle_fighting and now - self.last_idle_fight >= IDLE_FIGHT_GAP:
             if not self._narration_busy():
                 self.last_idle_fight = now

@@ -170,6 +170,74 @@ def max_upgrade(config, slot, timeout=15):
             data.get("messages") or [], error)
 
 
+def get_quests(config, timeout=15):
+    """Get the hangout quest board, on the server. Returns
+    (data, error). data has quests, active, reputation and
+    gift_pending. The server deals a fresh starting board of
+    5 (2 Easy, 2 Medium, 1 Hard) when there is none yet."""
+    data, error = rpc(config, "arena_get_quests", _session_args(config), timeout)
+    data = data or {}
+    return data, error
+
+
+def new_quest(config, timeout=15):
+    """Deal one fresh quest ("Find me another quest"), on the
+    server. Returns (data, error). data has quest, the one
+    new quest, and the fighter."""
+    data, error = rpc(config, "arena_new_quest", _session_args(config), timeout)
+    data = data or {}
+    return data, error
+
+
+def start_quest(config, quest_id, timeout=15):
+    """Start one quest in the hangout loop, on the server.
+    The server records when it started, so it can check the
+    quest really took its time. Returns (data, error).
+    data has quest (with started_at and finish_at) and the
+    fighter. Starting the same quest again after pressing
+    Stop picks up the saved quest, it does not restart it."""
+    args = _session_args(config)
+    args["p_quest_id"] = quest_id
+    data, error = rpc(config, "arena_start_quest", args, timeout)
+    data = data or {}
+    return data, error
+
+
+def join_quest(config, quest_id, timeout=15):
+    """Join a co-op quest (the Grand Hangout Fair), on the
+    server. Returns (data, error). Solo quests need no join."""
+    args = _session_args(config)
+    args["p_quest_id"] = quest_id
+    data, error = rpc(config, "arena_join_quest", args, timeout)
+    data = data or {}
+    return data, error
+
+
+def complete_quest(config, quest_id, timeout=15):
+    """Finish a quest, on the server. The server checks the
+    quest is on this player's board, has not been done, and
+    its time is up — and it never checks repairs, so a quest
+    completes while repairing exactly like a healthy one.
+    Returns (data, error). data has the credits paid, the
+    spoken lines, the giver, reputation and any gift."""
+    args = _session_args(config)
+    args["p_quest_id"] = quest_id
+    data, error = rpc(config, "arena_complete_quest", args, timeout)
+    data = data or {}
+    return data, error
+
+
+def choose_quest_gift(config, slot, timeout=15):
+    """Take a free gift upgrade from a quest giver (Friend
+    tier): weapon or armor, your choice, instant. Returns
+    (data, error)."""
+    args = _session_args(config)
+    args["p_slot"] = slot
+    data, error = rpc(config, "arena_choose_quest_gift", args, timeout)
+    data = data or {}
+    return data, error
+
+
 def set_voice(config, gender, timeout=15):
     """Change the voice setting. Returns (fighter, error)."""
     args = _session_args(config)

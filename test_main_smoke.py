@@ -567,8 +567,9 @@ def main_test():
     check("the credits were spent after yes",
           fighter["credits"] < credits_before)
 
-    # Music rule (2026-11-18): no music at launch, hangout
-    # music only in the hangout, fight music only while
+    # Music rule (2026-11-18, quests Phase 18): no music
+    # at launch, hangout music only once quests have
+    # started in the hangout, fight music only while
     # auto-fighting, and nothing for a manual fight.
     check("no music starts at launch",
           frame.sounds.current_music_track is None)
@@ -578,8 +579,11 @@ def main_test():
     more_box = frame.lists["More"]
     more_box.SetSelection(frame.list_items("More").index("Visit the hangout"))
     frame.activate_current()
-    check("entering the hangout starts the hangout music",
-          frame.sounds.current_music_track == "hangout")
+    check("entering the hangout alone starts no music",
+          frame.sounds.current_music_track is None)
+    check("arriving in the hangout says to press Start",
+          frame.message_line.GetLabel().startswith(
+              "You are in the hangout. Press Start"))
     frame.notebook.SetSelection(0)  # Home tab
     frame.on_tab_changed(types.SimpleNamespace(Skip=lambda: None))
     check("leaving the hangout stops the music",
@@ -660,7 +664,8 @@ def main_test():
           frame.message_line.GetLabel() == "A quiet line.")
     source = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                "main.py"), encoding="utf-8").read()
-    check("no bell left in main.py", "Bell" not in source)
+    check("no bell left in main.py",
+          "wx.Bell" not in source and ".Bell(" not in source)
     check("no tone method left in main.py", "def tone" not in source)
     check("no local save file in main.py", "arena_save.json" not in source)
     check("no local save function in main.py", "save_game" not in source)
@@ -996,16 +1001,31 @@ def currency_wording_test():
     names = sorted(os.listdir(mig_dir))
     check("a credits-wording migration exists",
           any("fix_credits_wording" in name for name in names))
+    credits_fix = open(os.path.join(
+        mig_dir, [n for n in names if "fix_credits_wording" in n][0]),
+        encoding="utf-8").read()
+    check("the credits-wording migration fixes the rename line",
+          "Your balance is now in credits." in credits_fix)
+    check("the credits-wording migration never says points for the currency",
+          "Your points are now called credits" not in credits_fix)
+    check("the credits-wording migration replaces apply_timers only",
+          "create or replace function arena_private.apply_timers(" in credits_fix
+          and "set search_path = ''" in credits_fix)
+    # The newest migration is now the hangout quests one
+    # (Phase 18), which adds arena_get_quests and friends.
+    # It must never say "points" for the currency either,
+    # and it must never check repairs when completing a quest.
     newest = open(os.path.join(mig_dir, names[-1]), encoding="utf-8").read()
-    check("newest migration is the credits-wording fix",
-          "fix_credits_wording" in names[-1])
-    check("newest migration fixes the rename line",
-          "Your balance is now in credits." in newest)
+    check("newest migration is the hangout quests one",
+          "add_hangout_quests" in names[-1])
+    check("newest migration adds the quest functions",
+          "arena_get_quests" in newest
+          and "arena_complete_quest" in newest
+          and "arena_join_quest" in newest)
     check("newest migration never says points for the currency",
           "Your points are now called credits" not in newest)
-    check("newest migration replaces apply_timers only",
-          "create or replace function arena_private.apply_timers(" in newest
-          and "set search_path = ''" in newest)
+    check("quest completion never checks repairs",
+          "is_repairing" not in newest)
     baseline = open(os.path.join(
         mig_dir, "20261118045430_baseline.sql"), encoding="utf-8").read()
     baseline_lines = [
@@ -1047,7 +1067,7 @@ def narration_test():
     check("manual fight speaks the first line first",
           _wait_spoken(frame, lines[0]))
     check("manual fight queues the rest in order",
-          list(frame._narration_queue) == lines[1:])
+          [text for text, _voice in frame._narration_queue] == lines[1:])
 
     # Finish each line in turn: the next line must be the next
     # line of the fight, never a skipped or repeated one.
@@ -1071,8 +1091,15 @@ def narration_test():
     check("a second fight queues its lines again", bool(frame._narration_queue))
     frame.announce("Idle fighting off.")
     check("announce queues behind a narration, it does not cancel it",
-          frame._narration_queue[-1] == "Idle fighting off."
+          frame._narration_queue[-1][0] == "Idle fighting off."
           and len(frame._narration_queue) >= 2)
+    # A giver's line keeps the giver's voice in the queue.
+    frame.announce_as("Bolt asks: fetch the scrap.", "en-US-ChristopherNeural")
+    check("a giver line queues in the giver's voice",
+          frame._narration_queue[-1]
+          == ("Bolt asks: fetch the scrap.", "en-US-ChristopherNeural"))
+    frame._narration_queue.pop()  # take it back out: the drain below
+    # is about the fight lines and the off line only.
     # Finish the fight's lines first, then the queued line speaks.
     # Drain the whole queue: the off line is only popped when it
     # starts speaking, so the loop cannot end early.
@@ -1360,8 +1387,331 @@ def launch_update_test():
     print("Launch update tests passed.")
 
 
+def quest_test():
+    """Hangout quests (Phase 18): Start and Stop in the
+    hangout, quests running automatically one after another,
+    progress updates every 5 minutes, rewards from the
+    server, reputation and gifts, quests while repairing,
+    and the co-op fair. The "server" here is a fake in
+    memory that runs the same rules as the migration:
+    board of 5, start records the time, complete checks
+    the time and never checks repairs, reputation +1 per
+    finished quest, gifts instant."""
+    import copy
+    import quests as quests_module
+    import online_save as _online_save
+
+    check("quest givers are three male and three female",
+          sum(1 for g in quests_module.GIVERS
+              if g["gender"] == "male") == 3
+          and sum(1 for g in quests_module.GIVERS
+                  if g["gender"] == "female") == 3)
+    check("every giver has their own Edge voice",
+          len({g["voice"] for g in quests_module.GIVERS}) == 6)
+    check("no quest is restricted by fighter kind",
+          all("kind" not in q for q in quests_module.QUEST_TEMPLATES)
+          and all("kind" not in q
+                  for q in quests_module.starting_board(random.Random(2))))
+    check("easy quest pays 7 credits at level 1",
+          quests_module.quest_reward("Easy", 1) == 7)
+    check("medium quest pays what a fight win pays",
+          quests_module.quest_reward("Medium", 1) == 15)
+    check("hard quest pays double a fight win",
+          quests_module.quest_reward("Hard", 1) == 30)
+    check("quest durations never pass 4 hours",
+          all(quests_module.quest_duration_minutes(d, random.Random(i)) <= 240
+              for i, d in enumerate(
+                  ["Easy", "Medium", "Hard"] * 20)))
+
+    fighter = game_logic.new_fighter("Bolt", "robot")
+    fighter["credits"] = 100
+    fighter["player_code"] = "4242"
+    server = {"fighter": copy.deepcopy(fighter),
+              "board": quests_module.starting_board(random.Random(7)),
+              "done": [], "rep": {}, "active": None,
+              "joined": [], "gift_pending": None, "calls": []}
+
+    def _fighter_out():
+        return copy.deepcopy(server["fighter"])
+
+    def _fake_get_quests(config):
+        server["calls"].append("get_quests")
+        return {"fighter": _fighter_out(), "quests": copy.deepcopy(server["board"]),
+                "active": copy.deepcopy(server["active"]),
+                "reputation": dict(server["rep"]),
+                "gift_pending": copy.deepcopy(server["gift_pending"])}, None
+
+    def _fake_new_quest(config):
+        server["calls"].append("new_quest")
+        ids = [q["id"] for q in server["board"]]
+        names = [q["name"] for q in server["board"]]
+        coop_ok = not any(q.get("coop") for q in server["board"])
+        quest = quests_module.generate_quest(
+            random.Random(len(ids)), None, ids,
+            coop_allowed=coop_ok, existing_names=names)
+        server["board"].append(quest)
+        return {"fighter": _fighter_out(), "quest": copy.deepcopy(quest)}, None
+
+    def _fake_start_quest(config, quest_id):
+        server["calls"].append("start_quest")
+        quest = next((q for q in server["board"] if q["id"] == quest_id), None)
+        if quest is None:
+            return {}, "That quest is not on your board."
+        if server["active"] is not None:
+            if server["active"]["id"] == quest_id:
+                return {"fighter": _fighter_out(),
+                        "quest": copy.deepcopy(server["active"])}, None
+            return {}, "You already have a quest going."
+        if quest.get("coop") and quest_id not in server["joined"]:
+            return {}, "Join the Grand Hangout Fair first, then start it."
+        started = copy.deepcopy(quest)
+        started["started_at"] = time.time()
+        started["finish_at"] = started["started_at"] + started["duration_minutes"] * 60
+        server["active"] = started
+        return {"fighter": _fighter_out(), "quest": copy.deepcopy(started)}, None
+
+    def _fake_join_quest(config, quest_id):
+        server["calls"].append("join_quest")
+        quest = next((q for q in server["board"] if q["id"] == quest_id), None)
+        if quest is None:
+            return {}, "That quest is not on your board."
+        if not quest.get("coop"):
+            return {}, "That quest is solo. You do not need to join it."
+        if quest_id not in server["joined"]:
+            server["joined"].append(quest_id)
+        return {"fighter": _fighter_out(), "quest": copy.deepcopy(quest),
+                "message": "You joined the Grand Hangout Fair."}, None
+
+    def _fake_complete_quest(config, quest_id):
+        server["calls"].append("complete_quest")
+        quest = next((q for q in server["board"] if q["id"] == quest_id), None)
+        if quest is None:
+            return {}, "That quest is not on your board."
+        if quest_id in server["done"]:
+            return {}, "You already finished that quest."
+        active = server["active"]
+        if active is None or active["id"] != quest_id:
+            return {}, "Start that quest in the hangout first."
+        if active["finish_at"] > time.time():
+            return {}, "That quest is not done yet."
+        # Never check repairs here, exactly like the server.
+        giver = quest["giver"]
+        rep_before = server["rep"].get(giver, 0)
+        rep_after = rep_before + 1
+        server["rep"][giver] = rep_after
+        reward = quests_module.quest_reward(
+            quest["difficulty"], server["fighter"]["level"])
+        if rep_before >= 3:
+            reward = int(reward * 1.25)
+        server["fighter"]["credits"] += reward
+        server["board"] = [q for q in server["board"] if q["id"] != quest_id]
+        server["done"].append(quest_id)
+        server["active"] = None
+        tier_line = None
+        if rep_before < 3 and rep_after >= 3:
+            tier_line = "%s says: Three jobs done. You are a helper now." % giver
+        elif rep_before < 8 and rep_after >= 8:
+            tier_line = "%s says: Eight jobs done. You are a friend now." % giver
+            server["gift_pending"] = {"giver": giver, "tier": "Friend"}
+        elif rep_before < 15 and rep_after >= 15:
+            heal = server["fighter"].get("healing_level", 0)
+            if heal < 5:
+                server["fighter"]["healing_level"] = heal + 1
+                tier_line = "%s says: Fifteen jobs done. Healing is now level %s." % (giver, heal + 1)
+        return {"fighter": _fighter_out(), "quest": copy.deepcopy(quest),
+                "quests": copy.deepcopy(server["board"]),
+                "credits": reward,
+                "message": "Quest done! You earned %s credits." % reward,
+                "tier_line": tier_line, "giver": giver,
+                "giver_voice": quest["giver_voice"],
+                "reputation": dict(server["rep"]),
+                "gift_pending": copy.deepcopy(server["gift_pending"])}, None
+
+    def _fake_choose_gift(config, slot):
+        server["calls"].append("choose_gift")
+        if server["gift_pending"] is None:
+            return {}, "No free gift is waiting for you right now."
+        giver = server["gift_pending"]["giver"]
+        server["fighter"][slot + "_level"] += 1
+        server["gift_pending"] = None
+        return {"fighter": _fighter_out(),
+                "message": "%s gave you a free %s upgrade." % (giver, slot)}, None
+
+    def _fake_state(config):
+        return _fighter_out(), [], None
+
+    _online_save.get_quests = _fake_get_quests
+    _online_save.new_quest = _fake_new_quest
+    _online_save.start_quest = _fake_start_quest
+    _online_save.join_quest = _fake_join_quest
+    _online_save.complete_quest = _fake_complete_quest
+    _online_save.choose_quest_gift = _fake_choose_gift
+    _online_save.refresh_state = _fake_state
+    _online_save.heartbeat = lambda *args, **kwargs: True
+    _online_save.sign_out = lambda *args, **kwargs: True
+    _online_save.log_action = lambda *args, **kwargs: True
+
+    frame = main.MainFrame(
+        fighter,
+        online_config={"url": "https://example.supabase.co",
+                       "key": "sb_publishable_fake", "session": "a" * 64},
+        player_account={"username": "Bolt", "player_code": "4242"},
+    )
+    frame.notebook.SetSelection(3)  # More tab
+    frame.on_tab_changed(types.SimpleNamespace(Skip=lambda: None))
+    frame.refresh_list("More")
+    more_box = frame.lists["More"]
+    more_box.SetSelection(frame.list_items("More").index("Visit the hangout"))
+    frame.activate_current()
+    check("visiting the hangout shows Start quests",
+          any(item.startswith("Start quests") for item in frame.list_items("More")))
+    check("entering the hangout starts no music yet",
+          frame.sounds.current_music_track is None)
+
+    # Start: the board is dealt, the first quest starts, music plays.
+    frame.start_quests()
+    check("quests start in the hangout", frame._quests_active is True)
+    check("starting quests starts the hangout music",
+          frame.sounds.current_music_track == "hangout")
+    check("the starting board has 5 quests",
+          len(frame._quest_board) == 5)
+    check("the starting board is 2 easy, 2 medium, 1 hard",
+          sorted(q["difficulty"] for q in frame._quest_board)
+          == ["Easy", "Easy", "Hard", "Medium", "Medium"])
+    check("the starting board mixes male and female givers",
+          len({q["giver_gender"] for q in frame._quest_board}) == 2)
+    check("at most one co-op quest is on the board",
+          sum(1 for q in frame._quest_board if q.get("coop")) <= 1)
+    check("a quest is running after Start",
+          frame._quest_current is not None)
+    first_id = frame._quest_current["id"]
+    first_giver = frame._quest_current["giver"]
+
+    # The 5-minute progress update, spoken by the giver.
+    frame._quest_current["started_at"] = time.time() - 600
+    frame._quest_current["finish_at"] = time.time() + 600
+    frame._quest_last_progress_at = time.time() - 301
+    frame.on_tick(mock.MagicMock())
+    check("a progress update is spoken every 5 minutes",
+          "percent done" in frame.message_line.GetLabel())
+
+    # Finish the quest: the server pays, the quest leaves
+    # the board, reputation grows, and the next quest starts.
+    credits_before = fighter["credits"]
+    frame._quest_current["finish_at"] = time.time() - 1
+    server["active"]["finish_at"] = time.time() - 1
+    frame.on_tick(mock.MagicMock())
+    check("a finished quest pays credits",
+          fighter["credits"] > credits_before)
+    check("a finished quest leaves the board",
+          all(q["id"] != first_id for q in frame._quest_board))
+    check("finishing a quest builds reputation with its giver",
+          frame._quest_rep.get(first_giver) == 1)
+    check("the next quest starts at once, endlessly",
+          frame._quest_current is not None
+          and frame._quest_current["id"] != first_id)
+    check("the music stays on across quests",
+          frame.sounds.current_music_track == "hangout")
+
+    # Find me another quest: one fresh quest, never a repeat.
+    board_before = len(frame._quest_board)
+    frame.find_another_quest()
+    check("find me another quest adds one fresh quest",
+          len(frame._quest_board) == board_before + 1)
+
+    # Stop: the loop stops, the music stops, and the quest
+    # stays saved on the server. Start picks it up again.
+    saved_id = frame._quest_current["id"]
+    saved_finish = frame._quest_current["finish_at"]
+    frame.stop_quests()
+    check("stopping quests stops the loop", frame._quests_active is False)
+    check("stopping quests stops the music",
+          frame.sounds.current_music_track is None)
+    check("stopping quests keeps the quest saved on the server",
+          server["active"] is not None and server["active"]["id"] == saved_id)
+    frame.start_quests()
+    check("starting again picks up the saved quest",
+          frame._quest_current["id"] == saved_id)
+    check("starting again does not restart the saved quest",
+          frame._quest_current["finish_at"] == saved_finish)
+
+    # Quests work while repairing: a fighter at 1 health,
+    # mid-repair, still starts and finishes quests.
+    server["fighter"]["repair_until"] = time.time() + 600
+    server["fighter"]["hp"] = 1
+    fighter["repair_until"] = time.time() + 600
+    fighter["hp"] = 1
+    frame._quest_current["finish_at"] = time.time() - 1
+    server["active"]["finish_at"] = time.time() - 1
+    credits_before = fighter["credits"]
+    frame.on_tick(mock.MagicMock())
+    check("a quest completes while repairing",
+          fighter["credits"] > credits_before)
+    check("repairing does not stop the quest loop",
+          frame._quests_active is True)
+
+    # Reputation gifts: 8 finished quests for one giver
+    # waits a free weapon-or-armor gift, chosen by the player.
+    giver = frame._quest_current["giver"]
+    server["rep"][giver] = 7
+    frame._quest_current["finish_at"] = time.time() - 1
+    server["active"]["finish_at"] = time.time() - 1
+    frame.on_tick(mock.MagicMock())
+    check("8 finished quests waits a free gift",
+          frame._quest_gift_pending is not None
+          and frame._quest_gift_pending["giver"] == giver)
+    check("the gift is offered as a choice, weapon or armor",
+          any(item.startswith("Choose my free gift: weapon")
+              for item in frame.list_items("More"))
+          and any(item.startswith("Choose my free gift: armor")
+                  for item in frame.list_items("More")))
+    weapon_before = fighter["weapon_level"]
+    frame.choose_quest_gift("weapon")
+    check("the free gift is instant, a weapon level at once",
+          fighter["weapon_level"] == weapon_before + 1)
+    check("taking the gift clears it",
+          frame._quest_gift_pending is None)
+
+    # Trusted Friend: 15 finished quests gives a free
+    # Healing level, never past level 5.
+    giver = frame._quest_current["giver"]
+    server["rep"][giver] = 14
+    server["fighter"]["healing_level"] = 0
+    fighter["healing_level"] = 0
+    frame._quest_current["finish_at"] = time.time() - 1
+    server["active"]["finish_at"] = time.time() - 1
+    frame.on_tick(mock.MagicMock())
+    check("15 finished quests gives a free Healing level",
+          fighter.get("healing_level") == 1)
+
+    # A chef can do quests too: fighter kind never locks
+    # anyone out. Start the same loop as a chef.
+    chef = game_logic.new_fighter("Belle", "chef")
+    chef["player_code"] = "4242"
+    chef_frame = main.MainFrame(
+        chef,
+        online_config={"url": "https://example.supabase.co",
+                       "key": "sb_publishable_fake", "session": "a" * 64},
+        player_account={"username": "Belle", "player_code": "4242"},
+    )
+    chef_frame.notebook.SetSelection(3)
+    chef_frame.on_tab_changed(types.SimpleNamespace(Skip=lambda: None))
+    chef_frame.refresh_list("More")
+    chef_box = chef_frame.lists["More"]
+    chef_box.SetSelection(chef_frame.list_items("More").index("Visit the hangout"))
+    chef_frame.activate_current()
+    chef_frame.start_quests()
+    check("a chef can start quests too",
+          chef_frame._quests_active is True
+          and chef_frame._quest_current is not None)
+    chef_frame.on_close(mock.MagicMock())
+    frame.on_close(mock.MagicMock())
+    print("\nAll hangout quest tests passed.")
+
+
 if __name__ == "__main__":
     main_test()
+    quest_test()
     currency_wording_test()
     voice_test()
     narration_test()

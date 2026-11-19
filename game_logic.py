@@ -121,6 +121,10 @@ def new_fighter(name, kind, gender="male"):
         # How many levels the running max-affordable queue had
         # in total, so the game can say when it is all done.
         "upgrade_total": 0,
+        # Healing skill, from hangout quest gifts (Phase 18):
+        # level 0-5, healing 19%, 38%, 57%, 76%, 95% of health.
+        # It never goes past level 5, 95%.
+        "healing_level": 0,
     }
 
 
@@ -772,6 +776,9 @@ def status_text(fighter, now=None):
             fighter["armor_level"],
         )
     )
+    healing = fighter.get("healing_level", 0) or 0
+    if healing > 0:
+        text += " Healing level %d." % healing
     points = fighter.get("stat_points", 0)
     if points > 0:
         text += " You have %d stat %s to spend." % (
