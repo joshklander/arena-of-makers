@@ -1371,13 +1371,15 @@ def currency_wording_test():
     # The npc creatures one (Phase 24) adds arena_fight_npc.
     # The healing skill one (Phase 25) redefines the upgrade
     # and fight functions so Healing can be bought and level
-    # 5 heals to full after every fight. The newest migration
-    # is now the quest growth one (Phase 26): durations,
-    # quest credits and the automatic quest-stat bonus all
-    # grow with the quest level. The quest pause migration
-    # (Phase 22) is still there, and quest completion must
-    # never check repairs. No migration may say "points"
-    # for the currency.
+    # 5 heals to full after every fight. The quest growth one
+    # (Phase 26) makes durations, quest credits and the
+    # automatic quest-stat bonus all grow with the quest
+    # level. The newest migration is the quest bonus one
+    # (Makenna Nov 18, 2026): the automatic bonus grows
+    # right from the start, 1% already at quest level 1.
+    # The quest pause migration (Phase 22) is still there,
+    # and quest completion must never check repairs. No
+    # migration may say "points" for the currency.
     quests_mig = open(os.path.join(
         mig_dir, [n for n in names if "add_hangout_quests" in n][0]),
         encoding="utf-8").read()
@@ -1418,23 +1420,37 @@ def currency_wording_test():
           "v_auto" in growth_mig)
     check("quest growth migration never says points for the currency",
           "Your points are now called credits" not in growth_mig)
-    # Hotfix Phase 25b (Makenna Nov 18, 2026): the newest
-    # migration is the healing-level hotfix, not quest growth.
-    newest = open(os.path.join(mig_dir, names[-1]), encoding="utf-8").read()
-    check("newest migration is the healing level hotfix",
-          "healing_level_hotfix" in names[-1])
+    # Hotfix Phase 25b (Makenna Nov 18, 2026): the healing-level
+    # hotfix is no longer the newest migration — the quest bonus
+    # change (below) is. The hotfix checks read its file by name.
+    hotfix_mig = open(os.path.join(
+        mig_dir, [n for n in names if "healing_level_hotfix" in n][0]),
+        encoding="utf-8").read()
     check("hotfix migration defaults healing_level to 0 in fighter_out",
-          "fighter_out" in newest
+          "fighter_out" in hotfix_mig
           and "coalesce((p_fighter ->> 'healing_level')::integer, 0)"
-          in newest)
+          in hotfix_mig)
     check("hotfix migration coalesces the upgrade slot levels",
           "lvl := coalesce((f ->> (p_slot || '_level'))::integer, 0);"
-          in newest
+          in hotfix_mig
           and "v_level := coalesce((f ->> (p_slot || '_level'))::integer, 0);"
-          in newest)
+          in hotfix_mig)
     check("hotfix migration coalesces the max-upgrade healing cost lookup",
-          "coalesce((f ->> 'healing_level')::integer, 0) + 1" in newest)
+          "coalesce((f ->> 'healing_level')::integer, 0) + 1" in hotfix_mig)
     check("hotfix migration touches no fight function",
+          "arena_fight" not in hotfix_mig)
+    # Quest bonus from level 1 (Makenna Nov 18, 2026): the newest
+    # migration redefines arena_complete_quest so the automatic
+    # bonus is quest level x 1% — 1% already at quest level 1.
+    newest = open(os.path.join(mig_dir, names[-1]), encoding="utf-8").read()
+    check("newest migration is the quest bonus from level 1",
+          "quest_bonus_from_level1" in names[-1])
+    check("bonus migration gives 1 percent at quest level 1",
+          "arena_complete_quest" in newest
+          and "v_auto := greatest(0, v_qlevel);" in newest)
+    check("bonus migration drops the old level minus one formula",
+          "v_qlevel - 1" not in newest)
+    check("bonus migration touches no fight function",
           "arena_fight" not in newest)
     healing_mig = open(os.path.join(
         mig_dir, [n for n in names if "healing_skill" in n][0]),
@@ -1715,10 +1731,10 @@ def game_action_speech_test():
         server["rep"][giver] = server["rep"].get(giver, 0) + 1
         # Quest growth (Phase 26): credits are keyed to the
         # quest level, not the fighter level, and the
-        # automatic bonus (+1% per quest level-up) applies.
-        # At quest level 1 here the bonus is 0.
+        # automatic bonus (+1% per quest level) applies.
+        # At quest level 1 here the bonus is 1%.
         qlevel = server["fighter"].get("quest_level", 1)
-        auto = max(0, qlevel - 1)
+        auto = max(0, qlevel)
         reward = int(quests_module.quest_reward(
             quest["difficulty"], qlevel) * (1 + 0.01 * auto))
         server["fighter"]["credits"] += reward
@@ -2226,45 +2242,45 @@ def quest_test():
           quests_module.quest_xp("Easy", 5) == 20
           and quests_module.quest_xp("Medium", 5) == 45
           and quests_module.quest_xp("Hard", 5) == 90)
-    check("the automatic quest-stat bonus is 0 at quest level 1",
-          quests_module.quest_auto_bonus_percent({"quest_level": 1}) == 0)
-    check("the automatic quest-stat bonus is 4 percent at quest level 5",
-          quests_module.quest_auto_bonus_percent({"quest_level": 5}) == 4)
+    check("the automatic quest-stat bonus is 1 percent at quest level 1",
+          quests_module.quest_auto_bonus_percent({"quest_level": 1}) == 1)
+    check("the automatic quest-stat bonus is 5 percent at quest level 5",
+          quests_module.quest_auto_bonus_percent({"quest_level": 5}) == 5)
     check("the automatic bonus stacks with spent charm points",
           quests_module.quest_stat_effect_percent(
               {"quest_level": 5,
                "quest_stats": {"charm": 2, "renown": 0, "insight": 0}},
-              "charm") == 14)
+              "charm") == 15)
     check("the automatic bonus stacks with spent insight points",
           quests_module.quest_stat_effect_percent(
               {"quest_level": 5,
                "quest_stats": {"charm": 0, "renown": 0, "insight": 2}},
-              "insight") == 14)
+              "insight") == 15)
     check("renown chance never passes 100 percent",
           quests_module.quest_stat_effect_percent(
               {"quest_level": 5,
                "quest_stats": {"charm": 0, "renown": 10, "insight": 0}},
               "renown") == 100)
-    check("the quest level line says the automatic bonus from level 2 up",
+    check("the quest level line says the automatic bonus from level 1 up",
           quests_module.quest_level_line(
               {"quest_level": 3, "quest_xp": 0})
           == "Quest level 3, 300 quest experience to level 4. "
-             "Your quest level adds 2 percent to Charm, Renown "
+             "Your quest level adds 3 percent to Charm, Renown "
              "and Insight.")
     check("charm line says the automatic bonus on top of the points",
           quests_module.quest_stat_line(
               {"quest_level": 5,
                "quest_stats": {"charm": 2, "renown": 0, "insight": 0}},
               "charm")
-          == "Charm, 2. Quests pay 14 percent more credits, "
-             "4 from your quest level. One more point adds 5 percent.")
+          == "Charm, 2. Quests pay 15 percent more credits, "
+             "5 from your quest level. One more point adds 5 percent.")
     check("renown line says the automatic bonus on top of the points",
           quests_module.quest_stat_line(
               {"quest_level": 5,
                "quest_stats": {"charm": 0, "renown": 0, "insight": 0}},
               "renown")
-          == "Renown, 0. 4 percent chance of 1 bonus reputation "
-             "when a quest finishes, 4 from your quest level. "
+          == "Renown, 0. 5 percent chance of 1 bonus reputation "
+             "when a quest finishes, 5 from your quest level. "
              "One more point adds 10 percent.")
 
     # Quest levels (Phase 23): separate from combat. Only
@@ -2286,19 +2302,22 @@ def quest_test():
     check("quest level line says the level and the experience to the next",
           quests_module.quest_level_line(
               {"quest_level": 1, "quest_xp": 60})
-          == "Quest level 1, 40 quest experience to level 2.")
+          == "Quest level 1, 40 quest experience to level 2. "
+             "Your quest level adds 1 percent to Charm, Renown "
+             "and Insight.")
     check("charm line says what one more point does",
           quests_module.quest_stat_line(
               {"quest_stats": {"charm": 2, "renown": 0, "insight": 0}},
               "charm")
-          == "Charm, 2. Quests pay 10 percent more credits. "
-             "One more point adds 5 percent.")
+          == "Charm, 2. Quests pay 11 percent more credits, "
+             "1 from your quest level. One more point adds 5 percent.")
     check("renown line says the chance",
           quests_module.quest_stat_line(
               {"quest_stats": {"charm": 0, "renown": 10, "insight": 0}},
               "renown")
           == "Renown, 10. 100 percent chance of 1 bonus reputation "
-             "when a quest finishes. One more point adds 10 percent.")
+             "when a quest finishes, 1 from your quest level. "
+             "One more point adds 10 percent.")
 
     fighter = game_logic.new_fighter("Bolt", "robot")
     fighter["credits"] = 100
@@ -2416,14 +2435,14 @@ def quest_test():
         # Quest growth (Phase 26), same rules as the migration:
         # credits are keyed to the quest level, not the fighter
         # level, and the automatic bonus (+1% per quest
-        # level-up) stacks with Charm, Renown and Insight.
+        # level) stacks with Charm, Renown and Insight.
         # Quest XP levels up at 100 x quest level, banking 1 point.
         qstats = server["fighter"].get("quest_stats", {}) or {}
         charm = qstats.get("charm", 0)
         renown = qstats.get("renown", 0)
         insight = qstats.get("insight", 0)
         qlevel = server["fighter"].get("quest_level", 1)
-        auto = max(0, qlevel - 1)
+        auto = max(0, qlevel)
         bonus_rep = 1 if random.random() < min(1.0, renown * 0.10 + auto * 0.01) else 0
         rep_before = server["rep"].get(giver, 0)
         rep_after = rep_before + 1 + bonus_rep
@@ -2857,10 +2876,14 @@ def quest_test():
     # quest XP to the next level, the banked quest points,
     # and the three quest stat lines — next to the board.
     check("the Home tab shows the quest level line",
-          "Quest level 1, 100 quest experience to level 2."
+          "Quest level 1, 100 quest experience to level 2. "
+          "Your quest level adds 1 percent to Charm, Renown "
+          "and Insight."
           in frame.list_items("Home"))
     check("the hangout list shows the quest level and the experience to the next",
-          "Quest level 1, 100 quest experience to level 2."
+          "Quest level 1, 100 quest experience to level 2. "
+          "Your quest level adds 1 percent to Charm, Renown "
+          "and Insight."
           in frame.list_items("More"))
     check("the hangout list shows the banked quest points",
           "You have no quest points to spend right now."
@@ -3022,9 +3045,9 @@ def quest_test():
     server["rep"][quest["giver"]] = 0
     credits_before = fighter["credits"]
     expected_credits = int(quests_module.quest_reward(
-        quest["difficulty"], 5) * 1.04)
+        quest["difficulty"], 5) * 1.05)
     expected_xp = int(quests_module.quest_xp(
-        quest["difficulty"], 5) * 1.04)
+        quest["difficulty"], 5) * 1.05)
     _finish_current_quest()
     check("quest credits grow with the quest level",
           fighter["credits"] - credits_before == expected_credits)
@@ -3036,9 +3059,9 @@ def quest_test():
     server["rep"][quest["giver"]] = 0
     credits_before = fighter["credits"]
     expected_credits = int(quests_module.quest_reward(
-        quest["difficulty"], 5) * 1.14)
+        quest["difficulty"], 5) * 1.15)
     expected_xp = int(quests_module.quest_xp(
-        quest["difficulty"], 5) * 1.14)
+        quest["difficulty"], 5) * 1.15)
     _finish_current_quest()
     check("the automatic bonus stacks with spent charm points",
           fighter["credits"] - credits_before == expected_credits)

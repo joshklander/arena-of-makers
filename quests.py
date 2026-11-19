@@ -67,15 +67,15 @@ for Charm (+5% quest credits), Renown (+10% chance of +1
 bonus reputation) or Insight (+5% quest XP), each max 10.
 Quest levels give no max HP and no combat stat points.
 
-Automatic quest-stat bonus (Phase 26, Makenna 2026-11-18):
+Automatic quest-stat bonus (Phase 26, Makenna 2026-11-18;
+grows right from the start, Makenna 2026-11-18):
 like combat's automatic +10 HP per combat level, each quest
-level-up also gives a little bit of each of the three quest
-stats automatically — +1% per quest level-up to Charm,
+level also gives a little bit of each of the three quest
+stats automatically — +1% per quest level to Charm,
 Renown and Insight — and the banked quest point a player
-spends adds its bigger bonus on top. At quest level 1
-nothing has levelled up yet, so the automatic bonus is 0;
-at quest level 5 it is 4%. It stacks with spent points and
-never caps.
+spends adds its bigger bonus on top. The bonus is 1% at
+quest level 1 and 5% at quest level 5. It stacks with
+spent points and never caps.
 """
 
 import random
@@ -303,9 +303,10 @@ def quest_points_of(fighter):
 def quest_level_line(fighter):
     """One plain-words line for the quest level, for the Home
     tab next to the fighter level: 'Quest level 3, 40 quest
-    experience to level 4.' At quest level 2 and up it also
-    says the automatic bonus the quest level adds to all
-    three quest stats (Phase 26)."""
+    experience to level 4.' It also says the automatic bonus
+    the quest level adds to all three quest stats (Phase 26) —
+    the bonus is 1% already at quest level 1, so the line
+    always says it."""
     level = quest_level_of(fighter)
     to_next = quest_xp_to_next(level) - quest_xp_of(fighter)
     line = ("Quest level %d, %d quest experience to level %d."
@@ -320,12 +321,12 @@ def quest_level_line(fighter):
 def quest_auto_bonus_percent(fighter):
     """The automatic bonus percent the quest level itself
     adds to each of the three quest stats (Phase 26, Makenna
-    2026-11-18): +1% per quest level-up, like combat's
-    automatic +10 HP per combat level. At quest level 1
-    nothing has levelled up yet, so the bonus is 0; at quest
-    level 5 it is 4%. It stacks with spent quest points and
-    never caps. Makenna can ask for a different rate."""
-    return max(0, quest_level_of(fighter) - 1)
+    2026-11-18): +1% per quest level, like combat's
+    automatic +10 HP per combat level. It grows right from
+    the start (Makenna 2026-11-18): 1% at quest level 1,
+    5% at quest level 5. It stacks with spent quest points
+    and never caps."""
+    return max(0, quest_level_of(fighter))
 
 
 def quest_stat_effect_percent(fighter, stat):
@@ -333,7 +334,7 @@ def quest_stat_effect_percent(fighter, stat):
     spent points give, plus the automatic bonus from the
     quest level (Phase 26). Charm and Insight give 5% per
     spent point, Renown 10% per spent point, and every stat
-    gets +1% per quest level-up. Renown's chance can never
+    gets +1% per quest level. Renown's chance can never
     pass 100%."""
     stats = quest_stats_of(fighter)
     auto = quest_auto_bonus_percent(fighter)
@@ -352,8 +353,8 @@ def quest_stat_line(fighter, stat):
     list speaks; Enter on the line spends one banked point.
     The percent shown is the full effect: spent points plus
     the automatic bonus from the quest level (Phase 26). At
-    quest level 1 the automatic bonus is 0, so the line
-    reads exactly as it did before."""
+    quest level 1 the automatic bonus is already 1%, so the
+    line always names the part from the quest level."""
     stats = quest_stats_of(fighter)
     value = stats[stat]
     auto = quest_auto_bonus_percent(fighter)
