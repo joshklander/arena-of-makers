@@ -67,7 +67,16 @@ except ImportError:  # pragma: no cover - the logic below still works headless
 
 REPO = "joshklander/arena-of-makers"
 API_BASE = "https://api.github.com/repos/" + REPO
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+# The folder the updater sits in. In the exe that is the folder
+# holding ArenaOfMakersUpdater.exe, not the temporary folder a
+# one-file exe unpacks into (which is deleted on close), so the
+# updater remembers its folder between runs. This file is used on
+# its own, so it does not import supabase_config.app_folder; the
+# rule is the same.
+if getattr(sys, "frozen", False):
+    SCRIPT_DIR = os.path.dirname(os.path.abspath(sys.executable))
+else:
+    SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 FOLDER_STATE_FILE = os.path.join(SCRIPT_DIR, "arena_updater_state.json")
 VERSION_FILE_NAME = "arena_version.json"
 GAME_FOLDER_NAME = "Arena of Makers"

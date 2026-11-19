@@ -90,11 +90,13 @@ import supabase_config
 import voice_engine
 
 APP_TITLE = "Arena of Makers"
-LOG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "arena_log.txt")
+LOG_PATH = os.path.join(supabase_config.app_folder(), "arena_log.txt")
 
-# Where this copy of the game lives on disk. The launch
-# update check reads the version note from this folder.
-GAME_DIR = os.path.dirname(os.path.abspath(__file__))
+# Where this copy of the game lives on disk: next to the .py
+# files, or next to ArenaOfMakers.exe (see
+# supabase_config.app_folder). The launch update check reads
+# the version note from this folder.
+GAME_DIR = supabase_config.app_folder()
 
 # How long the launch update check waits for GitHub to
 # answer, in seconds. Longer than this and the game just
@@ -2619,10 +2621,17 @@ def check_for_update_at_launch(game_dir):
     disk already match main, so a later launch can compare
     versions without asking again.
     """
-    try:
-        folder = arena_of_makers_updater.find_installed_folder(game_dir)
-    except Exception:
-        folder = None
+    if getattr(sys, "frozen", False):
+        # The exe: the game is the folder holding ArenaOfMakers.exe.
+        # It has no main.py, so the source-install search below
+        # would never find it; the version note, when there is
+        # one, sits right here.
+        folder = os.path.abspath(game_dir)
+    else:
+        try:
+            folder = arena_of_makers_updater.find_installed_folder(game_dir)
+        except Exception:
+            folder = None
     if folder is None:
         # A hand-installed copy has no version note yet, so
         # the updater cannot find it — but main.py in the

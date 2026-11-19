@@ -29,6 +29,7 @@ arena_log.txt after a save: a bad key is logged there as
 import json
 import logging
 import os
+import sys
 import re
 import urllib.error
 import urllib.request
@@ -41,11 +42,25 @@ KEY_KEY = "SUPABASE_PUBLISHABLE_KEY"
 _URL_RE = re.compile(r"^https://[a-z0-9-]+\.supabase\.co/?$")
 
 
+def app_folder():
+    """The folder the player keeps the game in.
+
+    Running from source, that is the folder holding the .py files.
+    In the exe it is the folder holding ArenaOfMakers.exe. A
+    one-file exe unpacks its code into a new temporary folder each
+    time it runs, so a path built from __file__ would point there:
+    the player's .env would not be found, and the log and exports
+    would vanish when the game closed. Bundled read-only files,
+    like the sounds, still come from the code's own folder."""
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(os.path.abspath(sys.executable))
+    return os.path.dirname(os.path.abspath(__file__))
+
+
 def default_env_path():
-    """The .env file next to this module, so it sits next to the
-    game and next to the exe when the game is bundled."""
-    here = os.path.dirname(os.path.abspath(__file__))
-    return os.path.join(here, ENV_FILENAME)
+    """The .env file next to the game, and next to the exe when
+    the game is bundled."""
+    return os.path.join(app_folder(), ENV_FILENAME)
 
 
 def load_dotenv(path=None):

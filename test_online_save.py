@@ -42,7 +42,28 @@ def write_env(folder, url=None, key=None):
     return path
 
 
+def app_folder_test():
+    """The game's own files (.env, log, exports) sit next to the
+    game: the .py files from source, or ArenaOfMakers.exe in the
+    exe, never the exe's temporary unpack folder."""
+    here = os.path.dirname(os.path.abspath(supabase_config.__file__))
+    check("from source the game folder holds the .py files",
+          supabase_config.app_folder() == here)
+    exe = os.path.join(tempfile.mkdtemp(), "ArenaOfMakers.exe")
+    with mock.patch.object(sys, "frozen", True, create=True), \
+            mock.patch.object(sys, "executable", exe):
+        check("in the exe the game folder holds the exe",
+              supabase_config.app_folder() == os.path.dirname(exe))
+        check("in the exe .env is looked for next to the exe",
+              supabase_config.default_env_path()
+              == os.path.join(os.path.dirname(exe), ".env"))
+    check("from source .env is next to the .py files again",
+          supabase_config.default_env_path()
+          == os.path.join(here, ".env"))
+
+
 def main_test():
+    app_folder_test()
     folder = tempfile.mkdtemp()
     good_url = "https://yurdzzinmibgnoanxtkm.supabase.co"
     good_key = "sb_publishable_0123456789abcdef0123456789abcdef"

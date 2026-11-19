@@ -2490,6 +2490,36 @@ def launch_update_test():
         result = main.check_for_update_at_launch(plain2)
         check("different files without a note are offered the update",
               result["available"] is True)
+
+        # The exe: the game is the folder holding ArenaOfMakers.exe,
+        # with no main.py in it, and updates come from Releases.
+        exe_dir = os.path.join(base, "Exe Game")
+        os.makedirs(exe_dir)
+        updater.get_latest_release = (
+            lambda timeout=60: ("v2", "https://example.invalid/a.exe"))
+        sys.frozen = True
+        try:
+            result = main.check_for_update_at_launch(exe_dir)
+            check("the exe folder is found without a main.py",
+                  result["folder"] == os.path.abspath(exe_dir))
+            check("an exe with no version note is offered the release",
+                  result["available"] is True and result["remote"] == "v2")
+            updater.save_state(exe_dir, "v1", {"ArenaOfMakers.exe"})
+            result = main.check_for_update_at_launch(exe_dir)
+            check("an older exe is offered the newer release",
+                  result["available"] is True)
+            updater.save_state(exe_dir, "v2", {"ArenaOfMakers.exe"})
+            result = main.check_for_update_at_launch(exe_dir)
+            check("an exe on the newest release is not offered one",
+                  result["available"] is False
+                  and result["unreachable"] is False)
+            updater.get_latest_release = lambda timeout=60: (None, None)
+            result = main.check_for_update_at_launch(exe_dir)
+            check("an exe that cannot reach GitHub plays on",
+                  result["available"] is False
+                  and result["unreachable"] is True)
+        finally:
+            del sys.frozen
     finally:
         updater.get_head_sha = old_head
         updater.get_tree = old_tree

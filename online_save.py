@@ -35,6 +35,8 @@ import threading
 import urllib.error
 import urllib.request
 
+import supabase_config
+
 
 SCHEMA_MISSING = (
     "The game's server is missing a part this version of the game "
@@ -364,8 +366,9 @@ def export_user_data(config, fighter, path=None, timeout=15):
     if path is None:
         stamp = datetime.datetime.now().strftime("%Y-%m-%d")
         filename = "arena_export_%s_%s.json" % (fighter["name"], stamp)
-        here = os.path.dirname(os.path.abspath(__file__))
-        path = os.path.join(here, filename)
+        # Next to the game, or next to the exe (not the exe's
+        # temporary unpack folder, which is deleted on close).
+        path = os.path.join(supabase_config.app_folder(), filename)
     online_row, row_error = rpc(config, "arena_export", _session_args(config), timeout)
     if row_error:
         online_row = None
