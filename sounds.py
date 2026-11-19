@@ -33,6 +33,14 @@ SOUND_FILES = {
     "pan_clang": ("pan_clang.wav", None),
     "win": ("win_jingle.wav", None),
     "loss": ("loss_sound.wav", None),
+    # Quest ambience loops (Phase 23): market murmur for
+    # gathering quests, damp cloth on a floor for cleaning
+    # quests. Both are MP3, like the music tracks — pygame
+    # plays them fine. Until they are uploaded to sounds/
+    # (Makenna uploads them through the GitHub website),
+    # those quests simply play no loop.
+    "ambience_gathering": ("ambience_gathering.mp3", None),
+    "ambience_cleaning": ("ambience_cleaning.mp3", None),
     # The music. Two tracks, one per place: the cozy cafe track for
     # the hangout (Jazz Brunch) and the sci-fi track for fights
     # (Mesmerizing Galaxy Loop). "music" is the old single name and
@@ -45,6 +53,9 @@ SOUND_FILES = {
 }
 
 MUSIC_VOLUME_FACTOR = 0.5  # Music plays at half the effects volume.
+AMBIENCE_VOLUME_FACTOR = 0.25  # Quest ambience loops play at a
+# quarter of the effects volume: quieter than the music, well
+# under the voice.
 
 
 def default_sounds_dir():
@@ -72,6 +83,11 @@ class SoundBank:
         self._tracks = {}
         # Which track is looping now: "hangout", "fight", or None.
         self._music_name = None
+        # Quest ambience loop (Phase 23): its own channel,
+        # so it never interrupts the voice or the music.
+        self._ambience_channel = None
+        # Which ambience sound is looping now, or None.
+        self._ambience_name = None
         self.enabled = True
         self._volume = 0.4  # effects volume, 0.0 to 1.0
 
@@ -142,16 +158,19 @@ class SoundBank:
                 level = self._volume
                 if name in ("music", "music_hangout", "music_fight"):
                     level *= MUSIC_VOLUME_FACTOR
+                elif name == self._ambience_name:
+                    level *= AMBIENCE_VOLUME_FACTOR
                 sound.set_volume(level)
             except Exception:
                 pass
 
     def set_enabled(self, enabled):
         """Turn all game sounds on or off. Turning off also stops
-        the music; turning back on restarts it."""
+        the music and the quest ambience loop."""
         self.enabled = bool(enabled)
         if not self.enabled:
             self.stop_music()
+            self.stop_ambience()
 
     def play(self, name):
         """Play one named sound once. Returns False when sounds are
@@ -266,3 +285,72 @@ class SoundBank:
             except Exception:
                 pass
         self._music_name = None
+
+    @property
+    def current_ambience(self):
+        """Which ambience loop is playing now: the sound name,
+        or None when nothing is playing."""
+        return self._ambience_name
+
+    def start_ambience(self, name):
+        """Start one quest ambience loop. name is a sound in
+        SOUND_FILES, e.g. "chef_sizzle" for cooking quests.
+        The loop runs on its own channel (3), so it never
+        interrupts the voice narration (mixer.music) or the
+        background music (channel 2), and it plays quieter
+        than the music, well under the voice. Returns False
+        when sounds are off, the file was not loaded, or
+        playback failed. Asking for the loop that is already
+        playing just returns True, so the next quest with
+        the same kind of work never restarts the loop."""
+        if not self.enabled or not self.available:
+            return False
+        sound = self._sounds.get(name)
+        if sound is None:
+            return False
+        if (self._ambience_name == name
+                and self._ambience_channel is not None):
+            return True
+        self.stop_ambience()
+        try:
+            sound.set_volume(self._volume * AMBIENCE_VOLUME_FACTOR)
+        except Exception:
+            pass
+        try:
+            channel = self._pygame.mixer.Channel(3)
+            channel.play(sound, loops=-1)
+            self._ambience_channel = channel
+            self._ambience_name = name
+            return True
+        except Exception:
+            pass
+        try:
+            sound.play(loops=-1)
+            self._ambience_name = name
+            return True
+        except Exception:
+            return False
+
+    def stop_ambience(self):
+        """Stop the quest ambience loop, if one is playing.
+        The sound's volume is put back to the effects volume,
+        so a later one-shot of the same sound (a sizzle, a
+        servo) plays at full volume again."""
+        if self._ambience_channel is not None:
+            try:
+                self._ambience_channel.stop()
+            except Exception:
+                pass
+            self._ambience_channel = None
+        if self._ambience_name is not None:
+            sound = self._sounds.get(self._ambience_name)
+            if sound is not None:
+                try:
+                    sound.stop()
+                except Exception:
+                    pass
+                try:
+                    sound.set_volume(self._volume)
+                except Exception:
+                    pass
+            self._ambience_name = None

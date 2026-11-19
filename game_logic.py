@@ -29,6 +29,8 @@ import os
 import random
 import time
 
+import quests
+
 # The longest any upgrade or repair may take: 4 hours.
 MAX_TIMER_SECONDS = 4 * 3600
 
@@ -125,6 +127,16 @@ def new_fighter(name, kind, gender="male"):
         # level 0-5, healing 19%, 38%, 57%, 76%, 95% of health.
         # It never goes past level 5, 95%.
         "healing_level": 0,
+        # Quest levels (Phase 23): separate from the combat
+        # level. Quests give quest XP toward a separate quest
+        # level; each quest level-up banks 1 quest point for
+        # Charm, Renown or Insight (see quests.py), each max
+        # 10. Quest levels give no max HP and no combat stat
+        # points.
+        "quest_level": 1,
+        "quest_xp": 0,
+        "quest_points": 0,
+        "quest_stats": {"charm": 0, "renown": 0, "insight": 0},
     }
 
 
@@ -348,6 +360,36 @@ def spend_stat(fighter, stat):
     else:
         tail = " That was your last stat point."
     return None, stat_line(fighter, stat) + tail
+
+
+def spend_quest_stat(fighter, stat):
+    """Spend one banked quest point, offline only (online, the
+    server decides, exactly as for combat stats). Returns
+    (error, line). One point per call, one stat per call, max
+    10 points in any one quest stat. Quest levels give no max
+    HP and no combat stat points."""
+    if stat not in quests.QUEST_STAT_NAMES:
+        return "Pick charm, renown, or insight.", None
+    if fighter.get("quest_points", 0) <= 0:
+        return "You have no quest points to spend right now.", None
+    stats = quests.quest_stats_of(fighter)
+    if stats[stat] >= quests.QUEST_STAT_MAX:
+        return (
+            "%s is already at its best, level %d."
+            % (stat.capitalize(), quests.QUEST_STAT_MAX)
+        ), None
+    stats[stat] += 1
+    fighter["quest_stats"] = stats
+    fighter["quest_points"] -= 1
+    left = fighter["quest_points"]
+    if left > 0:
+        tail = " You have %d quest %s left." % (
+            left,
+            "point" if left == 1 else "points",
+        )
+    else:
+        tail = " That was your last quest point."
+    return None, quests.quest_stat_line(fighter, stat) + tail
 
 
 def respec_stats(fighter):
@@ -779,6 +821,10 @@ def status_text(fighter, now=None):
     healing = fighter.get("healing_level", 0) or 0
     if healing > 0:
         text += " Healing level %d." % healing
+    # Quest level (Phase 23), next to the fighter level: one
+    # line, no "points" word here, so the currency wording
+    # checks stay clean.
+    text += " " + quests.quest_level_line(fighter)
     points = fighter.get("stat_points", 0)
     if points > 0:
         text += " You have %d stat %s to spend." % (

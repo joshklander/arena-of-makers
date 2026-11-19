@@ -146,6 +146,20 @@ def spend_stat(config, stat, timeout=15):
             data.get("messages") or [], error)
 
 
+def spend_quest_stat(config, stat, timeout=15):
+    """Spend one banked quest point, on the server. The game
+    sends only the session token plus one quest stat name
+    (charm, renown, or insight). Returns (fighter, message,
+    messages, error). One point per call, max 10 points in
+    any one quest stat."""
+    args = _session_args(config)
+    args["p_stat"] = stat
+    data, error = rpc(config, "arena_spend_quest_stat", args, timeout)
+    data = data or {}
+    return (data.get("fighter"), data.get("message"),
+            data.get("messages") or [], error)
+
+
 def respec_stats(config, timeout=15):
     """Reset all 5 stats on the server, refunding every spent
     point. The first respec is free; later ones cost 100

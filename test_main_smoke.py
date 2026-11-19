@@ -1045,11 +1045,12 @@ def currency_wording_test():
           and "set search_path = ''" in credits_fix)
     # The hangout quests migration (Phase 18) adds
     # arena_get_quests and friends. The newest migration
-    # is now the quest pause one (Phase 22), which adds
-    # arena_pause_quest and redefines start/complete so a
-    # quest clock freezes while the player is away. Neither
-    # may say "points" for the currency, and quest
-    # completion must never check repairs.
+    # is now the quest levels one (Phase 23), which adds
+    # arena_spend_quest_stat and redefines complete so it
+    # awards quest XP and banks quest points. The quest
+    # pause migration (Phase 22) is still there, and quest
+    # completion must never check repairs. No migration may
+    # say "points" for the currency.
     quests_mig = open(os.path.join(
         mig_dir, [n for n in names if "add_hangout_quests" in n][0]),
         encoding="utf-8").read()
@@ -1057,12 +1058,20 @@ def currency_wording_test():
           "arena_get_quests" in quests_mig
           and "arena_complete_quest" in quests_mig
           and "arena_join_quest" in quests_mig)
+    check("a quest pause migration exists",
+          any("quest_pause_resume" in name for name in names))
+    pause_mig = open(os.path.join(
+        mig_dir, [n for n in names if "quest_pause_resume" in n][0]),
+        encoding="utf-8").read()
+    check("the quest pause migration adds the pause function",
+          "arena_pause_quest" in pause_mig
+          and "arena_start_quest" in pause_mig
+          and "arena_complete_quest" in pause_mig)
     newest = open(os.path.join(mig_dir, names[-1]), encoding="utf-8").read()
-    check("newest migration is the quest pause one",
-          "quest_pause_resume" in names[-1])
-    check("newest migration adds the pause function",
-          "arena_pause_quest" in newest
-          and "arena_start_quest" in newest
+    check("newest migration is the quest levels one",
+          "quest_levels" in names[-1])
+    check("newest migration adds the quest stat spending function",
+          "arena_spend_quest_stat" in newest
           and "arena_complete_quest" in newest)
     check("newest migration never says points for the currency",
           "Your points are now called credits" not in newest)
@@ -1326,6 +1335,34 @@ def game_action_speech_test():
         reward = quests_module.quest_reward(
             quest["difficulty"], server["fighter"]["level"])
         server["fighter"]["credits"] += reward
+        # Quest levels (Phase 23), same rules as quest_test:
+        # quest XP for the difficulty, level-ups banking a
+        # quest point. No quest stats here, so no boosts.
+        qlevel = server["fighter"].get("quest_level", 1)
+        qxp = server["fighter"].get("quest_xp", 0)
+        qpoints = server["fighter"].get("quest_points", 0)
+        xp_earned = quests_module.quest_xp(quest["difficulty"], qlevel)
+        qxp += xp_earned
+        level_ups = 0
+        while qxp >= quests_module.quest_xp_to_next(qlevel):
+            qxp -= quests_module.quest_xp_to_next(qlevel)
+            qlevel += 1
+            qpoints += 1
+            level_ups += 1
+        server["fighter"]["quest_level"] = qlevel
+        server["fighter"]["quest_xp"] = qxp
+        server["fighter"]["quest_points"] = qpoints
+        quest_xp_line = (
+            "You earned %s quest experience. You have %s quest "
+            "experience, %s more to reach quest level %s."
+            % (xp_earned, qxp,
+               quests_module.quest_xp_to_next(qlevel) - qxp, qlevel + 1))
+        quest_level_line = None
+        if level_ups > 0:
+            quest_level_line = (
+                "You are now quest level %s! You have %s quest %s to spend."
+                % (qlevel, qpoints,
+                   "point" if qpoints == 1 else "points"))
         server["board"] = [q for q in server["board"] if q["id"] != quest_id]
         server["done"].append(quest_id)
         server["active"] = None
@@ -1337,10 +1374,24 @@ def game_action_speech_test():
                 "tier_line": None, "giver": giver,
                 "giver_voice": quest["giver_voice"],
                 "reputation": dict(server["rep"]),
-                "gift_pending": None}, None
+                "gift_pending": None,
+                "quest_xp_earned": xp_earned,
+                "quest_level": qlevel,
+                "quest_xp": qxp,
+                "quest_xp_to_next":
+                    quests_module.quest_xp_to_next(qlevel) - qxp,
+                "quest_points": qpoints,
+                "quest_level_ups": level_ups,
+                "bonus_reputation": 0,
+                "quest_xp_line": quest_xp_line,
+                "quest_level_line": quest_level_line}, None
 
     def _fake_new_quest(config):
-        ids = [q["id"] for q in server["board"]]
+        # Finished quest ids are never dealt again: the real
+        # server only ever deals a fresh quest, and the
+        # client treats a finished id on the board as stale
+        # and drops it, so re-dealing one would kill the loop.
+        ids = [q["id"] for q in server["board"]] + list(server["done"])
         names = [q["name"] for q in server["board"]]
         quest = quests_module.generate_quest(
             random.Random(len(ids)), None, ids,
@@ -1423,6 +1474,7 @@ def game_action_speech_test():
           _spoken(qframe, "Your quest is about "))
     # Finishing a quest speaks.
     _drain(qframe)
+    finished_difficulty = qframe._quest_current["difficulty"]
     qframe._quest_current["finish_at"] = time.time() - 1
     server["active"]["finish_at"] = time.time() - 1
     qframe.on_tick(mock.MagicMock())
@@ -1430,6 +1482,9 @@ def game_action_speech_test():
           _spoken(qframe, "Quest done! You earned "))
     check("a finished quest announces the reputation gained",
           _spoken(qframe, "You gained 1 reputation with %s" % giver))
+    check("a finished quest announces the quest experience earned",
+          _spoken(qframe, "You earned %s quest experience"
+                  % quests_module.quest_xp(finished_difficulty, 1)))
     # The distance to the next tier is past the voice log's
     # 40-character preview, so it is checked word-for-word
     # in quest_test instead of here.
@@ -1526,6 +1581,48 @@ def sounds_test():
     check("the hangout track still starts from the old name",
           bank.start_music("hangout") is True
           and bank.current_music_track == "hangout")
+
+    # Quest ambience loops (Phase 23): one loop on its own
+    # channel, quieter than the music, that stops when the
+    # quest ends. With no such sound, nothing plays.
+    bank = sounds_module.SoundBank(directory=full_dir, pygame_module=pygame)
+    bank.load()
+    check("ambience does not start with no such sound",
+          bank.start_ambience("no_such_sound") is False)
+    check("an ambience loop starts and loops",
+          bank.start_ambience("chef_sizzle") is True
+          and bank._ambience_channel is not None
+          and bank._ambience_channel.loops == -1
+          and bank.current_ambience == "chef_sizzle")
+    check("the ambience loop is on its own channel, not the music channel",
+          bank._ambience_channel.number == 3)
+    check("the ambience loop is quieter than the music",
+          bank._sounds["chef_sizzle"].volume
+          == 0.4 * sounds_module.AMBIENCE_VOLUME_FACTOR)
+    channel = bank._ambience_channel
+    check("asking for the same ambience again does not restart it",
+          bank.start_ambience("chef_sizzle") is True
+          and bank._ambience_channel is channel)
+    check("switching ambience stops the old loop and starts the new one",
+          bank.start_ambience("robot_servo") is True
+          and bank.current_ambience == "robot_servo"
+          and channel.stopped)
+    bank.set_volume(100)
+    check("volume turns the ambience up too, still quieter than the music",
+          bank._sounds["robot_servo"].volume
+          == 1.0 * sounds_module.AMBIENCE_VOLUME_FACTOR)
+    bank.stop_ambience()
+    check("stopping the ambience clears it",
+          bank.current_ambience is None
+          and bank._ambience_channel is None)
+    check("stopping the ambience puts the sound's volume back",
+          bank._sounds["robot_servo"].volume == 1.0)
+    bank.start_ambience("robot_servo")
+    bank.set_enabled(False)
+    check("turning sounds off stops the ambience",
+          bank.current_ambience is None)
+    check("no ambience starts while sounds are off",
+          bank.start_ambience("chef_sizzle") is False)
     print("\nAll sound bank tests passed.")
 
 
@@ -1691,6 +1788,39 @@ def quest_test():
               for i, d in enumerate(
                   ["Easy", "Medium", "Hard"] * 20)))
 
+    # Quest levels (Phase 23): separate from combat. Only
+    # finishing a quest earns quest XP; starting, stopping
+    # or pausing earns nothing. Easy 10 + 2 x quest level,
+    # Medium 20 + 5 x quest level, Hard 40 + 10 x quest level.
+    check("easy quest pays 12 quest experience at quest level 1",
+          quests_module.quest_xp("Easy", 1) == 12)
+    check("medium quest pays 25 quest experience at quest level 1",
+          quests_module.quest_xp("Medium", 1) == 25)
+    check("hard quest pays 50 quest experience at quest level 1",
+          quests_module.quest_xp("Hard", 1) == 50)
+    check("medium quest experience is a fight win's experience",
+          quests_module.quest_xp("Medium", 1) == 20 + 5 * 1)
+    check("100 quest experience to reach quest level 2",
+          quests_module.quest_xp_to_next(1) == 100)
+    check("200 quest experience to reach quest level 3",
+          quests_module.quest_xp_to_next(2) == 200)
+    check("quest level line says the level and the experience to the next",
+          quests_module.quest_level_line(
+              {"quest_level": 1, "quest_xp": 60})
+          == "Quest level 1, 40 quest experience to level 2.")
+    check("charm line says what one more point does",
+          quests_module.quest_stat_line(
+              {"quest_stats": {"charm": 2, "renown": 0, "insight": 0}},
+              "charm")
+          == "Charm, 2. Quests pay 10 percent more credits. "
+             "One more point adds 5 percent.")
+    check("renown line says the chance",
+          quests_module.quest_stat_line(
+              {"quest_stats": {"charm": 0, "renown": 10, "insight": 0}},
+              "renown")
+          == "Renown, 10. 100 percent chance of 1 bonus reputation "
+             "when a quest finishes. One more point adds 10 percent.")
+
     fighter = game_logic.new_fighter("Bolt", "robot")
     fighter["credits"] = 100
     fighter["player_code"] = "4242"
@@ -1711,7 +1841,11 @@ def quest_test():
 
     def _fake_new_quest(config):
         server["calls"].append("new_quest")
-        ids = [q["id"] for q in server["board"]]
+        # Finished quest ids are never dealt again: the real
+        # server only ever deals a fresh quest, and the
+        # client treats a finished id on the board as stale
+        # and drops it, so re-dealing one would kill the loop.
+        ids = [q["id"] for q in server["board"]] + list(server["done"])
         names = [q["name"] for q in server["board"]]
         coop_ok = not any(q.get("coop") for q in server["board"])
         quest = quests_module.generate_quest(
@@ -1797,14 +1931,50 @@ def quest_test():
             return {}, "That quest is not done yet."
         # Never check repairs here, exactly like the server.
         giver = quest["giver"]
+        # Quest levels (Phase 23), same rules as the migration:
+        # Renown rolls the bonus reputation, Charm boosts the
+        # credits, Insight boosts the quest XP, and quest XP
+        # levels up at 100 x quest level, banking 1 point.
+        qstats = server["fighter"].get("quest_stats", {}) or {}
+        charm = qstats.get("charm", 0)
+        renown = qstats.get("renown", 0)
+        insight = qstats.get("insight", 0)
+        bonus_rep = 1 if random.random() < renown * 0.10 else 0
         rep_before = server["rep"].get(giver, 0)
-        rep_after = rep_before + 1
+        rep_after = rep_before + 1 + bonus_rep
         server["rep"][giver] = rep_after
         reward = quests_module.quest_reward(
             quest["difficulty"], server["fighter"]["level"])
         if rep_before >= 3:
             reward = int(reward * 1.25)
+        reward = int(reward * (1 + 0.05 * charm))
         server["fighter"]["credits"] += reward
+        qlevel = server["fighter"].get("quest_level", 1)
+        qxp = server["fighter"].get("quest_xp", 0)
+        qpoints = server["fighter"].get("quest_points", 0)
+        xp_earned = int(quests_module.quest_xp(
+            quest["difficulty"], qlevel) * (1 + 0.05 * insight))
+        qxp += xp_earned
+        level_ups = 0
+        while qxp >= quests_module.quest_xp_to_next(qlevel):
+            qxp -= quests_module.quest_xp_to_next(qlevel)
+            qlevel += 1
+            qpoints += 1
+            level_ups += 1
+        server["fighter"]["quest_level"] = qlevel
+        server["fighter"]["quest_xp"] = qxp
+        server["fighter"]["quest_points"] = qpoints
+        quest_xp_line = (
+            "You earned %s quest experience. You have %s quest "
+            "experience, %s more to reach quest level %s."
+            % (xp_earned, qxp,
+               quests_module.quest_xp_to_next(qlevel) - qxp, qlevel + 1))
+        quest_level_line = None
+        if level_ups > 0:
+            quest_level_line = (
+                "You are now quest level %s! You have %s quest %s to spend."
+                % (qlevel, qpoints,
+                   "point" if qpoints == 1 else "points"))
         server["board"] = [q for q in server["board"] if q["id"] != quest_id]
         server["done"].append(quest_id)
         server["active"] = None
@@ -1825,7 +1995,54 @@ def quest_test():
                 "tier_line": tier_line, "giver": giver,
                 "giver_voice": quest["giver_voice"],
                 "reputation": dict(server["rep"]),
-                "gift_pending": copy.deepcopy(server["gift_pending"])}, None
+                "gift_pending": copy.deepcopy(server["gift_pending"]),
+                "quest_xp_earned": xp_earned,
+                "quest_level": qlevel,
+                "quest_xp": qxp,
+                "quest_xp_to_next":
+                    quests_module.quest_xp_to_next(qlevel) - qxp,
+                "quest_points": qpoints,
+                "quest_level_ups": level_ups,
+                "bonus_reputation": bonus_rep,
+                "quest_xp_line": quest_xp_line,
+                "quest_level_line": quest_level_line}, None
+
+    def _fake_spend_quest_stat(config, stat):
+        server["calls"].append("spend_quest_stat")
+        # Like the real online_save wrapper, this returns
+        # (fighter, message, messages, error), not the
+        # two-value rpc shape.
+        if stat not in ("charm", "renown", "insight"):
+            return _fighter_out(), None, [], \
+                "Pick charm, renown, or insight."
+        points = server["fighter"].get("quest_points", 0)
+        if points <= 0:
+            return _fighter_out(), None, [], \
+                "You have no quest points to spend right now."
+        qstats = server["fighter"].setdefault(
+            "quest_stats", {"charm": 0, "renown": 0, "insight": 0})
+        if qstats.get(stat, 0) >= 10:
+            return _fighter_out(), None, [], \
+                "%s is already at its best, level 10." % stat.capitalize()
+        qstats[stat] = qstats.get(stat, 0) + 1
+        server["fighter"]["quest_points"] = points - 1
+        value = qstats[stat]
+        if stat == "charm":
+            line = ("Charm is now %s. Quests pay %s percent more credits."
+                    % (value, value * 5))
+        elif stat == "renown":
+            line = ("Renown is now %s. %s percent chance of 1 bonus "
+                    "reputation when a quest finishes."
+                    % (value, value * 10))
+        else:
+            line = ("Insight is now %s. Quests pay %s percent more "
+                    "quest experience." % (value, value * 5))
+        if points - 1 > 0:
+            line += " You have %s quest %s left." % (
+                points - 1, "point" if points - 1 == 1 else "points")
+        else:
+            line += " That was your last quest point."
+        return _fighter_out(), line, [], None
 
     def _fake_choose_gift(config, slot):
         server["calls"].append("choose_gift")
@@ -1847,6 +2064,7 @@ def quest_test():
     _online_save.complete_quest = _fake_complete_quest
     _online_save.pause_quest = _fake_pause_quest
     _online_save.choose_quest_gift = _fake_choose_gift
+    _online_save.spend_quest_stat = _fake_spend_quest_stat
     _online_save.refresh_state = _fake_state
     _online_save.heartbeat = lambda *args, **kwargs: True
     _online_save.sign_out = lambda *args, **kwargs: True
@@ -1885,6 +2103,14 @@ def quest_test():
     frame.activate_current()
     check("Enter on Start quests starts quests",
           frame._quests_active is True)
+    # The quest-start announcement says "about" once, not
+    # twice: format_time already says "about 9 minutes", so
+    # the line must not add another "about" on top of it
+    # (Makenna, live test 2026-11-18: "about about 9 minutes").
+    check("the quest-start announcement never says about about",
+          "about about" not in frame.message_line.GetLabel())
+    check("the quest-start announcement still says how long it takes",
+          "takes about" in frame.message_line.GetLabel())
     check("starting quests starts the hangout music",
           frame.sounds.current_music_track == "hangout")
     check("the starting board has 5 quests",
@@ -1908,6 +2134,10 @@ def quest_test():
     frame.on_tick(mock.MagicMock())
     check("a progress update is spoken every 5 minutes",
           "percent done" in frame.message_line.GetLabel())
+    # The progress update says "about" once, not twice, for
+    # the same reason as the start line above.
+    check("a progress update never says about about",
+          "about about" not in frame.message_line.GetLabel())
 
     # The same update, while repairing, says the fighter is
     # repairing and how long repairs have left — and when
@@ -2101,6 +2331,285 @@ def quest_test():
     frame.on_tick(mock.MagicMock())
     check("15 finished quests gives a free Healing level",
           fighter.get("healing_level") == 1)
+
+    # Quest levels (Phase 23): separate from combat. Record
+    # what the giver announces, so the completion lines can
+    # be checked word-for-word even though the next quest's
+    # line overwrites the message line at once.
+    spoken_lines = []
+    _real_announce_as = frame.announce_as
+
+    def _record_announce_as(text, voice_name=None):
+        spoken_lines.append(text)
+        return _real_announce_as(text, voice_name)
+
+    frame.announce_as = _record_announce_as
+
+    def _finish_current_quest():
+        quest = frame._quest_current
+        frame._quest_current["finish_at"] = time.time() - 1
+        server["active"]["finish_at"] = time.time() - 1
+        frame.on_tick(mock.MagicMock())
+        return quest
+
+    def _set_quest_state(level=1, xp=0, points=0, stats=None):
+        server["fighter"]["quest_level"] = level
+        server["fighter"]["quest_xp"] = xp
+        server["fighter"]["quest_points"] = points
+        server["fighter"]["quest_stats"] = dict(
+            stats or {"charm": 0, "renown": 0, "insight": 0})
+
+    # Start the quest-level checks from a clean slate, on
+    # both the server and the local fighter (earlier quests
+    # in this test already earned quest experience).
+    _set_quest_state()
+    fighter["quest_level"] = 1
+    fighter["quest_xp"] = 0
+    fighter["quest_points"] = 0
+    fighter["quest_stats"] = {"charm": 0, "renown": 0, "insight": 0}
+
+    # The Home tab shows the quest level next to the fighter
+    # level, and the hangout list shows the quest level, the
+    # quest XP to the next level, the banked quest points,
+    # and the three quest stat lines — next to the board.
+    check("the Home tab shows the quest level line",
+          "Quest level 1, 100 quest experience to level 2."
+          in frame.list_items("Home"))
+    check("the hangout list shows the quest level and the experience to the next",
+          "Quest level 1, 100 quest experience to level 2."
+          in frame.list_items("More"))
+    check("the hangout list shows the banked quest points",
+          "You have no quest points to spend right now."
+          in frame.list_items("More"))
+    check("the hangout list shows the three quest stat lines",
+          any(item.startswith("Charm,") for item in frame.list_items("More"))
+          and any(item.startswith("Renown,") for item in frame.list_items("More"))
+          and any(item.startswith("Insight,") for item in frame.list_items("More")))
+    check("the fighter status says the quest level too",
+          "Quest level 1, 100 quest experience to level 2."
+          in game_logic.status_text(fighter))
+
+    # Finishing a quest earns quest XP for its difficulty,
+    # and combat XP, combat level and max HP are untouched.
+    _set_quest_state()
+    combat_xp_before = fighter["xp"]
+    combat_level_before = fighter["level"]
+    max_hp_before = fighter["max_hp"]
+    quest = frame._quest_current
+    expected_xp = quests_module.quest_xp(quest["difficulty"], 1)
+    _finish_current_quest()
+    check("finishing a quest earns the right quest experience",
+          fighter.get("quest_xp") == expected_xp)
+    check("quests do not touch combat experience",
+          fighter["xp"] == combat_xp_before)
+    check("quests do not touch the combat level",
+          fighter["level"] == combat_level_before)
+    check("quests do not give max health",
+          fighter["max_hp"] == max_hp_before)
+    check("finishing a quest announces the quest experience earned",
+          any("You earned %s quest experience" % expected_xp in line
+              for line in spoken_lines))
+    check("finishing a quest announces the experience to the next quest level",
+          any("more to reach quest level 2" in line for line in spoken_lines))
+
+    # Quest XP levels up at 100 x quest level, banking 1
+    # quest point, and the level-up line is announced.
+    _set_quest_state(xp=90)
+    quest = frame._quest_current
+    expected_xp = quests_module.quest_xp(quest["difficulty"], 1)
+    total = 90 + expected_xp
+    _finish_current_quest()
+    check("quest experience levels up at 100 times the quest level",
+          fighter.get("quest_level") == 2
+          and fighter.get("quest_xp") == total - 100)
+    check("a quest level-up banks 1 quest point",
+          fighter.get("quest_points") == 1)
+    check("a quest level-up is announced",
+          any("You are now quest level 2! You have 1 quest point to spend."
+              in line for line in spoken_lines))
+
+    # Charm: +5% quest credits per point.
+    _set_quest_state(stats={"charm": 2, "renown": 0, "insight": 0})
+    quest = frame._quest_current
+    server["rep"][quest["giver"]] = 0
+    credits_before = fighter["credits"]
+    expected_credits = int(quests_module.quest_reward(
+        quest["difficulty"], fighter["level"]) * 1.10)
+    _finish_current_quest()
+    check("charm boosts quest credits by 5 percent a point",
+          fighter["credits"] - credits_before == expected_credits)
+
+    # Insight: +5% quest XP per point.
+    _set_quest_state(stats={"charm": 0, "renown": 0, "insight": 2})
+    quest = frame._quest_current
+    expected_xp = int(quests_module.quest_xp(
+        quest["difficulty"], 1) * 1.10)
+    _finish_current_quest()
+    check("insight boosts quest experience by 5 percent a point",
+          fighter.get("quest_xp") == expected_xp)
+
+    # Renown at 10 points: every finished quest earns +1
+    # bonus reputation, announced as "Bonus reputation!".
+    _set_quest_state(stats={"charm": 0, "renown": 10, "insight": 0})
+    quest = frame._quest_current
+    server["rep"][quest["giver"]] = 0
+    _finish_current_quest()
+    check("renown at 10 points earns bonus reputation every time",
+          frame._quest_rep.get(quest["giver"]) == 2)
+    check("bonus reputation is announced",
+          any("Bonus reputation!" in line for line in spoken_lines))
+    check("the reputation line says 2 gained when the bonus lands",
+          quests_module.reputation_line(quest["giver"], 2, gained=2)
+          == "You gained 2 reputation with %s. You have 2 reputation "
+             "with %s, 1 more to reach Helper."
+             % (quest["giver"], quest["giver"]))
+    # Renown at 0 points: no bonus, no announcement.
+    _set_quest_state(stats={"charm": 0, "renown": 0, "insight": 0})
+    quest = frame._quest_current
+    server["rep"][quest["giver"]] = 0
+    spoken_lines.clear()
+    _finish_current_quest()
+    check("renown at 0 points earns no bonus reputation",
+          frame._quest_rep.get(quest["giver"]) == 1)
+    check("no bonus reputation is announced without renown",
+          not any("Bonus reputation!" in line for line in spoken_lines))
+
+    # Spending a quest point: Enter on a quest stat line
+    # spends one banked point there, one at a time.
+    _set_quest_state(points=1)
+    frame.refresh_list("More")
+    more_box.SetSelection(frame.list_items("More").index(
+        next(item for item in frame.list_items("More")
+             if item.startswith("Charm,"))))
+    frame.activate_current()
+    check("spending a quest point raises charm by 1",
+          quests_module.quest_stats_of(fighter)["charm"] == 1)
+    check("spending a quest point uses up the banked point",
+          fighter.get("quest_points") == 0)
+    check("the hangout list shows the spent point",
+          any(item.startswith("Charm, 1.") for item in frame.list_items("More")))
+    # A maxed quest stat refuses the point, and the point
+    # stays banked. No points at all refuses too.
+    server["fighter"]["quest_stats"] = {
+        "charm": 10, "renown": 0, "insight": 0}
+    server["fighter"]["quest_points"] = 1
+    frame.refresh_list("More")
+    more_box.SetSelection(frame.list_items("More").index(
+        next(item for item in frame.list_items("More")
+             if item.startswith("Charm,"))))
+    frame.activate_current()
+    check("a maxed quest stat refuses the point",
+          quests_module.quest_stats_of(fighter)["charm"] == 10
+          and fighter.get("quest_points") == 1)
+    check("a maxed quest stat says so",
+          "already at its best" in frame.message_line.GetLabel())
+    server["fighter"]["quest_points"] = 0
+    frame.refresh_list("More")
+    more_box.SetSelection(frame.list_items("More").index(
+        next(item for item in frame.list_items("More")
+             if item.startswith("Renown,"))))
+    frame.activate_current()
+    check("spending with no quest points is refused",
+          quests_module.quest_stats_of(fighter)["renown"] == 0)
+    check("spending with no quest points says so",
+          "no quest points to spend" in frame.message_line.GetLabel())
+
+    # Quest ambience loops (Phase 23): while a quest runs,
+    # a sound matching the kind of work plays in a loop on
+    # its own channel, quieter than the music, under the
+    # voice. It stops when the quest completes, stops,
+    # pauses, or the player leaves the hangout. A quest
+    # whose ambience file is not in sounds/ yet plays no
+    # loop at all — the game carries on silently.
+    import sounds as sounds_module
+    check("every quest template names an ambience",
+          all(q.get("ambience") in quests_module.AMBIENCES
+              for q in quests_module.QUEST_TEMPLATES))
+    check("cooking quests sizzle",
+          quests_module.ambience_sound_name({"name": "Perfect the Recipe"})
+          == "chef_sizzle")
+    check("repair quests hum with a servo",
+          quests_module.ambience_sound_name({"name": "Tune-Up Time"})
+          == "robot_servo")
+    check("gathering quests murmur like a market",
+          quests_module.ambience_sound_name({"name": "Market Run"})
+          == "ambience_gathering")
+    check("cleaning quests scrub",
+          quests_module.ambience_sound_name({"name": "The Great Oil Spill"})
+          == "ambience_cleaning")
+    check("a server-dealt quest finds its ambience by name",
+          quests_module.quest_ambience({"name": "The Midnight Feast"})
+          == "cooking")
+
+    def _quest_for(name):
+        template = next(
+            t for t in quests_module.QUEST_TEMPLATES if t["name"] == name)
+        giver = quests_module.GIVER_BY_NAME[template["giver"]]
+        quest = {"id": "q_test_%s" % name.lower().replace(" ", "_")
+                 .replace("'", ""),
+                 "name": template["name"],
+                 "description": template["description"],
+                 "giver": giver["name"],
+                 "giver_voice": giver["voice"],
+                 "giver_gender": giver["gender"],
+                 "difficulty": template["difficulty"],
+                 "duration_minutes": 10,
+                 "coop": False,
+                 "ambience": template["ambience"]}
+        server["board"].append(quest)
+        return quest
+
+    # Drive the loop: complete the quest already running and
+    # let the loop start the next one from a board we control,
+    # so each ambience is heard on a real quest start.
+    cooking = _quest_for("Perfect the Recipe")
+    frame._quest_board = [cooking]
+    _finish_current_quest()
+    check("starting a cooking quest starts the sizzle loop",
+          frame.sounds.current_ambience == "chef_sizzle")
+    check("the ambience loop is quieter than the music",
+          frame.sounds._sounds["chef_sizzle"].volume
+          == frame.sounds._volume * sounds_module.AMBIENCE_VOLUME_FACTOR)
+    # Completing it starts the next quest on the board; make
+    # that a gathering quest, whose file is not in sounds/
+    # yet, so the loop must fall silent instead of carrying on.
+    gathering = _quest_for("Market Run")
+    frame._quest_board = [gathering]
+    _finish_current_quest()
+    check("completing a quest stops its ambience loop",
+          frame.sounds.current_ambience is None)
+    check("a quest with no ambience file yet plays no loop",
+          frame._quest_current is not None
+          and frame._quest_current["name"] == "Market Run"
+          and frame.sounds.current_ambience is None)
+    repair = _quest_for("Tune-Up Time")
+    frame._quest_board = [repair]
+    _finish_current_quest()
+    check("starting a repair quest starts the servo loop",
+          frame.sounds.current_ambience == "robot_servo")
+    frame._pause_current_quest()
+    check("pausing a quest stops the ambience loop",
+          frame.sounds.current_ambience is None)
+    # Pausing leaves quests active, so resume through the
+    # loop itself: it picks the paused quest back up.
+    frame._begin_next_quest()
+    check("resuming a repair quest restarts the servo loop",
+          frame.sounds.current_ambience == "robot_servo")
+    frame.notebook.SetSelection(0)  # Home tab
+    frame.on_tab_changed(types.SimpleNamespace(Skip=lambda: None))
+    check("leaving the hangout stops the ambience loop",
+          frame.sounds.current_ambience is None)
+    # Back in the hangout, quests running again, so the rest
+    # of the test (chef, close/reopen) finds a quest running.
+    frame.notebook.SetSelection(3)  # More tab
+    frame.on_tab_changed(types.SimpleNamespace(Skip=lambda: None))
+    frame.refresh_list("More")
+    more_box.SetSelection(frame.list_items("More").index("Visit the hangout"))
+    frame.activate_current()
+    frame.start_quests()
+    check("re-entering the hangout restarts the loop",
+          frame._quests_active is True
+          and frame._quest_current is not None)
 
     # A chef can do quests too: fighter kind never locks
     # anyone out. Start the same loop as a chef.

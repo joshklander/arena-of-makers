@@ -50,6 +50,15 @@ and starting again resumes from it: the quest is never
 restarted and never shortened by time away. Repairs and
 upgrades still tick down whether the game is open or closed;
 only the quest clock freezes. A paused quest never completes.
+
+Quest levels (Phase 23, Makenna 2026-11-18): quests give
+quest XP toward a separate quest level, one per player, not
+per giver. Easy 10 + 2 x quest level, Medium 20 + 5 x quest
+level, Hard 40 + 10 x quest level; 100 x quest level to go
+up a quest level. Each quest level-up banks 1 quest point
+for Charm (+5% quest credits), Renown (+10% chance of +1
+bonus reputation) or Insight (+5% quest XP), each max 10.
+Quest levels give no max HP and no combat stat points.
 """
 
 import random
@@ -84,31 +93,89 @@ GIVER_BY_NAME = {giver["name"]: giver for giver in GIVERS}
 # helpers, so the same quest never repeats exactly.
 QUEST_TEMPLATES = [
     {"name": "Scrap Run", "difficulty": "Easy", "giver": "Bolt",
+     "ambience": "gathering",
      "description": "The workshop is out of scrap. Fetch three pieces from the scrap yard."},
     {"name": "Tune-Up Time", "difficulty": "Easy", "giver": "Pip",
+     "ambience": "repair",
      "description": "A servo is squeaky. Tune it until it hums right."},
     {"name": "Calm the Haywire Drone", "difficulty": "Medium", "giver": "Dot",
+     "ambience": "repair",
      "description": "A little drone is spinning in circles and beeping in panic. Talk it down."},
     {"name": "The Great Oil Spill", "difficulty": "Hard", "giver": "Bolt",
+     "ambience": "cleaning",
      "description": "Somebody knocked over the big oil drum. Clean the workshop floor before anyone slips."},
     {"name": "Market Run", "difficulty": "Easy", "giver": "Marge",
+     "ambience": "gathering",
      "description": "The kitchen needs three ingredients for tonight's soup. Go to the market and fetch them."},
     {"name": "Perfect the Recipe", "difficulty": "Medium", "giver": "Belle",
+     "ambience": "cooking",
      "description": "A cake keeps coming out flat. Taste it and tell the baker what it needs."},
     {"name": "Rescue the Burnt Dish", "difficulty": "Medium", "giver": "Gus",
+     "ambience": "cooking",
      "description": "A pan was left on too long. Save dinner before the smoke alarm goes off."},
     {"name": "The Midnight Feast", "difficulty": "Hard", "giver": "Marge",
+     "ambience": "cooking",
      "description": "Cook a whole feast for the hangout tonight: soup, main, and dessert, all from scratch."},
     {"name": "The Robot Who Wanted Soup", "difficulty": "Easy", "giver": "Belle",
+     "ambience": "cooking",
      "description": "A robot has never tasted soup. Make him a bowl he can actually enjoy."},
     {"name": "Chef's New Helper", "difficulty": "Medium", "giver": "Gus",
+     "ambience": "repair",
      "description": "A chef needs a spare pair of hands. Lend him your servo arm for the afternoon."},
     {"name": "The Broken Oven and the Broken Bot", "difficulty": "Hard", "giver": "Dot",
+     "ambience": "repair",
      "description": "The kitchen oven died, and a repair robot is stuck in a loop. Fix them both."},
     {"name": "The Grand Hangout Fair", "difficulty": "Hard", "giver": "Marge",
+     "ambience": "cooking",
      "description": "The whole hangout is holding a fair. Robots and chefs, everyone working together, one big day.",
      "coop": True},
 ]
+
+TEMPLATE_BY_NAME = {t["name"]: t for t in QUEST_TEMPLATES}
+
+# Quest ambience loops (Phase 23): the kind of work a quest
+# is, so the game can play a matching sound in a loop while
+# the quest runs, under the music and the giver's voice.
+# Each ambience names a sound in sounds.py: cooking reuses
+# the chef's sizzle, repair reuses the robot servo, and
+# gathering and cleaning have their own loop files
+# (ambience_gathering.mp3, ambience_cleaning.mp3 — see
+# SOUNDS.md). An ambience whose file is not in sounds/ yet
+# is silent, never an error: the game carries on, and the
+# loop starts working once the file is uploaded.
+AMBIENCES = ("cooking", "repair", "gathering", "cleaning")
+
+AMBIENCE_SOUNDS = {
+    "cooking": "chef_sizzle",
+    "repair": "robot_servo",
+    "gathering": "ambience_gathering",
+    "cleaning": "ambience_cleaning",
+}
+
+
+def quest_ambience(quest):
+    """The ambience of a quest: the kind of work it is.
+    The quest itself may carry it, or it is looked up from
+    the quest's name — server-dealt quests only carry the
+    name, difficulty and giver, so the name lookup is what
+    makes their loops work too. None when unknown."""
+    quest = quest or {}
+    ambience = quest.get("ambience")
+    if ambience in AMBIENCE_SOUNDS:
+        return ambience
+    template = TEMPLATE_BY_NAME.get(quest.get("name"))
+    if template:
+        return template.get("ambience")
+    return None
+
+
+def ambience_sound_name(quest):
+    """The SoundBank sound name for a quest's ambience
+    loop, or None when the quest has no known ambience."""
+    ambience = quest_ambience(quest)
+    if ambience is None:
+        return None
+    return AMBIENCE_SOUNDS.get(ambience)
 
 TASK_TYPES = ["Fetch", "Fix", "Cook", "Calm", "Deliver", "Teach",
               "Clean", "Rescue", "Tune", "Taste", "Build", "Find"]
@@ -152,6 +219,101 @@ def quest_reward(difficulty, level):
     return 10 + 5 * level
 
 
+# Quest levels (Phase 23, Makenna 2026-11-18): separate levels
+# per activity, like Magic Worlds. Fighting gives combat XP
+# toward the fighter level; quests give quest XP toward a
+# separate quest level. Only finishing a quest earns quest XP.
+# Scaled like quest credits (Medium mirrors a fight win's XP,
+# 20 + 5 x level; Hard pays double a win), keyed to quest
+# level, not fighter level.
+def quest_xp(difficulty, quest_level):
+    """Quest XP a finished quest pays, before the Insight boost."""
+    quest_level = max(1, int(quest_level))
+    if difficulty == "Easy":
+        return 10 + 2 * quest_level
+    if difficulty == "Hard":
+        return 40 + 10 * quest_level
+    return 20 + 5 * quest_level
+
+
+def quest_xp_to_next(quest_level):
+    """Quest XP needed to go from this quest level to the next.
+    100 x quest level (100 for level 2, 200 for level 3),
+    grows, never caps — mirrors combat XP."""
+    return 100 * max(1, int(quest_level))
+
+
+# Quest stats (Phase 23): one banked quest point per quest
+# level-up, spent one point at a time, same Enter-on-the-line
+# pattern as combat stats. Each maxes at 10 points. Charm:
+# +5% quest credits per point. Renown: +10% chance of +1
+# bonus reputation when a quest finishes per point (100% at
+# 10 points — every finished quest earns the bonus). Insight:
+# +5% quest XP per point. Quest levels give no max HP and no
+# combat stat points; those belong to combat levels only.
+QUEST_STAT_NAMES = ("charm", "renown", "insight")
+QUEST_STAT_MAX = 10
+
+
+def quest_stats_of(fighter):
+    """The fighter's three quest stats, each 0-10."""
+    stats = (fighter or {}).get("quest_stats") or {}
+    return {name: max(0, min(QUEST_STAT_MAX, int(stats.get(name, 0) or 0)))
+            for name in QUEST_STAT_NAMES}
+
+
+def quest_level_of(fighter):
+    """Quest level, 1 for a fighter who has never quested."""
+    return max(1, int((fighter or {}).get("quest_level", 1) or 1))
+
+
+def quest_xp_of(fighter):
+    """Quest XP banked toward the next quest level."""
+    return max(0, int((fighter or {}).get("quest_xp", 0) or 0))
+
+
+def quest_points_of(fighter):
+    """Banked quest points waiting to be spent."""
+    return max(0, int((fighter or {}).get("quest_points", 0) or 0))
+
+
+def quest_level_line(fighter):
+    """One plain-words line for the quest level, for the Home
+    tab next to the fighter level: 'Quest level 3, 40 quest
+    experience to level 4.'"""
+    level = quest_level_of(fighter)
+    to_next = quest_xp_to_next(level) - quest_xp_of(fighter)
+    return ("Quest level %d, %d quest experience to level %d."
+            % (level, to_next, level + 1))
+
+
+def quest_stat_line(fighter, stat):
+    """One plain-words line for a quest stat, saying its value
+    and what one more point does. This is what the hangout
+    list speaks; Enter on the line spends one banked point."""
+    stats = quest_stats_of(fighter)
+    value = stats[stat]
+    if stat == "charm":
+        return (
+            "Charm, %d. Quests pay %d percent more credits. "
+            "One more point adds 5 percent."
+            % (value, value * 5)
+        )
+    if stat == "renown":
+        return (
+            "Renown, %d. %d percent chance of 1 bonus reputation "
+            "when a quest finishes. One more point adds 10 percent."
+            % (value, value * 10)
+        )
+    if stat == "insight":
+        return (
+            "Insight, %d. Quests pay %d percent more quest "
+            "experience. One more point adds 5 percent."
+            % (value, value * 5)
+        )
+    return stat
+
+
 def quest_duration_minutes(difficulty, rng=None):
     """How long a quest takes, in minutes. Never over 4 hours."""
     low, high = DURATION_MINUTES.get(difficulty, (15, 45))
@@ -179,23 +341,24 @@ def next_tier(reputation):
     return None
 
 
-def reputation_line(giver, rep_after):
-    """One plain-words line for a finished quest: the +1
-    reputation gained, the new total with that giver, and
-    how far to the next tier — or the top tier, when there
-    is no next tier. Spoken by the giver on completion."""
+def reputation_line(giver, rep_after, gained=1):
+    """One plain-words line for a finished quest: the reputation
+    gained, the new total with that giver, and how far to the
+    next tier — or the top tier, when there is no next tier.
+    Spoken by the giver on completion. gained is normally 1;
+    Renown (Phase 23) can make it 2 when the bonus lands."""
     nxt = next_tier(rep_after)
     if nxt is None:
         return (
-            "You gained 1 reputation with %s. You have %s reputation "
+            "You gained %d reputation with %s. You have %s reputation "
             "with %s. That is the top tier, Trusted Friend, and your "
             "reputation keeps building with no cap."
-            % (giver, rep_after, giver))
+            % (gained, giver, rep_after, giver))
     needed, name = nxt
     return (
-        "You gained 1 reputation with %s. You have %s reputation "
+        "You gained %d reputation with %s. You have %s reputation "
         "with %s, %s more to reach %s."
-        % (giver, rep_after, giver, needed - rep_after, name))
+        % (gained, giver, rep_after, giver, needed - rep_after, name))
 
 
 def reputation_summary(reputation):
@@ -254,6 +417,7 @@ def generate_quest(rng=None, difficulty=None, existing_ids=None,
             "giver_voice": giver["voice"],
             "giver_gender": giver["gender"],
             "difficulty": template["difficulty"],
+            "ambience": template["ambience"],
             "duration_minutes": quest_duration_minutes(
                 template["difficulty"], rng),
             "coop": bool(template.get("coop")),

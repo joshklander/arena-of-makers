@@ -60,6 +60,34 @@ sound is used anywhere.
 | `music_loop.mp3` | Jazz Brunch, 5:23, 9.9 MB | Background music, loops everywhere for now | Incompetech — https://incompetech.com/music/royalty-free/mp3-royaltyfree/Jazz%20Brunch.mp3 | Kevin MacLeod | CC-BY 4.0 — credit required, see below |
 | `music_hangout.mp3` | Jazz Brunch, 5:23, 9.9 MB (same file as `music_loop.mp3`) | **Staged for the future two-track change:** cozy café music for the hangout | Incompetech, same as above | Kevin MacLeod | CC-BY 4.0 — credit required, see below |
 | `music_fight.mp3` | Mesmerizing Galaxy Loop, 1:33, 2.9 MB | **Staged for the future two-track change:** sci-fi music for fights | Incompetech — https://incompetech.com/music/royalty-free/mp3-royaltyfree/Mesmerizing%20Galaxy%20Loop.mp3 | Kevin MacLeod | CC-BY 4.0 — credit required, see below |
+| `ambience_gathering.mp3` | Flea-market ambience, about 1:09, 2.7 MB — conversations, people walking by, general crowd activity | Quest ambience loop for gathering quests (Scrap Run, Market Run) | BigSoundBank, "Flea #1" (sound #130) — https://bigsoundbank.com/flea-1-s0130.html | Joseph Sardin | CC0 |
+| `ambience_cleaning.mp3` | Damp cloth cleaning a floor, about 0:49, 1.9 MB | Quest ambience loop for cleaning quests (The Great Oil Spill) | BigSoundBank, "floor cloth" (sound #668) — http://bigsoundbank.com/floor-cloth-s0668.html | Joseph Sardin | CC0 |
+
+## Quest ambience loops (Phase 23, 2026-11-19)
+
+While a hangout quest runs, a sound matching the kind of work
+plays in a loop under the hangout music and the giver's voice,
+on its own channel (Channel 3) at a quarter of the effects
+volume, so it never interrupts the voice. It starts when the
+quest starts and stops when the quest completes, stops,
+pauses, or the player leaves the hangout. Turning sound
+effects or background music off in Settings stops it too.
+
+| Ambience | Quests | Loop sound |
+| --- | --- | --- |
+| cooking | Perfect the Recipe, Rescue the Burnt Dish, The Midnight Feast, The Robot Who Wanted Soup, The Grand Hangout Fair | `chef_sizzle.wav` (already in `sounds/`) |
+| repair | Tune-Up Time, Calm the Haywire Drone, Chef's New Helper, The Broken Oven and the Broken Bot | `robot_servo.wav` (already in `sounds/`) |
+| gathering | Scrap Run, Market Run | `ambience_gathering.mp3` — **to upload** (see below) |
+| cleaning | The Great Oil Spill | `ambience_cleaning.mp3` — **to upload** (see below) |
+
+**To upload through the GitHub website** (Maren's tools cannot
+upload audio): the two new files are in
+`~/workspace/arena-of-makers-work/sounds-download/` —
+`ambience_gathering.mp3` and `ambience_cleaning.mp3`. Upload
+them into `sounds/` on main with those exact filenames. Until
+they are there, gathering and cleaning quests simply play no
+loop — the game carries on silently, and the loops start
+working on the next launch after the upload.
 
 ## Music — how it works now (two tracks, wired in 2026-11-18)
 

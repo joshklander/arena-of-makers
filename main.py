@@ -593,6 +593,9 @@ class MainFrame(wx.Frame):
                 )
             else:
                 items.append("You have no stat points to spend right now.")
+            # Quest level (Phase 23), next to the fighter level:
+            # one line, always shown, even at quest level 1.
+            items.append(quests.quest_level_line(fighter))
             for stat in game_logic.STAT_NAMES:
                 items.append(game_logic.stat_line(fighter, stat))
             if sum(game_logic.stats_of(fighter).values()) > 0:
@@ -675,6 +678,23 @@ class MainFrame(wx.Frame):
                     items.append("Start quests (press S)")
                 items.append("Find me another quest")
                 items.append("Hear my quests")
+                # Quest levels (Phase 23): quest level, quest XP
+                # to the next level, banked quest points, and the
+                # three quest stat lines — next to the quest
+                # board, not instead of it. Enter on a quest
+                # stat spends one banked quest point there.
+                items.append(quests.quest_level_line(self.fighter))
+                qpoints = quests.quest_points_of(self.fighter)
+                if qpoints > 0:
+                    items.append(
+                        "You have %d quest %s to spend. Press Enter on a "
+                        "quest stat to spend one point."
+                        % (qpoints, "point" if qpoints == 1 else "points")
+                    )
+                else:
+                    items.append("You have no quest points to spend right now.")
+                for qstat in quests.QUEST_STAT_NAMES:
+                    items.append(quests.quest_stat_line(self.fighter, qstat))
                 for line in quests.reputation_summary(self._quest_rep):
                     items.append(line)
             else:
@@ -1325,6 +1345,33 @@ class MainFrame(wx.Frame):
         else:
             self.sounds.stop_music()
 
+    def _refresh_ambience(self):
+        """Play the current quest's ambience loop, or stop it.
+        The loop is background audio like the music: it plays
+        only when sound effects and background music are both
+        on, at a low volume under the music and the voice.
+        A quest whose ambience has no sound file in sounds/
+        yet plays nothing — the game carries on silently
+        until the file is uploaded. Asking for the loop that
+        is already playing does not restart it, so the next
+        quest with the same kind of work keeps the same loop
+        going. Every place that ends a quest must stop the
+        loop, or it keeps playing after the activity stops:
+        complete, Stop, pause, leaving the hangout, closing
+        the game, and turning sounds or music off."""
+        if (not self.sound_on or not self.music_on
+                or not self._quest_current):
+            self.sounds.stop_ambience()
+            return
+        name = quests.ambience_sound_name(self._quest_current)
+        if name and self.sounds.start_ambience(name):
+            return
+        # No loop for this quest — its file is not in
+        # sounds/ yet, or playback failed — so stop the old
+        # loop instead of letting it carry on into a quest
+        # it does not belong to.
+        self.sounds.stop_ambience()
+
     # -- hangout quests (Phase 18) -------------------------------------
 
     def _apply_quest_data(self, data):
@@ -1383,7 +1430,10 @@ class MainFrame(wx.Frame):
         from the hangout. Best effort: when the server cannot
         be reached, the loop still stops locally, and the
         quest stays saved with its old finish time. The
-        server never completes a paused quest."""
+        server never completes a paused quest. The ambience
+        loop stops too: a paused quest is not being worked
+        on, so nothing should keep sounding."""
+        self.sounds.stop_ambience()
         if not self._quest_current or not self.online_config:
             return
         data, error = online_save.pause_quest(self.online_config)
@@ -1491,11 +1541,16 @@ class MainFrame(wx.Frame):
         giver = started.get("giver", "Bolt")
         voice = started.get("giver_voice")
         self.announce_as(
-            "%s asks: %s That quest takes about %s."
+            "%s asks: %s That quest takes %s."
             % (giver, started.get("description", ""),
                game_logic.format_time(
                    (started.get("duration_minutes") or 15) * 60)),
             voice)
+        # The quest's ambience loop starts now, under the
+        # music and the voice, and keeps playing until the
+        # quest completes, stops, pauses, or the player
+        # leaves the hangout.
+        self._refresh_ambience()
         self.refresh_all()
         return True
 
@@ -1536,16 +1591,32 @@ class MainFrame(wx.Frame):
         # her new total with this giver, and how far to the
         # next tier — or the top tier, when there is no next
         # one. The tier-crossing line above still speaks too.
+        # Renown (Phase 23) can make the gain 2 instead of 1.
         giver = data.get("giver") or quest.get("giver")
         rep = (data.get("reputation") or {}).get(giver) \
             if giver else None
         if giver and rep is not None:
+            gained = 1 + (1 if data.get("bonus_reputation") else 0)
             self.announce_as(
-                quests.reputation_line(giver, int(rep)), voice)
+                quests.reputation_line(giver, int(rep), gained=gained), voice)
+        # Quest XP (Phase 23): what she earned, how far to the
+        # next quest level, and a level-up line when it levels
+        # her up — all in the giver's voice. The numbers come
+        # from the server, never invented here. Renown's bonus
+        # reputation is announced in its own words, too.
+        if data.get("quest_xp_line"):
+            self.announce_as(data["quest_xp_line"], voice)
+        if data.get("quest_level_line"):
+            self.announce_as(data["quest_level_line"], voice)
+        if data.get("bonus_reputation"):
+            self.announce_as("Bonus reputation!", voice)
         if data.get("gift_pending"):
             self.announce(
                 "A free gift is waiting. Press 1 for a free weapon "
                 "upgrade, or 2 for a free armor upgrade.")
+        # The finished quest's ambience loop stops here: the
+        # next quest starts its own loop in _begin_next_quest.
+        self.sounds.stop_ambience()
         self._begin_next_quest()
         self.refresh_all()
 
@@ -1566,7 +1637,7 @@ class MainFrame(wx.Frame):
         left = max(0.0, finish - now)
         done = max(0.0, min(1.0, 1.0 - left / total))
         line = (
-            "Your quest is about %d percent done. About %s left."
+            "Your quest is about %d percent done. %s left."
             % (int(done * 100), game_logic.format_time(left)))
         if game_logic.is_repairing(self.fighter):
             line += (
@@ -1705,6 +1776,26 @@ class MainFrame(wx.Frame):
         self.announce(message)
         self.refresh_all()
 
+    def do_spend_quest_stat(self, stat):
+        """Spend one banked quest point on the highlighted quest
+        stat. One point per press: stay on the line and press
+        Enter again to spend another point there, in the same
+        stat or a different one. Max 10 points in any one quest
+        stat. Online, the server decides."""
+        if self.online_config:
+            server_fighter, message, _messages, error = online_save.spend_quest_stat(
+                self.online_config, stat
+            )
+            self.use_server_fighter(server_fighter)
+        else:
+            error, message = game_logic.spend_quest_stat(self.fighter, stat)
+        if error:
+            self.announce(error)
+            self.refresh_all()
+            return
+        self.announce(message)
+        self.refresh_all()
+
     def do_respec(self):
         """Reset all 5 stats, refunding every spent point. The
         first respec is free; later ones cost 100 credits. A
@@ -1826,6 +1917,8 @@ class MainFrame(wx.Frame):
             self.do_spend_stat("speed")
         elif tab == "Home" and item.startswith("Luck,"):
             self.do_spend_stat("luck")
+        elif tab == "Home" and item.startswith("Quest level "):
+            self.announce(item)
         elif tab == "Home" and item.startswith("Reset all my stats"):
             self.do_respec()
         elif tab == "Combat" and item.startswith("Fight a Scrap Rat"):
@@ -1880,6 +1973,27 @@ class MainFrame(wx.Frame):
             self.find_another_quest()
         elif tab == "More" and item.startswith("Hear my quests"):
             self.hear_quests()
+        elif tab == "More" and item.startswith("Quest level "):
+            self.announce(item)
+        elif tab == "More" and item.startswith("You have ") and "quest" in item:
+            qpoints = quests.quest_points_of(fighter)
+            if qpoints > 0:
+                self.announce(
+                    "You have %d quest %s to spend. Move with the arrow "
+                    "keys to a quest stat and press Enter to spend one point."
+                    % (qpoints, "point" if qpoints == 1 else "points")
+                )
+            else:
+                self.announce(
+                    "You have no quest points to spend right now. You get "
+                    "1 quest point every time you go up a quest level."
+                )
+        elif tab == "More" and item.startswith("Charm,"):
+            self.do_spend_quest_stat("charm")
+        elif tab == "More" and item.startswith("Renown,"):
+            self.do_spend_quest_stat("renown")
+        elif tab == "More" and item.startswith("Insight,"):
+            self.do_spend_quest_stat("insight")
         elif tab == "More" and item.startswith(
                 "Choose my free gift: weapon"):
             self.choose_quest_gift("weapon")
@@ -1939,11 +2053,13 @@ class MainFrame(wx.Frame):
             self.sound_on = not self.sound_on
             self.sounds.set_enabled(self.sound_on)
             self._refresh_music()
+            self._refresh_ambience()
             self.announce("Sound effects %s." % ("on" if self.sound_on else "off"))
             self.refresh_all()
         elif tab == "Settings" and item.startswith("Background music:"):
             self.music_on = not self.music_on
             self._refresh_music()
+            self._refresh_ambience()
             self.announce("Background music %s." % ("on" if self.music_on else "off"))
             self.refresh_all()
         elif tab == "Settings" and item.startswith("Keep me signed in"):
@@ -2193,6 +2309,7 @@ class MainFrame(wx.Frame):
         self.timer.Stop()
         self._cancel_narration()
         self.sounds.stop_music()
+        self.sounds.stop_ambience()
         if self.voice is not None:
             self.voice.stop()
             if self._player_ready:
