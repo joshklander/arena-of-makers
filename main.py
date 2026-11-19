@@ -1149,6 +1149,10 @@ class MainFrame(wx.Frame):
             if error:
                 if idle:
                     self.idle_fighting = False
+                    # Auto-fighting stopped, so its music stops
+                    # too: a failed fight must not leave the
+                    # fight track playing with nothing fighting.
+                    self._refresh_music()
                 self.server_problem(error)
                 self.refresh_all()
                 return
@@ -1232,7 +1236,20 @@ class MainFrame(wx.Frame):
         starts nothing, and launch starts nothing. Turning
         music or sound effects off in Settings stops it too.
         Asking for the track that is already playing does not
-        restart it, so the loop never jumps."""
+        restart it, so the loop never jumps.
+
+        The music belongs to the whole session, not to one
+        fight: while auto-fighting stays on, the fight track
+        plays on continuously across every fight — it is never
+        stopped and restarted between fights, or at the end of
+        a single won fight, or between rounds. It stops only
+        when the session ends: auto-fight turned off by hand,
+        a loss that starts repairs, a failed fight, leaving
+        the hangout, or the hangout's Stop. The hangout works
+        the same way: its music plays from Start until Stop
+        (or leaving), even while a quest is saved or paused.
+        Every place that ends auto-fighting must call this,
+        or the music keeps playing after the fighting stops."""
         if not self.sound_on or not self.music_on:
             self.sounds.stop_music()
             return
@@ -1572,6 +1589,10 @@ class MainFrame(wx.Frame):
             if self.idle_fighting:
                 self.idle_fighting = False
                 self.announce("Idle fighting off.")
+                # Stopping auto-fight by hand stops its music
+                # too, at once: the fight track belongs to the
+                # auto-fight session, not to the Combat tab.
+                self._refresh_music()
                 self.refresh_all()
             elif self.current_tab() != "Home":
                 self.notebook.SetSelection(0)
@@ -1637,6 +1658,13 @@ class MainFrame(wx.Frame):
                 if game_logic.is_repairing(self.fighter):
                     self.idle_fighting = False
                     self.announce("Idle fighting stopped while your fighter repairs.")
+                    # A loss that starts repairs ends the
+                    # auto-fight session, so the fight music
+                    # stops here too. (This was the bug Makenna
+                    # reported 2026-11-18: the music kept playing
+                    # after a lost fight, even though auto-fight
+                    # was off and repairs were running.)
+                    self._refresh_music()
                     self.refresh_all()
         if self.online_config:
             self._tick_online(now)

@@ -594,6 +594,45 @@ def main_test():
     check("a manual fight plays no music",
           frame.sounds.current_music_track is None)
 
+    # Music respects the game state (2026-11-18, Makenna):
+    # it plays continuously across a whole auto-fight session
+    # — never stopping and restarting between fights — and
+    # stops only when the session ends.
+    frame.toggle_idle()
+    check("auto-fighting starts the fight music again",
+          frame.sounds.current_music_track == "fight")
+    frame.do_fight(idle=True)
+    check("a won idle fight keeps the music playing",
+          frame.sounds.current_music_track == "fight")
+    frame.on_key(types.SimpleNamespace(
+        GetKeyCode=lambda: sys.modules["wx"].WXK_ESCAPE))
+    check("Escape stops auto-fighting",
+          frame.idle_fighting is False)
+    check("Escape stops the fight music too",
+          frame.sounds.current_music_track is None)
+    frame.toggle_idle()
+    _online_save.fight = lambda *args, **kwargs: (None, "test: server down")
+    frame.do_fight(idle=True)
+    check("a failed idle fight turns auto-fighting off",
+          frame.idle_fighting is False)
+    check("a failed idle fight stops the music",
+          frame.sounds.current_music_track is None)
+    _online_save.fight = _fake_fight
+    frame.toggle_idle()
+    check("auto-fighting starts the fight music a third time",
+          frame.sounds.current_music_track == "fight")
+    # A lost fight starts repairs: the next tick ends
+    # auto-fighting, and its music must stop with it. (This
+    # was the bug: the music kept playing after a loss, even
+    # though auto-fight was off and repairs were running.)
+    server["fighter"]["repair_until"] = time.time() + 600
+    frame._cancel_narration()
+    sys.modules["pygame"].mixer.music.finish()
+    frame.on_tick(mock.MagicMock())
+    check("repairs stop auto-fighting", frame.idle_fighting is False)
+    check("music stops when repairs stop auto-fighting",
+          frame.sounds.current_music_track is None)
+
     # The fighter-creation dialog returns kind, name and gender.
     dialog = main.CreateFighterDialog(None)
     dialog.name_ctrl.text = "Ember"
