@@ -321,6 +321,13 @@ def _make_pygame():
 
 sys.modules["wx"] = _make_wx()
 sys.modules["pygame"] = _make_pygame()
+# These tests start with no voice, as if edge-tts were not installed,
+# even on a computer that has it (requirements.txt installs it). With
+# a real voice, fight lines wait in the narration queue for a tick
+# that never runs here, so later lines never reach the message line.
+# The voice tests further down put in their own fake edge-tts and
+# reload voice_engine and main, so they are not affected.
+sys.modules["edge_tts"] = None
 
 import game_logic
 import main
@@ -1771,9 +1778,13 @@ def currency_wording_test():
     # the first-person wording, and repairs the stored
     # fighters — including the credits field the broken call
     # left null, which is never left null again.
-    hotfix = open(os.path.join(mig_dir, names[-1]), encoding="utf-8").read()
-    check("newest migration is the healing null fix",
-          "healing_level_null_fix" in names[-1])
+    # Looked up by name: later migrations (Phase 33 and on) are
+    # newer, so the last file in the folder is no longer this one.
+    null_fix_name = [n for n in names if "healing_level_null_fix" in n][0]
+    hotfix = open(os.path.join(mig_dir, null_fix_name),
+                  encoding="utf-8").read()
+    check("the healing null fix migration is present",
+          "healing_level_null_fix" in null_fix_name)
     check("the null fix re-issues the upgrade functions",
           "arena_start_upgrade" in hotfix
           and "arena_max_upgrade" in hotfix

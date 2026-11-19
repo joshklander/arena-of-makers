@@ -22,7 +22,7 @@ if errorlevel 1 goto :error
 
 echo.
 echo Building the game exe. This takes a few minutes.
-pyinstaller --noconfirm --clean --onefile --windowed --name ArenaOfMakers --add-data "sounds;sounds" main.py
+pyinstaller --noconfirm --clean --onefile --windowed --name ArenaOfMakers --add-data "sounds;sounds" --hidden-import keyring.backends.Windows main.py
 if errorlevel 1 goto :error
 
 echo.

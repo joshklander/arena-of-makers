@@ -28,6 +28,13 @@ before adding one.
    file is undone and the live game keeps its old rules. Test it
    first anyway: `python test_online_save.py`,
    `python test_main_smoke.py` and `python test_game_logic.py`.
+   `python test_migrations.py` applies every file in order on a
+   throwaway database, the way Supabase does, and catches a bad
+   file before it is pushed (needs `pip install pgserver
+   psycopg2-binary`; it skips itself without them). Also look at
+   the "Supabase Preview" check on the commit after you push: a
+   red one means a migration failed, and every file after it is
+   held back.
 
 ## Rules that keep the game safe
 
