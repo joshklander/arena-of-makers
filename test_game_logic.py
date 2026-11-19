@@ -230,6 +230,30 @@ def main():
     check("max healing is blocked while a weapon set runs",
           game_logic.start_max_upgrade(armed, "healing", now=1000001.0)[0] is not None)
 
+    # Hotfix Phase 25b (Makenna Nov 18, 2026): a fighter made
+    # before Phase 18 has no healing_level key at all, and the
+    # game used to crash on launch building the Shop. Missing
+    # means level 0: buying, max-affordable and the level-5
+    # rules all still work, and the key appears once the first
+    # level finishes.
+    old = game_logic.new_fighter("Old", "robot")
+    del old["healing_level"]
+    old["credits"] = 1000
+    check("a pre-Phase-18 fighter has no healing_level key",
+          "healing_level" not in old)
+    plan = game_logic.max_affordable(old, "healing")
+    check("max affordable works without the key, all 5 levels",
+          len(plan["levels"]) == 5 and plan["cost"] == 915)
+    error = game_logic.start_upgrade(old, "healing", now=1000000.0)
+    check("buying healing works without the key", error is None)
+    check("first healing level costs 50 without the key",
+          old["credits"] == 950)
+    game_logic.finish_upgrade_if_ready(old, now=1000000.0 + 12 * 60 + 1)
+    check("healing finishes at level 1 without the key",
+          old["healing_level"] == 1)
+    check("status says the Second Wind level after the first buy",
+          "Second Wind level 1" in game_logic.status_text(old))
+
     # Max affordable Healing: 1000 credits from level 0 buys
     # all 5 levels for 915 credits in about 3 hours, never
     # past level 5; at level 5 there is nothing to buy.

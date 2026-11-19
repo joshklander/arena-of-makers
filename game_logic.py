@@ -1022,7 +1022,9 @@ def start_upgrade(fighter, slot, now=None):
     if fighter.get("upgrade"):
         return "An upgrade is already running. Wait for it to finish first."
     level_key = slot + "_level"
-    level = fighter[level_key]
+    # A fighter made before Phase 18 has no healing_level
+    # key at all: missing means level 0 (Phase 25b hotfix).
+    level = fighter.get(level_key, 0) or 0
     if slot == "healing":
         if level >= HEALING_MAX_LEVEL:
             return "Your %s is already at its best, level %d." % (
@@ -1060,7 +1062,9 @@ def max_affordable(fighter, slot):
     reach. Healing also stops at level 5 — it never buys past
     the cap — and reports "maxed" so the game can say plainly
     that the skill is already at its best."""
-    level = fighter[slot + "_level"]
+    # A fighter made before Phase 18 has no healing_level
+    # key at all: missing means level 0 (Phase 25b hotfix).
+    level = fighter.get(slot + "_level", 0) or 0
     start_level = level
     credits = credits_of(fighter)
     levels = []

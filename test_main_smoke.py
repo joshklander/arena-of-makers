@@ -850,6 +850,42 @@ def main_test():
     server["fighter"]["healing_level"] = 3
     fighter["healing_level"] = 3
 
+    # Hotfix Phase 25b (Makenna Nov 18, 2026): a fighter made
+    # before Phase 18 has no healing_level key at all, and the
+    # game used to crash on launch — refresh_all builds every
+    # tab including the Shop. Missing means level 0: the Shop
+    # offers Second Wind level 1 for 50 credits, buying and
+    # max-buying work, and the key appears once level 1 lands.
+    fighter.pop("healing_level", None)
+    server["fighter"].pop("healing_level", None)
+    check("a pre-Phase-18 fighter has no healing_level key",
+          "healing_level" not in fighter)
+    frame.refresh_all()  # the startup path that used to crash
+    frame.notebook.SetSelection(2)  # Shop tab
+    frame.refresh_list("Shop")
+    shop_items = frame.list_items("Shop")
+    check("shop shows Second Wind level 1 at 50 credits without the key",
+          any(item == "Upgrade Second Wind to level 1, costs 50 credits (press H)"
+              for item in shop_items))
+    check("shop shows a max affordable Second Wind line without the key",
+          any(item.startswith("Max affordable: Second Wind")
+              for item in shop_items))
+    check("home status says Second Wind level 0 without the key",
+          "Second Wind level 0" in game_logic.status_text(fighter))
+    frame.do_upgrade("healing")
+    check("second wind starts from a missing level",
+          fighter.get("upgrade") is not None
+          and fighter["upgrade"]["slot"] == "healing")
+    fighter["upgrade"]["finish"] = 0.0
+    server["fighter"]["upgrade"]["finish"] = 0.0
+    frame._last_timer_check = 0
+    frame.on_tick(mock.MagicMock())
+    check("second wind finishes at level 1 from a missing level",
+          fighter.get("healing_level") == 1)
+    # Restore the level the later tests expect.
+    server["fighter"]["healing_level"] = 3
+    fighter["healing_level"] = 3
+
     # Music rule (2026-11-18, quests Phase 18): no music
     # at launch, hangout music only once quests have
     # started in the hangout, fight music only while
@@ -1365,21 +1401,41 @@ def currency_wording_test():
         encoding="utf-8").read()
     check("the npc creatures migration adds the npc fight function",
           "arena_fight_npc" in npc_mig)
+    growth_mig = open(os.path.join(
+        mig_dir, [n for n in names if "quest_growth" in n][0]),
+        encoding="utf-8").read()
+    check("a quest growth migration exists",
+          any("quest_growth" in name for name in names))
+    check("quest growth migration redefines the quest dealing and completion functions",
+          "arena_new_quest" in growth_mig
+          and "arena_complete_quest" in growth_mig)
+    check("quest growth migration keys quest credits to the quest level",
+          "quest_level" in growth_mig
+          and "arena_private.quest_reward" in growth_mig)
+    check("quest growth migration grows durations with the quest level but caps at 4 hours",
+          "240" in growth_mig and "quest_level" in growth_mig)
+    check("quest growth migration adds the automatic quest-stat bonus",
+          "v_auto" in growth_mig)
+    check("quest growth migration never says points for the currency",
+          "Your points are now called credits" not in growth_mig)
+    # Hotfix Phase 25b (Makenna Nov 18, 2026): the newest
+    # migration is the healing-level hotfix, not quest growth.
     newest = open(os.path.join(mig_dir, names[-1]), encoding="utf-8").read()
-    check("newest migration is the quest growth one",
-          "quest_growth" in names[-1])
-    check("newest migration redefines the quest dealing and completion functions",
-          "arena_new_quest" in newest
-          and "arena_complete_quest" in newest)
-    check("newest migration keys quest credits to the quest level",
-          "quest_level" in newest
-          and "arena_private.quest_reward" in newest)
-    check("newest migration grows durations with the quest level but caps at 4 hours",
-          "240" in newest and "quest_level" in newest)
-    check("newest migration adds the automatic quest-stat bonus",
-          "v_auto" in newest)
-    check("newest migration never says points for the currency",
-          "Your points are now called credits" not in newest)
+    check("newest migration is the healing level hotfix",
+          "healing_level_hotfix" in names[-1])
+    check("hotfix migration defaults healing_level to 0 in fighter_out",
+          "fighter_out" in newest
+          and "coalesce((p_fighter ->> 'healing_level')::integer, 0)"
+          in newest)
+    check("hotfix migration coalesces the upgrade slot levels",
+          "lvl := coalesce((f ->> (p_slot || '_level'))::integer, 0);"
+          in newest
+          and "v_level := coalesce((f ->> (p_slot || '_level'))::integer, 0);"
+          in newest)
+    check("hotfix migration coalesces the max-upgrade healing cost lookup",
+          "coalesce((f ->> 'healing_level')::integer, 0) + 1" in newest)
+    check("hotfix migration touches no fight function",
+          "arena_fight" not in newest)
     healing_mig = open(os.path.join(
         mig_dir, [n for n in names if "healing_skill" in n][0]),
         encoding="utf-8").read()

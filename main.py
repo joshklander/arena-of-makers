@@ -636,7 +636,10 @@ class MainFrame(wx.Frame):
                 already at level 5."""
                 name = game_logic.HEALING_NAME if slot == "healing" \
                     else fighter[slot + "_name"]
-                level = fighter[slot + "_level"]
+                # A fighter made before Phase 18 has no
+                # healing_level key at all: missing means
+                # level 0, never a crash (Phase 25b hotfix).
+                level = fighter.get(slot + "_level", 0) or 0
                 if slot == "healing" and level >= game_logic.HEALING_MAX_LEVEL:
                     return "%s is at its best, level %d." % (
                         name, game_logic.HEALING_MAX_LEVEL)
@@ -690,7 +693,10 @@ class MainFrame(wx.Frame):
                         continue
                     name = game_logic.HEALING_NAME if slot == "healing" \
                         else fighter[slot + "_name"]
-                    level = fighter[slot + "_level"]
+                    # Same missing-key rule as above: a
+                    # fighter made before Phase 18 has no
+                    # healing_level key; missing means level 0.
+                    level = fighter.get(slot + "_level", 0) or 0
                     if slot == "healing" and level >= game_logic.HEALING_MAX_LEVEL:
                         items.append(
                             "%s is at its best, level %d."
