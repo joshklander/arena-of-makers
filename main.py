@@ -612,7 +612,7 @@ class MainFrame(wx.Frame):
         if tab == "Combat":
             state = "on" if self.idle_fighting else "off"
             return [
-                "Fight a Scrap Rat (press F)",
+                "Fight",
                 "Idle fighting: %s (press Shift F)" % state,
                 "Hear my fighter status",
             ]
@@ -621,18 +621,40 @@ class MainFrame(wx.Frame):
             armor_cost = game_logic.upgrade_cost(fighter["armor_level"])
             upgrade = game_logic.upgrade_status(fighter)
             if upgrade:
-                weapon_line = upgrade
+                # One upgrade set at a time (Makenna, Nov 18,
+                # 2026): while a set is running, the Shop shows
+                # the running set with its time left first, and
+                # the other slot says plainly that it waits —
+                # it never pretends the next upgrade is ready
+                # to start. Enter on either line still goes
+                # through do_upgrade, which speaks the block
+                # with the time left.
+                running_slot = (fighter.get("upgrade") or {}).get("slot")
+                other_slot = "armor" if running_slot == "weapon" else "weapon"
+                other_name = fighter[other_slot + "_name"]
+                other_level = fighter[other_slot + "_level"] + 1
+                other_cost = game_logic.upgrade_cost(fighter[other_slot + "_level"])
+                other_key = "A" if other_slot == "armor" else "U"
+                items = [
+                    upgrade,
+                    "Upgrade %s to level %d, costs %d credits "
+                    "-- waits until the running upgrade finishes, "
+                    "%s left (press %s)"
+                    % (other_name, other_level, other_cost,
+                       game_logic.format_time(
+                           max(0, fighter["upgrade"]["finish"] - time.time())),
+                       other_key),
+                ]
             else:
                 weapon_line = (
                     "Upgrade %s to level %d, costs %d credits (press U)"
                     % (fighter["weapon_name"], fighter["weapon_level"] + 1, weapon_cost)
                 )
-            armor_line = (
-                "Upgrade %s to level %d, costs %d credits (press A)"
-                % (fighter["armor_name"], fighter["armor_level"] + 1, armor_cost)
-            )
-            items = [weapon_line, armor_line]
-            if not upgrade:
+                armor_line = (
+                    "Upgrade %s to level %d, costs %d credits (press A)"
+                    % (fighter["armor_name"], fighter["armor_level"] + 1, armor_cost)
+                )
+                items = [weapon_line, armor_line]
                 # Max affordable: one line per slot, worked out
                 # from the fighter the server sent back. The
                 # server decides the real queue and price.
@@ -1019,7 +1041,14 @@ class MainFrame(wx.Frame):
     def _play_sound_for_line(self, line):
         """The sound effect for one narration line, or nothing
         when sounds are off or the file is missing. Robot and
-        chef fighters hear different sounds for the same hit."""
+        chef fighters hear different sounds for the same hit.
+        Each creature has its OWN appear and hit sounds, so
+        you can tell who it is by sound alone (Makenna's
+        per-creature sound rule, Nov 18, 2026): when a named
+        NPC appears or hits, its own sounds play; Scrap Rat
+        keeps the fighter-kind sounds it always had. A
+        missing creature sound simply plays nothing — the
+        fight never stops for a sound file."""
         if not self.sound_on:
             return
         kind = self.fighter.get("kind", "robot")
@@ -1028,11 +1057,36 @@ class MainFrame(wx.Frame):
         elif "You lost." in line:
             self.sounds.play_loss()
         elif "appears!" in line:
-            self.sounds.play_intro(kind)
-        elif "hits the Scrap Rat" in line:
-            self.sounds.play_hit(kind)
-        elif "The Scrap Rat hits" in line:
-            self.sounds.play_creature_hit(kind)
+            npc_id = game_logic.creature_in_line(line)
+            if npc_id and npc_id != "scrap_rat":
+                self.sounds.play(
+                    game_logic.NPCS[npc_id]["appear_sound"])
+            else:
+                self.sounds.play_intro(kind)
+        elif " hits " in line:
+            # Who is hitting whom is in the words: "The Zip
+            # Scout hits Katprincess" is the creature hitting,
+            # "Katprincess hits the Zip Scout" is the fighter
+            # hitting. Matching the exact wording keeps a
+            # fighter whose name starts with "The" from
+            # stealing the creature's sound.
+            npc_id = game_logic.creature_in_line(line)
+            if npc_id and npc_id != "scrap_rat":
+                name = game_logic.NPCS[npc_id]["name"]
+                if "The %s hits" % name in line:
+                    self.sounds.play(
+                        game_logic.NPCS[npc_id]["hit_sound"])
+                elif "hits the %s" % name in line:
+                    self.sounds.play_hit(kind)
+            elif npc_id == "scrap_rat":
+                if "The Scrap Rat hits" in line:
+                    self.sounds.play_creature_hit(kind)
+                elif "hits the Scrap Rat" in line:
+                    self.sounds.play_hit(kind)
+            else:
+                # No creature named: the fighter's own weapon
+                # sound, as before.
+                self.sounds.play_hit(kind)
 
     def log(self, lines):
         """Add fight narration to the Combat log."""
@@ -1200,7 +1254,7 @@ class MainFrame(wx.Frame):
 
     # -- actions -------------------------------------------------------
 
-    def do_fight(self, idle=False, opponent_code=None):
+    def do_fight(self, idle=False, opponent_code=None, npc_id=None):
         """Fight one creature. A manual fight (F, or Enter on the
         fight item) and an idle fight are both narrated turn by
         turn, round by round, with the fight sounds for every
@@ -1215,6 +1269,17 @@ class MainFrame(wx.Frame):
         so the 5-second gap is a minimum wait, never an
         interrupt.
 
+        The opponent for a manual fight is one creature picked
+        at random from the pool — Scrap Rat or one of the 9 NPCs
+        (Phase 24, Makenna Nov 18, 2026) — all at the fighter's
+        own level, so fights stay fair. Auto-fight is unchanged:
+        it is just a toggle, on or off, and its fights are
+        against Scrap Rat, as before — the random pick applies
+        to the manual Fight button only. A caller may pass
+        npc_id to fight one creature in particular (the tests
+        do). A fight against another player (opponent_code)
+        never picks a creature.
+
         Online, the server runs the fight with its own dice and
         sends back the lines and the new fighter; the server
         also records the fight. Only the headless tests, which
@@ -1223,10 +1288,23 @@ class MainFrame(wx.Frame):
         # Music follows the fight: an auto-fight keeps the fight
         # track playing, a manual fight has sound effects only.
         self._refresh_music()
+        if opponent_code is None and npc_id is None and not idle:
+            # Manual Fight only: one creature picked at random
+            # each press (Makenna, Nov 18, 2026). Auto-fight is
+            # unchanged — its fights are against Scrap Rat, as
+            # before — so the random pick never touches it.
+            npc_id = game_logic.random_npc_id(self.random)
         if self.online_config:
-            result, error = online_save.fight(
-                self.online_config, opponent_code=opponent_code
-            )
+            if opponent_code is not None:
+                result, error = online_save.fight(
+                    self.online_config, opponent_code=opponent_code
+                )
+            elif npc_id in (None, "scrap_rat"):
+                result, error = online_save.fight(self.online_config)
+            else:
+                result, error = online_save.fight_npc(
+                    self.online_config, npc_id
+                )
             if error:
                 if idle:
                     self.idle_fighting = False
@@ -1239,7 +1317,9 @@ class MainFrame(wx.Frame):
                 return
             self.use_server_fighter(result.get("fighter"))
         else:
-            result = game_logic.fight(self.fighter, rng=self.random)
+            result = game_logic.fight(
+                self.fighter, rng=self.random,
+                npc_id=npc_id or "scrap_rat")
         self.log(result["lines"])
         self.announce_sequence(result["lines"])
         self.refresh_all()
@@ -1732,9 +1812,33 @@ class MainFrame(wx.Frame):
         finally:
             dialog.Destroy()
 
+    def _announce_upgrade_block(self):
+        """Speak the one-upgrade-at-a-time block, with how long
+        is left on the running set. Used whenever the player
+        tries to start another upgrade while one is running —
+        single or max-affordable, either slot — so the answer
+        is never just "wait", it always says how long the wait
+        is. The fighter here is the server's copy (online) or
+        the local one (offline), so the time left is fresh."""
+        status = game_logic.upgrade_status(self.fighter)
+        if status:
+            self.announce(
+                "An upgrade is already running. Wait for it to "
+                "finish first. " + status
+            )
+        else:
+            self.announce(
+                "An upgrade is already running. Wait for it to "
+                "finish first."
+            )
+
     def do_upgrade(self, slot):
         """Start a timed upgrade. Online, the server checks the
-        credits, takes the cost and sets the finish time."""
+        credits, takes the cost and sets the finish time. One
+        upgrade set at a time: if a set is already running —
+        on either slot — the server (or the local rule, when
+        offline) says so, and the block is spoken with the
+        time left on the running set."""
         if self.online_config:
             server_fighter, _messages, error = online_save.start_upgrade(
                 self.online_config, slot
@@ -1743,7 +1847,10 @@ class MainFrame(wx.Frame):
         else:
             error = game_logic.start_upgrade(self.fighter, slot)
         if error:
-            self.announce(error)
+            if error.startswith("An upgrade is already running"):
+                self._announce_upgrade_block()
+            else:
+                self.announce(error)
             self.refresh_all()
             return
         upgrade = self.fighter["upgrade"]
@@ -1841,8 +1948,17 @@ class MainFrame(wx.Frame):
         """Start a max-affordable queue: as many levels as the
         credits and the 4-hour cap allow. The game says the
         whole deal in plain words and asks first, because once
-        started the queue runs to the end with no cancelling."""
+        started the queue runs to the end with no cancelling.
+        One upgrade set at a time: if a set is already running
+        the player is told so — with the time left — before
+        any question is asked, so they never confirm a queue
+        the server would then refuse (that could happen with
+        a stale local copy, which the server's answer would
+        otherwise only correct after the Yes)."""
         fighter = self.fighter
+        if fighter.get("upgrade"):
+            self._announce_upgrade_block()
+            return
         plan = game_logic.max_affordable(fighter, slot)
         if not plan["levels"]:
             self.announce(
@@ -1875,7 +1991,10 @@ class MainFrame(wx.Frame):
         else:
             error, message = game_logic.start_max_upgrade(self.fighter, slot)
         if error:
-            self.announce(error)
+            if error.startswith("An upgrade is already running"):
+                self._announce_upgrade_block()
+            else:
+                self.announce(error)
             self.refresh_all()
             return
         self.announce(message)
@@ -1921,7 +2040,7 @@ class MainFrame(wx.Frame):
             self.announce(item)
         elif tab == "Home" and item.startswith("Reset all my stats"):
             self.do_respec()
-        elif tab == "Combat" and item.startswith("Fight a Scrap Rat"):
+        elif tab == "Combat" and item == "Fight":
             self.do_fight()
         elif tab == "Combat" and item.startswith("Idle fighting:"):
             self.toggle_idle()

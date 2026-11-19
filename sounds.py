@@ -41,6 +41,33 @@ SOUND_FILES = {
     # those quests simply play no loop.
     "ambience_gathering": ("ambience_gathering.mp3", None),
     "ambience_cleaning": ("ambience_cleaning.mp3", None),
+    # NPC creature sounds (Phase 24): every creature gets its
+    # OWN appear sound and its OWN hit sound, different from
+    # Scrap Rat and from each other, so you can tell who it is
+    # by sound alone (Makenna's per-creature sound rule, Nov 18,
+    # 2026). All Kenney, CC0. The two 5-second clips are
+    # trimmed to their first 2 seconds when played, so an
+    # appear cue never drones on. Until they are uploaded to
+    # sounds/ (through the GitHub website), that creature
+    # simply plays no sound — the fight carries on silently.
+    "npc_zip_scout_appear": ("npc_zip_scout_appear.ogg", None),
+    "npc_zip_scout_hit": ("npc_zip_scout_hit.ogg", None),
+    "npc_bulkhead_appear": ("npc_bulkhead_appear.ogg", None),
+    "npc_bulkhead_hit": ("npc_bulkhead_hit.ogg", None),
+    "npc_mend_o_matic_appear": ("npc_mend_o_matic_appear.ogg", 2000),
+    "npc_mend_o_matic_hit": ("npc_mend_o_matic_hit.ogg", None),
+    "npc_ghost_drone_appear": ("npc_ghost_drone_appear.ogg", None),
+    "npc_ghost_drone_hit": ("npc_ghost_drone_hit.ogg", None),
+    "npc_chop_chop_appear": ("npc_chop_chop_appear.ogg", None),
+    "npc_chop_chop_hit": ("npc_chop_chop_hit.ogg", None),
+    "npc_grill_gus_appear": ("npc_grill_gus_appear.ogg", 2000),
+    "npc_grill_gus_hit": ("npc_grill_gus_hit.ogg", None),
+    "npc_baker_belle_appear": ("npc_baker_belle_appear.ogg", None),
+    "npc_baker_belle_hit": ("npc_baker_belle_hit.ogg", None),
+    "npc_zap_fox_appear": ("npc_zap_fox_appear.ogg", None),
+    "npc_zap_fox_hit": ("npc_zap_fox_hit.ogg", None),
+    "npc_ember_owl_appear": ("npc_ember_owl_appear.ogg", None),
+    "npc_ember_owl_hit": ("npc_ember_owl_hit.ogg", None),
     # The music. Two tracks, one per place: the cozy cafe track for
     # the hangout (Jazz Brunch) and the sci-fi track for fights
     # (Mesmerizing Galaxy Loop). "music" is the old single name and

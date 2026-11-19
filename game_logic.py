@@ -37,6 +37,153 @@ MAX_TIMER_SECONDS = 4 * 3600
 # One starter creature for the skeleton. More creatures come later.
 CREATURE_NAME = "Scrap Rat"
 
+# NPC creatures (Phase 24): the 9 draft NPCs from NPC_DESIGN.md,
+# now real fightable opponents. Each is a multiplier on the
+# Scrap Rat formulas, so a fight stays fair at any level, plus
+# a special ability that fires every few rounds, plus its own
+# appear and hit sounds (Makenna's per-creature sound rule,
+# Nov 18, 2026: every creature gets its OWN appear and hit
+# sounds, different from Scrap Rat and from each other, so you
+# can tell who it is by sound alone). "profile" is the NPC's
+# stat weights (speed / strength / health / defense / luck),
+# the same 2 stat points per level as a fighter, split by the
+# profile in STATS_DESIGN.md. The server keeps the same table
+# (supabase/migrations/*_npc_creatures.sql) and is the only
+# judge of an NPC fight, exactly as for Scrap Rat.
+NPCS = {
+    "zip_scout": {
+        "name": "Zip Scout", "kind": "robot",
+        "hp_mult": 0.7, "dmg_mult": 1.4, "reward_mult": 1.2,
+        "ability": "double_hit", "ability_every": 3,
+        "ability_line": "Zip Scout dashes in twice!",
+        "profile": {"speed": 4, "strength": 3, "health": 1,
+                    "defense": 1, "luck": 1},
+        "appear_sound": "npc_zip_scout_appear",
+        "hit_sound": "npc_zip_scout_hit",
+    },
+    "bulkhead": {
+        "name": "Bulkhead", "kind": "robot",
+        "hp_mult": 1.8, "dmg_mult": 0.7, "reward_mult": 1.1,
+        "ability": "shield", "ability_every": 4,
+        "ability_line": "Bulkhead raises its plating shield! "
+                        "Your hit bounces off!",
+        "profile": {"speed": 1, "strength": 1, "health": 4,
+                    "defense": 3, "luck": 1},
+        "appear_sound": "npc_bulkhead_appear",
+        "hit_sound": "npc_bulkhead_hit",
+    },
+    "mend_o_matic": {
+        "name": "Mend-O-Matic", "kind": "robot",
+        "hp_mult": 1.0, "dmg_mult": 0.9, "reward_mult": 1.2,
+        "ability": "self_repair", "ability_every": 3,
+        "ability_line": "Mend-O-Matic sparks and repairs itself!",
+        "profile": {"speed": 2, "strength": 2, "health": 3,
+                    "defense": 2, "luck": 1},
+        "appear_sound": "npc_mend_o_matic_appear",
+        "hit_sound": "npc_mend_o_matic_hit",
+    },
+    "ghost_drone": {
+        "name": "Ghost Drone", "kind": "robot",
+        "hp_mult": 0.8, "dmg_mult": 1.2, "reward_mult": 1.2,
+        "ability": "vanish", "ability_every": 3,
+        "ability_line": "Ghost Drone vanishes! Your hit misses!",
+        "profile": {"speed": 4, "strength": 3, "health": 1,
+                    "defense": 0, "luck": 2},
+        "appear_sound": "npc_ghost_drone_appear",
+        "hit_sound": "npc_ghost_drone_hit",
+    },
+    "chop_chop": {
+        "name": "Chop-Chop Chef", "kind": "chef",
+        "hp_mult": 0.75, "dmg_mult": 1.3, "reward_mult": 1.2,
+        "ability": "double_hit", "ability_every": 4,
+        "ability_line": "Chop-Chop Chef chops twice!",
+        "profile": {"speed": 4, "strength": 3, "health": 1,
+                    "defense": 1, "luck": 1},
+        "appear_sound": "npc_chop_chop_appear",
+        "hit_sound": "npc_chop_chop_hit",
+    },
+    "grill_gus": {
+        "name": "Grill Master Gus", "kind": "chef",
+        "hp_mult": 1.6, "dmg_mult": 0.85, "reward_mult": 1.1,
+        "ability": "flare", "ability_every": 3,
+        "ability_line": "Grill Master Gus fires up the grill! "
+                        "A burst of flame!",
+        "profile": {"speed": 1, "strength": 2, "health": 4,
+                    "defense": 2, "luck": 1},
+        "appear_sound": "npc_grill_gus_appear",
+        "hit_sound": "npc_grill_gus_hit",
+    },
+    "baker_belle": {
+        "name": "Baker Belle", "kind": "chef",
+        "hp_mult": 1.1, "dmg_mult": 1.0, "reward_mult": 1.2,
+        "ability": "sugar_trap", "ability_every": 4,
+        "ability_line": "Baker Belle throws a sugar trap! "
+                        "Your next hit is sticky and weak!",
+        "profile": {"speed": 2, "strength": 2, "health": 3,
+                    "defense": 2, "luck": 1},
+        "appear_sound": "npc_baker_belle_appear",
+        "hit_sound": "npc_baker_belle_hit",
+    },
+    "zap_fox": {
+        "name": "Zap Fox", "kind": "animal",
+        "hp_mult": 0.9, "dmg_mult": 1.25, "reward_mult": 1.2,
+        "ability": "shock", "ability_every": 3,
+        "ability_line": "Zap Fox crackles with static! A shock!",
+        "profile": {"speed": 4, "strength": 3, "health": 1,
+                    "defense": 0, "luck": 2},
+        "appear_sound": "npc_zap_fox_appear",
+        "hit_sound": "npc_zap_fox_hit",
+    },
+    "ember_owl": {
+        "name": "Ember Owl", "kind": "animal",
+        "hp_mult": 1.3, "dmg_mult": 0.95, "reward_mult": 1.1,
+        "ability": "dodge", "ability_every": 5,
+        "ability_line": "Ember Owl swoops aside! Your hit misses!",
+        "profile": {"speed": 2, "strength": 1, "health": 4,
+                    "defense": 2, "luck": 1},
+        "appear_sound": "npc_ember_owl_appear",
+        "hit_sound": "npc_ember_owl_hit",
+    },
+}
+
+# The random fight pool: Scrap Rat stays in as the starter,
+# and the 9 NPCs join it. Every opponent is always at the
+# fighter's own level, so matchmaking stays fair.
+NPC_ORDER = [
+    "zip_scout", "bulkhead", "mend_o_matic", "ghost_drone",
+    "chop_chop", "grill_gus", "baker_belle", "zap_fox", "ember_owl",
+]
+NPC_POOL = ["scrap_rat"] + NPC_ORDER
+
+
+def random_npc_id(rng=None):
+    """Pick one creature at random from the fight pool:
+    Scrap Rat or one of the 9 NPCs, all equally likely."""
+    if rng is None:
+        rng = random.Random()
+    return rng.choice(NPC_POOL)
+
+
+def npc_by_name(name):
+    """The npc_id for a creature's display name, or None.
+    Used to find which creature a narration line is about."""
+    for npc_id, npc in NPCS.items():
+        if npc["name"] == name:
+            return npc_id
+    return None
+
+
+def creature_in_line(line):
+    """Which creature a narration line is about: an npc_id,
+    "scrap_rat", or None when the line names no creature.
+    Used to pick the right sound for the line."""
+    for npc_id, npc in NPCS.items():
+        if npc["name"] in line:
+            return npc_id
+    if CREATURE_NAME in line:
+        return "scrap_rat"
+    return None
+
 # Level-up stat choices. No cap on any stat, no cap on level.
 STAT_NAMES = ("strength", "defense", "health", "speed", "luck")
 STAT_POINTS_PER_LEVEL = 2
@@ -430,21 +577,54 @@ def respec_stats(fighter):
     return None, line
 
 
-def creature_for_level(level):
-    """The starter creature, scaled to the fighter's level so fights stay
-    real as the fighter climbs. There is no top level for either side.
+def creature_for_level(level, npc_id="scrap_rat"):
+    """A creature scaled to the fighter's level so fights stay
+    real as the fighter climbs. There is no top level for either
+    side.
 
-    The Scrap Rat gets the same 2 stat points per level as a
-    fighter, split evenly across the 5 stats, so fights stay
-    even as the fighter builds stats: its health, damage, soak,
-    speed and crit chance all grow with level, using the same
-    formulas as a fighter."""
+    Scrap Rat gets the same 2 stat points per level as a
+    fighter, split evenly across the 5 stats. An NPC gets the
+    same 2 points per level split by its own profile, and its
+    health and damage are the Scrap Rat formulas times its
+    multipliers, so fights stay even as the fighter builds
+    stats: its health, damage, soak, speed and crit chance all
+    grow with level, using the same formulas as a fighter.
+    An unknown npc_id falls back to Scrap Rat."""
+    if npc_id in NPCS:
+        npc = NPCS[npc_id]
+        stats = distribute_points(
+            STAT_POINTS_PER_LEVEL * (level - 1),
+            [(name, npc["profile"].get(name, 0)) for name in STAT_NAMES],
+        )
+        base_hp = 30 + 15 * (level - 1)
+        base_dmg = 4 + 2 * (level - 1)
+        hp = int(round(base_hp * npc["hp_mult"])) + 10 * stats["health"]
+        dmg = int(round(base_dmg * npc["dmg_mult"])) + 2 * stats["strength"]
+        return {
+            "npc_id": npc_id,
+            "name": npc["name"],
+            "kind": npc["kind"],
+            "level": level,
+            "hp": hp,
+            "max_hp": hp,
+            "damage": dmg,
+            "soak": stats["defense"],
+            "speed": 5 + stats["speed"],
+            "crit_chance": stat_crit_chance(stats["luck"]),
+            "stats": stats,
+            "ability": npc["ability"],
+            "ability_every": npc["ability_every"],
+            "ability_line": npc["ability_line"],
+            "reward_mult": npc["reward_mult"],
+        }
     stats = distribute_points(
         STAT_POINTS_PER_LEVEL * (level - 1),
         [(name, 2) for name in STAT_NAMES],
     )
     return {
+        "npc_id": "scrap_rat",
         "name": CREATURE_NAME,
+        "kind": "animal",
         "level": level,
         "hp": 30 + 15 * (level - 1) + 10 * stats["health"],
         "max_hp": 30 + 15 * (level - 1) + 10 * stats["health"],
@@ -453,6 +633,10 @@ def creature_for_level(level):
         "speed": 5 + stats["speed"],
         "crit_chance": stat_crit_chance(stats["luck"]),
         "stats": stats,
+        "ability": None,
+        "ability_every": 0,
+        "ability_line": "",
+        "reward_mult": 1.0,
     }
 
 
@@ -463,17 +647,22 @@ def _guarded_hit(hit, target_max_hp):
     return max(1, min(hit, int(FAIRNESS_GUARD * target_max_hp)))
 
 
-def fight(fighter, rng=None, now=None):
+def fight(fighter, rng=None, now=None, npc_id="scrap_rat"):
     """Fight one creature. Returns a result dict with plain-words lines.
 
     The fighter must not be under repair. The result tells the window
     what happened, what was won or lost, and what to say next.
 
+    npc_id picks the opponent: "scrap_rat" (the starter) or one of
+    the 9 NPCs in NPCS. An unknown id falls back to Scrap Rat.
     Stats apply here, with the server's rules mirrored: the faster
     side hits first every round (a tie goes to the fighter), a
     faster side may dodge, Luck may crit for x1.5, and no single
     hit may deal more than 75% of the target's max health.
-    """
+    An NPC's special ability fires every few rounds (see NPCS):
+    a double hit, a shield/vanish/dodge that blocks the fighter's
+    hit, a self-repair, a 1.5x flare/shock, or a sugar trap that
+    makes the fighter's next hit deal half damage."""
     if rng is None:
         rng = random.Random()
     if now is None:
@@ -491,7 +680,12 @@ def fight(fighter, rng=None, now=None):
             "levels_gained": 0,
         }
 
-    creature = creature_for_level(fighter["level"])
+    creature = creature_for_level(fighter["level"], npc_id)
+    ability = creature.get("ability")
+    ability_every = creature.get("ability_every") or 0
+    # Baker Belle's sugar trap: armed on her trap round, spent
+    # on the fighter's next hit, which then deals half damage.
+    sugar_trap_armed = False
     lines = ["A %s appears! Level %d." % (creature["name"], creature["level"])]
     fighter_hp = fighter["hp"]
     fighter_max = fighter_max_hp(fighter)
@@ -518,63 +712,135 @@ def fight(fighter, rng=None, now=None):
         hit = max(1, hit - creature_soak)
         return _guarded_hit(hit, creature_max), crit
 
-    def creature_hit():
+    def creature_hit(power=1.0):
         """One creature hit: damage, maybe a crit, the fighter's
-        soak, then the fairness guard. Returns (damage, crit)."""
+        soak, then the fairness guard. power multiplies the hit
+        before the soak (a flare or a shock is 1.5x). A flare
+        or shock round never crits as well: the burst is the
+        excitement that round, and stacking both would push a
+        single hit past the fair band in the NPC design (the
+        hardest single round stays near a quarter of the
+        fighter's health). Returns (damage, crit)."""
         hit = creature["damage"] + rng.randint(0, 2)
-        crit = rng.random() * 100 < creature_crit
+        if power != 1.0:
+            hit = int(round(hit * power))
+        crit = power == 1.0 and rng.random() * 100 < creature_crit
         if crit:
             hit = int(round(hit * 1.5))
         hit = max(1, hit - fighter_soak)
         return _guarded_hit(hit, fighter_max), crit
 
+    def one_fighter_hit():
+        """The fighter's turn: a dodge, a blocked hit, or a
+        real hit. Returns True when a hit landed."""
+        nonlocal sugar_trap_armed
+        if rng.random() * 100 < creature_dodge:
+            lines.append(
+                "Round %d: The %s dodges! Your hit misses."
+                % (round_no, creature["name"])
+            )
+            return False
+        hit, crit = fighter_hit()
+        if sugar_trap_armed:
+            # The sugar trap makes this one hit sticky and weak.
+            sugar_trap_armed = False
+            hit = max(1, hit // 2)
+        return _apply_fighter_hit(hit, crit)
+
+    def _apply_fighter_hit(hit, crit):
+        nonlocal creature_hp
+        creature_hp -= hit
+        if crit:
+            lines.append(
+                "Round %d: Critical hit! %s hits the %s for %d."
+                % (round_no, fighter["name"], creature["name"], hit)
+            )
+        else:
+            lines.append(
+                "Round %d: %s hits the %s for %d."
+                % (round_no, fighter["name"], creature["name"], hit)
+            )
+        return True
+
+    def one_creature_hit(power=1.0):
+        """The creature's turn: a dodge, or a real hit."""
+        nonlocal fighter_hp
+        if rng.random() * 100 < fighter_dodge:
+            lines.append(
+                "Round %d: %s dodges! The %s's hit misses."
+                % (round_no, fighter["name"], creature["name"])
+            )
+            return False
+        hit, crit = creature_hit(power)
+        fighter_hp -= hit
+        if crit:
+            lines.append(
+                "Round %d: Critical hit! The %s hits %s for %d."
+                % (round_no, creature["name"], fighter["name"], hit)
+            )
+        else:
+            lines.append(
+                "Round %d: The %s hits %s for %d."
+                % (round_no, creature["name"], fighter["name"], hit)
+            )
+        return True
+
     while fighter_hp > 0 and creature_hp > 0 and round_no < 20:
         round_no += 1
+        ability_round = bool(ability) and ability_every > 0 \
+            and round_no % ability_every == 0
         for attacker in ("fighter", "creature") if fighter_first else ("creature", "fighter"):
             if fighter_hp <= 0 or creature_hp <= 0:
                 break
             if attacker == "fighter":
-                if rng.random() * 100 < creature_dodge:
+                if ability_round and ability in ("shield", "vanish", "dodge"):
+                    # The fighter's hit is blocked outright
+                    # this round: a shield, a vanish, a dodge.
                     lines.append(
-                        "Round %d: The %s dodges! Your hit misses."
-                        % (round_no, creature["name"])
+                        "Round %d: %s" % (round_no, creature["ability_line"])
                     )
                     continue
-                hit, crit = fighter_hit()
-                creature_hp -= hit
-                if crit:
-                    lines.append(
-                        "Round %d: Critical hit! %s hits the %s for %d."
-                        % (round_no, fighter["name"], creature["name"], hit)
-                    )
-                else:
-                    lines.append(
-                        "Round %d: %s hits the %s for %d."
-                        % (round_no, fighter["name"], creature["name"], hit)
-                    )
+                one_fighter_hit()
             else:
-                if rng.random() * 100 < fighter_dodge:
+                if ability_round and ability in ("flare", "shock"):
+                    # A burst of flame / a shock: this round's
+                    # hit deals half as much again, before the
+                    # fighter's armor soaks some of it.
                     lines.append(
-                        "Round %d: %s dodges! The %s's hit misses."
-                        % (round_no, fighter["name"], creature["name"])
+                        "Round %d: %s" % (round_no, creature["ability_line"])
                     )
-                    continue
-                hit, crit = creature_hit()
-                fighter_hp -= hit
-                if crit:
+                    one_creature_hit(power=1.5)
+                elif ability_round and ability == "sugar_trap":
+                    # A sticky trap: the fighter's NEXT hit
+                    # deals only half damage.
                     lines.append(
-                        "Round %d: Critical hit! The %s hits %s for %d."
-                        % (round_no, creature["name"], fighter["name"], hit)
+                        "Round %d: %s" % (round_no, creature["ability_line"])
                     )
+                    sugar_trap_armed = True
+                    one_creature_hit()
+                elif ability_round and ability == "double_hit":
+                    # Two quick hits in one round, each for
+                    # the creature's normal damage.
+                    lines.append(
+                        "Round %d: %s" % (round_no, creature["ability_line"])
+                    )
+                    one_creature_hit()
+                    if fighter_hp > 0 and creature_hp > 0:
+                        one_creature_hit()
                 else:
-                    lines.append(
-                        "Round %d: The %s hits %s for %d."
-                        % (round_no, creature["name"], fighter["name"], hit)
-                    )
+                    one_creature_hit()
+        if creature_hp > 0 and ability_round and ability == "self_repair":
+            # The repair bot patches itself up mid-fight, for
+            # 15% of its max health, if it is still standing.
+            healed = max(1, int(round(0.15 * creature_max)))
+            creature_hp = min(creature_max, creature_hp + healed)
+            lines.append(
+                "Round %d: %s" % (round_no, creature["ability_line"])
+            )
 
     if creature_hp <= 0:
-        xp = 20 + 5 * creature["level"]
-        credits = 10 + 5 * fighter["level"]
+        xp = int(round((20 + 5 * creature["level"]) * creature["reward_mult"]))
+        credits = int(round((10 + 5 * fighter["level"]) * creature["reward_mult"]))
         levels = gain_xp(fighter, xp)
         fighter["credits"] = credits_of(fighter) + credits
         fighter.pop("points", None)

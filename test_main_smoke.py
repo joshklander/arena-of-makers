@@ -363,6 +363,13 @@ def main_test():
         result["fighter"] = copy.deepcopy(server["fighter"])
         return result, None
 
+    def _fake_fight_npc(config, npc_id):
+        server["calls"].append("fight_npc")
+        result = game_logic.fight(server["fighter"], rng=random.Random(3),
+                                  npc_id=npc_id)
+        result["fighter"] = copy.deepcopy(server["fighter"])
+        return result, None
+
     def _fake_upgrade(config, slot):
         server["calls"].append("upgrade")
         error = game_logic.start_upgrade(server["fighter"], slot)
@@ -401,6 +408,7 @@ def main_test():
         return copy.deepcopy(server["fighter"]), None
 
     _online_save.fight = _fake_fight
+    _online_save.fight_npc = _fake_fight_npc
     _online_save.start_upgrade = _fake_upgrade
     _online_save.spend_stat = _fake_spend_stat
     _online_save.respec_stats = _fake_respec
@@ -427,12 +435,17 @@ def main_test():
               all(item.strip() for item in items))
     print("    Home list: %s" % frame.list_items("Home"))
 
-    # Enter on "Fight a Scrap Rat" runs a real fight and saves.
+    # Phase 24: fights pick a creature at random. Pin the
+    # first fight to Scrap Rat so the checks below are exact.
+    _real_random_npc = game_logic.random_npc_id
+    game_logic.random_npc_id = lambda rng: "scrap_rat"
+
+    # Enter on "Fight" runs a real fight and saves.
     frame.notebook.SetSelection(1)  # Combat tab
     combat_box = frame.lists["Combat"]
     combat_box.SetSelection(0)
     check("combat first item is the fight",
-          combat_box.GetString(0).startswith("Fight a Scrap Rat"))
+          combat_box.GetString(0) == "Fight")
     wins_before = fighter["wins"] + fighter["losses"]
     frame.activate_current()
     check("fight item runs a fight", fighter["wins"] + fighter["losses"] == wins_before + 1)
@@ -449,6 +462,57 @@ def main_test():
     check("no local save file was created",
           not os.path.exists(os.path.join(
               os.path.dirname(os.path.abspath(__file__)), "arena_save.json")))
+
+    # Phase 24: fighting a named creature goes through the
+    # NPC fight on the server, with that creature's sounds.
+    server["fighter"]["repair_until"] = 0
+    fighter["repair_until"] = 0
+    server["fighter"]["hp"] = game_logic.fighter_max_hp(server["fighter"])
+    fighter["hp"] = game_logic.fighter_max_hp(fighter)
+    frame.do_fight(npc_id="zip_scout")
+    check("fighting a named creature uses the npc fight",
+          "fight_npc" in server["calls"])
+    check("the npc fight is narrated to the log",
+          "Zip Scout" in frame.logs["Combat"].text)
+    game_logic.random_npc_id = _real_random_npc
+
+    # Phase 24 (Makenna, Nov 18, 2026): the button says just
+    # "Fight" — no creature name — and pressing it picks a
+    # random creature each time, not always Scrap Rat.
+    # Auto-fight is unchanged: its fights are Scrap Rat.
+    frame.random.seed(11)
+    log_before = len(frame.logs["Combat"].text)
+    seen_creatures = set()
+    for _ in range(10):
+        server["fighter"]["repair_until"] = 0
+        fighter["repair_until"] = 0
+        server["fighter"]["hp"] = game_logic.fighter_max_hp(
+            server["fighter"])
+        fighter["hp"] = game_logic.fighter_max_hp(fighter)
+        combat_box.SetSelection(0)
+        frame.activate_current()
+        new_text = frame.logs["Combat"].text[log_before:]
+        log_before = len(frame.logs["Combat"].text)
+        for name in ["Scrap Rat"] + [npc["name"]
+                                     for npc in game_logic.NPCS.values()]:
+            if ("A %s appears!" % name) in new_text:
+                seen_creatures.add(name)
+    check("pressing Fight picks different creatures, "
+          "not always scrap rat",
+          len(seen_creatures) > 1)
+    # Auto-fight is unchanged (Makenna, Nov 18, 2026): an
+    # idle fight is against Scrap Rat, as before — the random
+    # pick applies to the manual Fight button only.
+    server["fighter"]["repair_until"] = 0
+    fighter["repair_until"] = 0
+    server["fighter"]["hp"] = game_logic.fighter_max_hp(
+        server["fighter"])
+    fighter["hp"] = game_logic.fighter_max_hp(fighter)
+    log_before = len(frame.logs["Combat"].text)
+    frame.do_fight(idle=True)
+    check("an idle fight is still against scrap rat",
+          "A Scrap Rat appears!"
+          in frame.logs["Combat"].text[log_before:])
 
     # Idle fighting toggles on and off.
     frame.toggle_idle()
@@ -567,6 +631,70 @@ def main_test():
     check("the credits were spent after yes",
           fighter["credits"] < credits_before)
 
+    # One upgrade set at a time (Phase 24, Makenna's rule):
+    # while the weapon queue runs, no other set can start —
+    # single or max-affordable, the other slot or the same
+    # slot — and the player is told how long is left.
+    check("the running set is the weapon queue",
+          fighter["upgrade"]["slot"] == "weapon")
+    frame.do_upgrade("armor")
+    check("armor upgrade is blocked while the weapon queue runs",
+          fighter.get("upgrade") is not None
+          and fighter["upgrade"]["slot"] == "weapon")
+    check("the armor block is spoken with the time left",
+          "already running" in frame.message_line.GetLabel()
+          and "left" in frame.message_line.GetLabel())
+    frame.do_upgrade("weapon")
+    check("another weapon upgrade is blocked while its queue runs",
+          fighter.get("upgrade") is not None
+          and fighter["upgrade"]["slot"] == "weapon")
+    max_calls = server["calls"].count("max_upgrade")
+    frame.do_max_upgrade("armor")
+    check("max affordable is blocked while a queue runs",
+          server["calls"].count("max_upgrade") == max_calls)
+    check("the max block is spoken with the time left",
+          "already running" in frame.message_line.GetLabel()
+          and "left" in frame.message_line.GetLabel())
+    frame.refresh_list("Shop")
+    shop_items = frame.list_items("Shop")
+    check("shop shows the running set with its time left",
+          shop_items[0].startswith("Upgrading Laser Blaster")
+          and "left" in shop_items[0])
+    check("shop says the other slot waits for the running set",
+          any("waits until the running upgrade finishes" in item
+              for item in shop_items))
+    check("no max-affordable line while a set runs",
+          not any(item.startswith("Max affordable:")
+                  for item in shop_items))
+    # Drain the queue one level at a time, then a new set
+    # CAN start — the rule is a wait, not a lock.
+    for _ in range(10):
+        if fighter.get("upgrade") is None:
+            break
+        fighter["upgrade"]["finish"] = 0.0
+        server["fighter"]["upgrade"]["finish"] = 0.0
+        frame._last_timer_check = 0
+        frame.on_tick(mock.MagicMock())
+    check("the queue drains to the end",
+          fighter.get("upgrade") is None)
+    # The max queue spends everything the fighter can afford,
+    # and the extra fights before the Shop earned more credits,
+    # so the queue bought more levels and left too few credits
+    # for even one armor level. Top both copies up: the point
+    # here is the one-set-at-a-time rule, not the wallet.
+    fighter["credits"] = 100
+    server["fighter"]["credits"] = 100
+    frame.do_upgrade("armor")
+    check("a new set can start once the first set finishes",
+          fighter.get("upgrade") is not None
+          and fighter["upgrade"]["slot"] == "armor")
+    fighter["upgrade"]["finish"] = 0.0
+    server["fighter"]["upgrade"]["finish"] = 0.0
+    frame._last_timer_check = 0
+    frame.on_tick(mock.MagicMock())
+    check("the new set finishes too",
+          fighter.get("upgrade") is None)
+
     # Music rule (2026-11-18, quests Phase 18): no music
     # at launch, hangout music only once quests have
     # started in the hangout, fight music only while
@@ -616,12 +744,14 @@ def main_test():
           frame.sounds.current_music_track is None)
     frame.toggle_idle()
     _online_save.fight = lambda *args, **kwargs: (None, "test: server down")
+    _online_save.fight_npc = lambda *args, **kwargs: (None, "test: server down")
     frame.do_fight(idle=True)
     check("a failed idle fight turns auto-fighting off",
           frame.idle_fighting is False)
     check("a failed idle fight stops the music",
           frame.sounds.current_music_track is None)
     _online_save.fight = _fake_fight
+    _online_save.fight_npc = _fake_fight_npc
     frame.toggle_idle()
     check("auto-fighting starts the fight music a third time",
           frame.sounds.current_music_track == "fight")
@@ -1044,10 +1174,11 @@ def currency_wording_test():
           "create or replace function arena_private.apply_timers(" in credits_fix
           and "set search_path = ''" in credits_fix)
     # The hangout quests migration (Phase 18) adds
-    # arena_get_quests and friends. The newest migration
-    # is now the quest levels one (Phase 23), which adds
-    # arena_spend_quest_stat and redefines complete so it
-    # awards quest XP and banks quest points. The quest
+    # arena_get_quests and friends. The quest levels one
+    # (Phase 23) adds arena_spend_quest_stat and redefines
+    # complete so it awards quest XP and banks quest points.
+    # The newest migration is now the npc creatures one
+    # (Phase 24), which adds arena_fight_npc. The quest
     # pause migration (Phase 22) is still there, and quest
     # completion must never check repairs. No migration may
     # say "points" for the currency.
@@ -1068,15 +1199,20 @@ def currency_wording_test():
           and "arena_start_quest" in pause_mig
           and "arena_complete_quest" in pause_mig)
     newest = open(os.path.join(mig_dir, names[-1]), encoding="utf-8").read()
-    check("newest migration is the quest levels one",
-          "quest_levels" in names[-1])
-    check("newest migration adds the quest stat spending function",
-          "arena_spend_quest_stat" in newest
-          and "arena_complete_quest" in newest)
+    check("newest migration is the npc creatures one",
+          "npc_creatures" in names[-1])
+    check("newest migration adds the npc fight function",
+          "arena_fight_npc" in newest)
     check("newest migration never says points for the currency",
           "Your points are now called credits" not in newest)
+    levels_mig = open(os.path.join(
+        mig_dir, [n for n in names if "quest_levels" in n][0]),
+        encoding="utf-8").read()
+    check("the quest levels migration adds the quest stat spending function",
+          "arena_spend_quest_stat" in levels_mig
+          and "arena_complete_quest" in levels_mig)
     check("quest completion never checks repairs",
-          "is_repairing" not in newest)
+          "is_repairing" not in levels_mig)
     baseline = open(os.path.join(
         mig_dir, "20261118045430_baseline.sql"), encoding="utf-8").read()
     baseline_lines = [
@@ -2571,17 +2707,31 @@ def quest_test():
           frame.sounds._sounds["chef_sizzle"].volume
           == frame.sounds._volume * sounds_module.AMBIENCE_VOLUME_FACTOR)
     # Completing it starts the next quest on the board; make
-    # that a gathering quest, whose file is not in sounds/
-    # yet, so the loop must fall silent instead of carrying on.
+    # that a gathering quest. Its file is in sounds/ now
+    # (uploaded 2026-11-19, commit 01bd111), so the sizzle
+    # loop must stop and the market loop must start instead
+    # of the old loop carrying on into the new quest.
     gathering = _quest_for("Market Run")
     frame._quest_board = [gathering]
     _finish_current_quest()
     check("completing a quest stops its ambience loop",
-          frame.sounds.current_ambience is None)
-    check("a quest with no ambience file yet plays no loop",
+          frame.sounds.current_ambience != "chef_sizzle")
+    check("the next quest starts its own ambience loop",
           frame._quest_current is not None
           and frame._quest_current["name"] == "Market Run"
-          and frame.sounds.current_ambience is None)
+          and frame.sounds.current_ambience == "ambience_gathering")
+    # A quest whose ambience file is not in sounds/ yet plays
+    # no loop at all — the game carries on silently. Every
+    # ambience file is in sounds/ now, so prove the rule at
+    # the bank level instead: a bank with no files starts no
+    # loop.
+    import tempfile
+    empty_bank = sounds_module.SoundBank(
+        directory=tempfile.mkdtemp(),
+        pygame_module=sys.modules["pygame"])
+    empty_bank.load()
+    check("a bank with no ambience file starts no loop",
+          empty_bank.start_ambience("ambience_gathering") is False)
     repair = _quest_for("Tune-Up Time")
     frame._quest_board = [repair]
     _finish_current_quest()
@@ -2667,9 +2817,191 @@ def quest_test():
     print("\nAll hangout quest tests passed.")
 
 
+def npc_test():
+    """More creatures (Phase 24): the 9 draft NPCs are real
+    fightable opponents alongside Scrap Rat, each with its
+    own appear and hit sounds, scaled to the fighter's level
+    so fights stay fair, and a missing sound file never
+    crashes a fight. The upgrade rule is checked in
+    main_test; the free quest gift is instant by design, so
+    it needs no timer and cannot corrupt a running set."""
+    import re
+    import tempfile
+    import sounds as sounds_module
+
+    # The table: 9 NPCs, none of them Scrap Rat, each with
+    # its own ability and its own two sounds.
+    check("there are nine new creatures besides scrap rat",
+          len(game_logic.NPCS) == 9 and "scrap_rat" not in game_logic.NPCS)
+    check("every creature has an appear and a hit sound",
+          all(npc["appear_sound"] and npc["hit_sound"]
+              for npc in game_logic.NPCS.values()))
+    check("no two creatures share an appear sound",
+          len({npc["appear_sound"]
+               for npc in game_logic.NPCS.values()}) == 9)
+    check("no two creatures share a hit sound",
+          len({npc["hit_sound"]
+               for npc in game_logic.NPCS.values()}) == 9)
+    check("no creature uses a scrap rat sound",
+          not any(npc["appear_sound"] in ("robot_servo", "chef_sizzle")
+                  or npc["hit_sound"] in ("robot_clank", "pan_clang",
+                                          "robot_laser", "chef_chop")
+                  for npc in game_logic.NPCS.values()))
+    check("every creature sound is in the sound bank",
+          all(npc["appear_sound"] in sounds_module.SOUND_FILES
+              and npc["hit_sound"] in sounds_module.SOUND_FILES
+              for npc in game_logic.NPCS.values()))
+    check("the fight pool is scrap rat plus the nine",
+          set(game_logic.NPC_POOL)
+          == {"scrap_rat"} | set(game_logic.NPCS))
+    check("a random pick only ever names a real creature",
+          all(game_logic.random_npc_id(random.Random(i))
+              in game_logic.NPC_POOL for i in range(20)))
+    check("a random pick sometimes picks a new creature",
+          any(game_logic.random_npc_id(random.Random(i)) != "scrap_rat"
+              for i in range(20)))
+    check("unknown creature falls back to scrap rat",
+          game_logic.creature_for_level(5, "not_a_creature")["name"]
+          == "Scrap Rat")
+
+    # A fight against every creature works, at low level,
+    # mid level and high level, and stays fair: it ends,
+    # it names the creature, and no single hit on the
+    # fighter takes more than three quarters of the
+    # fighter's health (the fairness guard).
+    for npc_id in game_logic.NPC_ORDER:
+        npc = game_logic.NPCS[npc_id]
+        for level in (1, 10, 50):
+            fighter = game_logic.new_fighter("Test", "robot")
+            fighter["level"] = level
+            fighter["weapon_level"] = level
+            fighter["armor_level"] = level
+            fighter["hp"] = game_logic.fighter_max_hp(fighter)
+            fighter["credits"] = 0
+            result = game_logic.fight(
+                fighter, rng=random.Random(level * 7 + 1), npc_id=npc_id)
+            max_hp = game_logic.fighter_max_hp(fighter)
+            check("fight against %s at level %d ends"
+                  % (npc["name"], level),
+                  result["won"] is not None)
+            check("fight against %s at level %d says the creature"
+                  % (npc["name"], level),
+                  npc["name"] in " ".join(result["lines"]))
+            worst = 0
+            for line in result["lines"]:
+                for match in re.findall(r"hits you for (\d+) damage",
+                                        line):
+                    worst = max(worst, int(match))
+            check("no hit from %s at level %d takes more than "
+                  "three quarters of your health"
+                  % (npc["name"], level),
+                  worst <= 0.75 * max_hp)
+        # Beating the creature pays its reward: a fight win
+        # times the creature's factor.
+        won = None
+        for seed in range(5):
+            fighter = game_logic.new_fighter("Test", "robot")
+            fighter["level"] = 10
+            fighter["weapon_level"] = 10
+            fighter["armor_level"] = 10
+            fighter["hp"] = game_logic.fighter_max_hp(fighter)
+            result = game_logic.fight(fighter, rng=random.Random(seed),
+                                      npc_id=npc_id)
+            if result["won"]:
+                won = result
+                break
+        check("beating %s pays the creature's reward" % npc["name"],
+              won is not None
+              and won["credits"]
+              == int(round((10 + 5 * 10) * npc["reward_mult"]))
+              and won["xp"]
+              == int(round((20 + 5 * 10) * npc["reward_mult"])))
+
+    # Every creature's ability actually fires in a fight:
+    # a weak fighter (level 50, weapon and armor level 1)
+    # keeps the fight going long enough for it to trigger.
+    for npc_id in game_logic.NPC_ORDER:
+        npc = game_logic.NPCS[npc_id]
+        found = False
+        for seed in range(10):
+            fighter = game_logic.new_fighter("Test", "robot")
+            fighter["level"] = 50
+            fighter["weapon_level"] = 1
+            fighter["armor_level"] = 1
+            fighter["hp"] = game_logic.fighter_max_hp(fighter)
+            result = game_logic.fight(fighter,
+                                      rng=random.Random(100 + seed),
+                                      npc_id=npc_id)
+            if npc["ability_line"] in " ".join(result["lines"]):
+                found = True
+                break
+        check("%s ability fires: %s" % (npc["name"], npc["ability_line"]),
+              found)
+
+    # A missing sound file never crashes a fight: the bank
+    # plays nothing for a creature whose files are not there
+    # yet, and the game still speaks its lines.
+    empty_dir = tempfile.mkdtemp()
+    empty_bank = sounds_module.SoundBank(
+        directory=empty_dir, pygame_module=sys.modules["pygame"])
+    empty_bank.load()
+    for npc in game_logic.NPCS.values():
+        check("missing %s appear plays nothing" % npc["name"],
+              empty_bank.play(npc["appear_sound"]) is False)
+        check("missing %s hit plays nothing" % npc["name"],
+              empty_bank.play(npc["hit_sound"]) is False)
+    frame = main.MainFrame(game_logic.new_fighter("Test", "robot"))
+    frame.sounds = empty_bank
+    frame.sound_on = True
+    try:
+        for npc_id in game_logic.NPC_ORDER:
+            npc = game_logic.NPCS[npc_id]
+            frame._play_sound_for_line(
+                "A %s appears! Level 5." % npc["name"])
+            frame._play_sound_for_line(
+                "The %s hits you for 10 damage." % npc["name"])
+        no_crash = True
+    except Exception:
+        no_crash = False
+    check("npc lines with no sound files do not crash", no_crash)
+
+    # With the files there, each creature's lines play its
+    # own sounds — and your own hit still plays the
+    # fighter's sound, not the creature's.
+    full_dir = tempfile.mkdtemp()
+    for _name, (filename, _maxtime) in sounds_module.SOUND_FILES.items():
+        with open(os.path.join(full_dir, filename), "wb") as handle:
+            handle.write(b"fake-sound")
+    full_bank = sounds_module.SoundBank(
+        directory=full_dir, pygame_module=sys.modules["pygame"])
+    full_bank.load()
+    frame.sounds = full_bank
+    frame.sound_on = True
+    frame._play_sound_for_line("A Zip Scout appears! Level 5.")
+    check("zip scout appear plays its own sound",
+          full_bank._sounds["npc_zip_scout_appear"].played == 1)
+    frame._play_sound_for_line("The Zip Scout hits you for 10 damage.")
+    check("zip scout hit plays its own sound",
+          full_bank._sounds["npc_zip_scout_hit"].played == 1)
+    frame._play_sound_for_line("Test hits the Zip Scout for 10.")
+    check("your own hit still plays the fighter's sound",
+          full_bank._sounds["robot_laser"].played == 1)
+    frame._play_sound_for_line("A Baker Belle appears! Level 5.")
+    check("baker belle appear plays its own sound",
+          full_bank._sounds["npc_baker_belle_appear"].played == 1)
+    frame._play_sound_for_line("The Baker Belle hits you for 10 damage.")
+    check("baker belle hit plays its own sound",
+          full_bank._sounds["npc_baker_belle_hit"].played == 1)
+    frame._play_sound_for_line("A Scrap Rat appears! Level 5.")
+    check("scrap rat appear still plays the fighter-kind sound",
+          full_bank._sounds["robot_servo"].played == 1)
+    print("\nAll creature tests passed.")
+
+
 if __name__ == "__main__":
     main_test()
     quest_test()
+    npc_test()
     currency_wording_test()
     voice_test()
     narration_test()

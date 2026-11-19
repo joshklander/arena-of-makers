@@ -7,12 +7,10 @@ automatically — no downloading needed, no code change needed. If
 a file is missing, the game just skips it and logs one
 plain-words line, so it still runs fine but silent.
 
-**One file is not on GitHub yet:** `robot_laser.wav` was replaced
-2026-11-18 with a more electric zap (see the table below). Maren's
-GitHub tools cannot push binary files, so the new file is in a zip
-(`arena-robot-laser-zap1.zip`, in the work folder) waiting for the
-browser upload, like the 11 sounds were. Until it is uploaded, a
-fresh pull still has the old retro laser.
+**One file was replaced after the first upload:**
+`robot_laser.wav` was replaced 2026-11-18 with a more electric
+zap (see the table below), uploaded through the GitHub website
+the same evening (commit 7c3f772).
 
 The Freesound picks from the first version of this file did not all
 work out: only the 3 robot sounds could be downloaded from Freesound
@@ -60,8 +58,26 @@ sound is used anywhere.
 | `music_loop.mp3` | Jazz Brunch, 5:23, 9.9 MB | Background music, loops everywhere for now | Incompetech — https://incompetech.com/music/royalty-free/mp3-royaltyfree/Jazz%20Brunch.mp3 | Kevin MacLeod | CC-BY 4.0 — credit required, see below |
 | `music_hangout.mp3` | Jazz Brunch, 5:23, 9.9 MB (same file as `music_loop.mp3`) | **Staged for the future two-track change:** cozy café music for the hangout | Incompetech, same as above | Kevin MacLeod | CC-BY 4.0 — credit required, see below |
 | `music_fight.mp3` | Mesmerizing Galaxy Loop, 1:33, 2.9 MB | **Staged for the future two-track change:** sci-fi music for fights | Incompetech — https://incompetech.com/music/royalty-free/mp3-royaltyfree/Mesmerizing%20Galaxy%20Loop.mp3 | Kevin MacLeod | CC-BY 4.0 — credit required, see below |
-| `ambience_gathering.mp3` | Flea-market ambience, about 1:09, 2.7 MB — conversations, people walking by, general crowd activity | Quest ambience loop for gathering quests (Scrap Run, Market Run) | BigSoundBank, "Flea #1" (sound #130) — https://bigsoundbank.com/flea-1-s0130.html | Joseph Sardin | CC0 |
-| `ambience_cleaning.mp3` | Damp cloth cleaning a floor, about 0:49, 1.9 MB | Quest ambience loop for cleaning quests (The Great Oil Spill) | BigSoundBank, "floor cloth" (sound #668) — http://bigsoundbank.com/floor-cloth-s0668.html | Joseph Sardin | CC0 |
+| `ambience_gathering.mp3` | Outdoor market day ambience, about 2:50, 6.8 MB — market stalls, voices, footsteps | Quest ambience loop for gathering quests (Scrap Run, Market Run) | BigSoundBank, "Outdoor Market #2" (sound #3378) — https://bigsoundbank.com/outdoor-market-2-s3378.html | Joseph Sardin | CC0 |
+| `ambience_cleaning.mp3` | Straw broom sweeping, about 1:00, 0.95 MB | Quest ambience loop for cleaning quests (The Great Oil Spill) | BigSoundBank, "Straw broom" (sound #163) — https://bigsoundbank.com/straw-broom-s0163.html | Joseph Sardin | CC0 |
+| `npc_zip_scout_appear.ogg` | Quick phase jump up, 0.47 s, 6.7 KB | Zip Scout appears | Kenney Digital Audio pack, `Audio/phaseJump1.ogg` — https://kenney.nl/assets/digital-audio | Kenney | CC0 |
+| `npc_zip_scout_hit.ogg` | Small laser zap, 0.34 s, 9.0 KB | Zip Scout hits | Kenney Sci-fi Sounds pack, `Audio/laserSmall_002.ogg` — https://kenney.nl/assets/sci-fi-sounds | Kenney | CC0 |
+| `npc_bulkhead_appear.ogg` | Heavy metal plate clang, 0.49 s, 10 KB | Bulkhead appears | Kenney Impact Sounds pack, `Audio/impactPlate_heavy_002.ogg` — https://kenney.nl/assets/impact-sounds | Kenney | CC0 |
+| `npc_bulkhead_hit.ogg` | Heavy metal hit, 0.21 s, 6.2 KB | Bulkhead hits | Kenney Impact Sounds pack, `Audio/impactMetal_heavy_003.ogg` — https://kenney.nl/assets/impact-sounds | Kenney | CC0 |
+| `npc_mend_o_matic_appear.ogg` | Sparking computer noise, 5.00 s — the game plays only the first 2 s, 120 KB | Mend-O-Matic appears | Kenney Sci-fi Sounds pack, `Audio/computerNoise_001.ogg` — https://kenney.nl/assets/sci-fi-sounds | Kenney | CC0 |
+| `npc_mend_o_matic_hit.ogg` | Small metal click (a repair tool), 0.45 s, 14 KB | Mend-O-Matic hits | Kenney RPG Audio pack, `Audio/metalClick.ogg` — https://kenney.nl/assets/rpg-audio | Kenney | CC0 |
+| `npc_ghost_drone_appear.ogg` | Soft descending phaser sweep, 0.47 s, 7.1 KB | Ghost Drone appears | Kenney Digital Audio pack, `Audio/phaserDown1.ogg` — https://kenney.nl/assets/digital-audio | Kenney | CC0 |
+| `npc_ghost_drone_hit.ogg` | Shimmering force field, 0.96 s, 28 KB | Ghost Drone hits | Kenney Sci-fi Sounds pack, `Audio/forceField_002.ogg` — https://kenney.nl/assets/sci-fi-sounds | Kenney | CC0 |
+| `npc_chop_chop_appear.ogg` | Knife drawn, 0.40 s, 11 KB | Chop-Chop Chef appears | Kenney RPG Audio pack, `Audio/drawKnife1.ogg` — https://kenney.nl/assets/rpg-audio | Kenney | CC0 |
+| `npc_chop_chop_hit.ogg` | Knife slice (a different slice from `chef_chop.wav`), 0.57 s, 15 KB | Chop-Chop Chef hits | Kenney RPG Audio pack, `Audio/knifeSlice2.ogg` — https://kenney.nl/assets/rpg-audio | Kenney | CC0 |
+| `npc_grill_gus_appear.ogg` | Burst of flame (thruster fire), 5.00 s — the game plays only the first 2 s, 201 KB | Grill Master Gus appears | Kenney Sci-fi Sounds pack, `Audio/thrusterFire_000.ogg` — https://kenney.nl/assets/sci-fi-sounds | Kenney | CC0 |
+| `npc_grill_gus_hit.ogg` | Metal pot clatter, 0.94 s, 22 KB | Grill Master Gus hits | Kenney RPG Audio pack, `Audio/metalPot2.ogg` — https://kenney.nl/assets/rpg-audio | Kenney | CC0 |
+| `npc_baker_belle_appear.ogg` | Sweet little ding, 0.29 s, 9.0 KB | Baker Belle appears | Kenney Interface Sounds pack, `Audio/confirmation_001.ogg` — https://kenney.nl/assets/interface-sounds | Kenney | CC0 |
+| `npc_baker_belle_hit.ogg` | Wooden thump (a rolling pin), 0.33 s, 6.6 KB | Baker Belle hits | Kenney Impact Sounds pack, `Audio/impactWood_medium_000.ogg` — https://kenney.nl/assets/impact-sounds | Kenney | CC0 |
+| `npc_zap_fox_appear.ogg` | Two-tone electric zap, 1.31 s, 9.8 KB | Zap Fox appears | Kenney Digital Audio pack, `Audio/zapTwoTone.ogg` — https://kenney.nl/assets/digital-audio | Kenney | CC0 |
+| `npc_zap_fox_hit.ogg` | Electric zap (a different zap from `robot_laser.wav`), 1.23 s, 9.8 KB | Zap Fox hits | Kenney Digital Audio pack, `Audio/zap2.ogg` — https://kenney.nl/assets/digital-audio | Kenney | CC0 |
+| `npc_ember_owl_appear.ogg` | Low three-tone hoot, 0.83 s, 7.4 KB | Ember Owl appears | Kenney Digital Audio pack, `Audio/threeTone1.ogg` — https://kenney.nl/assets/digital-audio | Kenney | CC0 |
+| `npc_ember_owl_hit.ogg` | Soft cloth rustle (a wing buffet), 0.42 s, 12 KB | Ember Owl hits | Kenney RPG Audio pack, `Audio/cloth2.ogg` — https://kenney.nl/assets/rpg-audio | Kenney | CC0 |
 
 ## Quest ambience loops (Phase 23, 2026-11-19)
 
@@ -77,17 +93,35 @@ effects or background music off in Settings stops it too.
 | --- | --- | --- |
 | cooking | Perfect the Recipe, Rescue the Burnt Dish, The Midnight Feast, The Robot Who Wanted Soup, The Grand Hangout Fair | `chef_sizzle.wav` (already in `sounds/`) |
 | repair | Tune-Up Time, Calm the Haywire Drone, Chef's New Helper, The Broken Oven and the Broken Bot | `robot_servo.wav` (already in `sounds/`) |
-| gathering | Scrap Run, Market Run | `ambience_gathering.mp3` — **to upload** (see below) |
-| cleaning | The Great Oil Spill | `ambience_cleaning.mp3` — **to upload** (see below) |
+| gathering | Scrap Run, Market Run | `ambience_gathering.mp3` — outdoor market, uploaded 2026-11-19 (commit 01bd111) |
+| cleaning | The Great Oil Spill | `ambience_cleaning.mp3` — straw broom, uploaded 2026-11-19 (commit 01bd111) |
 
 **To upload through the GitHub website** (Maren's tools cannot
-upload audio): the two new files are in
-`~/workspace/arena-of-makers-work/sounds-download/` —
-`ambience_gathering.mp3` and `ambience_cleaning.mp3`. Upload
+upload audio): the two ambience files were uploaded that way
+2026-11-19, commit 01bd111 — gathering is now the outdoor
+market, cleaning is now the straw broom (the old flea-market
+and mopping-cloth clips are kept as backups in the work
+folder, `ambience_gathering_flea_backup.mp3` and
+`ambience_cleaning_mop_backup.mp3`).
+
+## NPC creature sounds (Phase 24, 2026-11-19)
+
+Every creature gets its OWN appear sound and its OWN hit sound
+— different from Scrap Rat and different from each other — so
+you can tell who it is by sound alone (Makenna's per-creature
+sound rule, Nov 18, 2026). The 18 files are in the table above,
+all Kenney CC0. The fighter's own hit sound does not change:
+a robot fighter still hears the laser and a chef fighter still
+hears the chop when *they* hit a creature; the creature's own
+hit sound plays when *it* hits back.
+
+**To upload through the GitHub website** (Maren's tools cannot
+upload audio): the 18 `npc_*.ogg` files are in
+`~/workspace/arena-of-makers-work/sounds-download/` — upload
 them into `sounds/` on main with those exact filenames. Until
-they are there, gathering and cleaning quests simply play no
-loop — the game carries on silently, and the loops start
-working on the next launch after the upload.
+they are there, that creature simply plays no sound — the
+fight carries on silently, and the sounds start working on
+the next launch after the upload.
 
 ## Music — how it works now (two tracks, wired in 2026-11-18)
 

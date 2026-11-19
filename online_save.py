@@ -119,6 +119,21 @@ def fight(config, opponent_code=None, timeout=15):
     return data, None
 
 
+def fight_npc(config, npc_id, timeout=15):
+    """Fight one NPC creature, on the server. The game sends
+    only the session token plus the creature's id (like
+    "zip_scout") — no username, no player code, no key. The
+    server looks the creature up, rolls its own dice and
+    applies the creature's ability. Returns (result, error)
+    in the same shape as fight()."""
+    args = _session_args(config)
+    args["p_npc_id"] = npc_id
+    data, error = rpc(config, "arena_fight_npc", args, timeout)
+    if error:
+        return None, error
+    return data, None
+
+
 def start_upgrade(config, slot, timeout=15):
     """Start a timed upgrade of weapon or armor, on the server.
     Returns (fighter, messages, error). On a plain-words
