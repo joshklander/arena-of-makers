@@ -124,7 +124,7 @@ def main_test():
         # Every call goes to an arena_* function, never a table.
         fighter = game_logic.new_fighter("Bolt", "robot")
         answers["arena_fight"] = {
-            "won": True, "lines": ["A Scrap Rat appears! Level 1.", "You won!"],
+            "won": True, "lines": ["A Scrap Rat appears! Level 1.", "I won!"],
             "xp": 25, "credits": 15, "levels_gained": 0, "messages": [],
             "fighter": dict(fighter, wins=1, credits=15),
         }
@@ -146,7 +146,7 @@ def main_test():
         # Upgrades: the server's plain-words refusal is passed on,
         # with the fighter the server sent along.
         answers["arena_start_upgrade"] = {
-            "error": "That upgrade costs 25 credits and you have 15 credits.",
+            "error": "That upgrade costs 25 credits and I have 15 credits.",
             "fighter": dict(fighter, credits=15), "messages": [],
         }
         server_fighter, _messages, error = online_save.start_upgrade(config, "weapon")
@@ -160,7 +160,7 @@ def main_test():
         # line comes back with how many points are left.
         answers["arena_spend_stat"] = {
             "message": "Strength is now 5. One more point adds 2 damage. "
-                       "You have 7 stat points left.",
+                       "I have 7 stat points left.",
             "fighter": dict(fighter, stats={"strength": 5, "defense": 0,
                                             "health": 0, "speed": 0, "luck": 0},
                             stat_points=7),
@@ -178,8 +178,8 @@ def main_test():
 
         # Respec: the server refunds every spent point.
         answers["arena_respec"] = {
-            "message": "Your stats are reset. You have 5 stat points to spend. "
-                       "Your first respec was free.",
+            "message": "My stats are reset. I have 5 stat points to spend. "
+                       "My first respec was free.",
             "fighter": dict(fighter, stats={"strength": 0, "defense": 0,
                                             "health": 0, "speed": 0, "luck": 0},
                             stat_points=5),
@@ -196,7 +196,7 @@ def main_test():
         # Max affordable: the server works out the queue and
         # price; the game only confirms first.
         answers["arena_max_upgrade"] = {
-            "message": "Your Laser Blaster will go up 5 levels for 330 credits. "
+            "message": "My Laser Blaster will go up 5 levels for 330 credits. "
                        "All 5 levels will be done in 15 minutes.",
             "fighter": dict(fighter, credits=170, upgrade={"slot": "weapon",
                                                            "name": "Laser Blaster",

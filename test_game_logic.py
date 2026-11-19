@@ -293,8 +293,8 @@ def main():
     result = game_logic.fight(full, rng=random.Random(3))
     check("level 5 win restores full health",
           result["won"] is True and full["hp"] == full["max_hp"])
-    check("level 5 win says Second Wind restored you",
-          any("Second Wind restored you to full health" in line
+    check("level 5 win says Second Wind restored me",
+          any("Second Wind restored me to full health" in line
               for line in result["lines"]))
     doomed = game_logic.new_fighter("Doomed", "robot")
     doomed["healing_level"] = 5

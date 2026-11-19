@@ -399,7 +399,7 @@ def main_test():
         if 0 < server["fighter"]["repair_until"] <= time.time():
             server["fighter"]["hp"] = server["fighter"]["max_hp"]
             server["fighter"]["repair_until"] = 0
-            messages.append("Repairs finished. Your fighter is back to full health.")
+            messages.append("My repairs are finished. I'm back to full health.")
         return copy.deepcopy(server["fighter"]), messages, None
 
     def _fake_voice(config, gender):
@@ -652,7 +652,7 @@ def main_test():
           fighter.get("upgrade") is not None
           and fighter["upgrade"]["slot"] == "weapon")
     check("the armor block is spoken with the time left",
-          "already running" in frame.message_line.GetLabel()
+          "already got an upgrade running" in frame.message_line.GetLabel()
           and "left" in frame.message_line.GetLabel())
     frame.do_upgrade("weapon")
     check("another weapon upgrade is blocked while its queue runs",
@@ -663,12 +663,12 @@ def main_test():
     check("max affordable is blocked while a queue runs",
           server["calls"].count("max_upgrade") == max_calls)
     check("the max block is spoken with the time left",
-          "already running" in frame.message_line.GetLabel()
+          "already got an upgrade running" in frame.message_line.GetLabel()
           and "left" in frame.message_line.GetLabel())
     frame.refresh_list("Shop")
     shop_items = frame.list_items("Shop")
     check("shop shows the running set with its time left",
-          shop_items[0].startswith("Upgrading Laser Blaster")
+          shop_items[0].startswith("I'm upgrading my Laser Blaster")
           and "left" in shop_items[0])
     check("shop says the other slot waits for the running set",
           any("waits until the running upgrade finishes" in item
@@ -753,7 +753,7 @@ def main_test():
           fighter.get("upgrade") is not None
           and fighter["upgrade"]["slot"] == "healing")
     check("the weapon block is spoken with the time left",
-          "already running" in frame.message_line.GetLabel()
+          "already got an upgrade running" in frame.message_line.GetLabel()
           and "left" in frame.message_line.GetLabel())
     max_calls = server["calls"].count("max_upgrade")
     frame.do_max_upgrade("armor")
@@ -1408,7 +1408,9 @@ def phase27_voice_test():
     log_before = LOG_CAPTURE.getvalue()
     frame._begin_quest(board[0])
     check("a Gus quest speaks in Andrew's voice",
-          _spoken(frame, "Gus asks: A pan was left on too",
+          # The voice log keeps a 40-character preview, so
+          # the match has to fit inside it.
+          _spoken(frame, "Gus asks: Katprincess, my grill could",
                   after=len(log_before)))
     # The "speaking" log appears at once, but the worker logs
     # "made" a moment later — wait for it in the new log
@@ -1418,10 +1420,11 @@ def phase27_voice_test():
     while time.time() < deadline:
         time.sleep(0.05)
         new_log = LOG_CAPTURE.getvalue()[len(log_before):]
-        if 'Voice: made "Gus asks: A pan was left on' in new_log:
+        if 'Voice: made "Gus asks: Katprincess, my grill could' \
+                in new_log:
             break
     check("the Gus quest line was made with Andrew",
-          'Voice: made "Gus asks: A pan was left on' in new_log
+          'Voice: made "Gus asks: Katprincess, my grill could' in new_log
           and "with en-US-AndrewNeural" in new_log)
     _drain(frame)
     frame._quest_current["finish_at"] = time.time() + 600
@@ -1429,22 +1432,24 @@ def phase27_voice_test():
     log_before = LOG_CAPTURE.getvalue()
     frame.on_tick(mock.MagicMock())
     check("a quest progress update still speaks",
-          _spoken(frame, "Your quest is about ", after=len(log_before)))
+          _spoken(frame, "You're about ", after=len(log_before)))
     _drain(frame)
     log_before = LOG_CAPTURE.getvalue()
     frame._begin_quest(board[1])
     check("a Belle quest speaks in Emma's voice",
-          _spoken(frame, "Belle asks: A cake keeps coming out",
+          # 40-character voice-log preview, as above.
+          _spoken(frame, "Belle asks: Katprincess, oh, thank you",
                   after=len(log_before)))
     deadline = time.time() + 5
     new_log = ""
     while time.time() < deadline:
         time.sleep(0.05)
         new_log = LOG_CAPTURE.getvalue()[len(log_before):]
-        if 'Voice: made "Belle asks: A cake keeps coming out' in new_log:
+        if 'Voice: made "Belle asks: Katprincess, oh, thank you' \
+                in new_log:
             break
     check("the Belle quest line was made with Emma",
-          'Voice: made "Belle asks: A cake keeps coming out' in new_log
+          'Voice: made "Belle asks: Katprincess, oh, thank you' in new_log
           and "with en-US-EmmaNeural" in new_log)
     _drain(frame)
     frame.on_close(mock.MagicMock())
@@ -1565,12 +1570,12 @@ def currency_wording_test():
     check("the win line says credits",
           any("earned" in line and "credits" in line for line in spoken))
     check("the loss line says credits",
-          any(line.startswith("You lost") and "credits" in line
+          any(line.startswith("I lost") and "credits" in line
               for line in spoken))
     print("    Spoken lines checked: %s" % spoken)
 
     # The window's lists, and the line spoken when you press
-    # Enter on "You have no stat points to spend right now."
+    # Enter on "I have no stat points to spend right now."
     fighter = game_logic.new_fighter("Bolt", "robot")
     fighter["stat_points"] = 0
     frame = main.MainFrame(fighter)
@@ -1583,13 +1588,13 @@ def currency_wording_test():
     home_box = frame.lists["Home"]
     home_box.SetSelection(
         [i for i, item in enumerate(frame.list_items("Home"))
-         if item.startswith("You have no stat points")][0])
+         if item.startswith("I have no stat points")][0])
     frame.activate_current()
     spoken_no_points = frame.message_line.GetLabel()
     check("no-points announce says stat points, not points",
           spoken_no_points ==
-          "You have no stat points to spend right now. You get "
-          "2 stat points every time you level up.")
+          "I have no stat points to spend right now. I get "
+          "2 stat points every time I level up.")
     check("no-points announce has no bare points",
           not _bare_points(spoken_no_points))
     frame.on_close(mock.MagicMock())
@@ -1703,27 +1708,56 @@ def currency_wording_test():
           "v_qlevel - 1" not in bonus_mig)
     check("bonus migration touches no fight function",
           "arena_fight" not in bonus_mig)
-    # Dead giver voices (Makenna Nov 18, 2026, Phase 27): the newest
-    # migration redefines quest_giver_voice so Gus speaks with
-    # Andrew and Belle with Emma — Davis and Sara are retired.
+    # Dead giver voices (Makenna Nov 18, 2026, Phase 27): it
+    # redefines quest_giver_voice so Gus speaks with Andrew
+    # and Belle with Emma — Davis and Sara are retired. It
+    # is no longer the newest migration — the first-person
+    # one (Phase 28, below) is — so it is read by name.
+    voices_mig = open(os.path.join(
+        mig_dir, [n for n in names if "replace_dead_giver_voices" in n][0]),
+        encoding="utf-8").read()
+    check("dead giver voices migration gives Gus the Andrew voice",
+          "arena_private.quest_giver_voice" in voices_mig
+          and "when 'Gus' then 'en-US-AndrewNeural'" in voices_mig)
+    check("dead giver voices migration gives Belle the Emma voice",
+          "when 'Belle' then 'en-US-EmmaNeural'" in voices_mig)
+    check("dead giver voices migration drops the dead Davis and Sara voices",
+          "when 'Gus' then 'en-US-DavisNeural'" not in voices_mig
+          and "when 'Belle' then 'en-US-SaraNeural'" not in voices_mig)
+    check("dead giver voices migration keeps the other giver voices",
+          "en-US-ChristopherNeural" in voices_mig
+          and "en-US-JennyNeural" in voices_mig
+          and "en-US-EricNeural" in voices_mig
+          and "en-US-MichelleNeural" in voices_mig)
+    check("dead giver voices migration touches no fight function",
+          "arena_fight" not in voices_mig)
+    # First-person narration (Makenna Nov 18, 2026, Phase 28):
+    # the newest migration re-issues the fight, repair,
+    # upgrade, stat and quest functions so the player's own
+    # lines say "I / me / my" and givers address the player
+    # by name. No numbers, costs or times change.
     newest = open(os.path.join(mig_dir, names[-1]), encoding="utf-8").read()
-    check("newest migration is the dead giver voices one",
-          "replace_dead_giver_voices" in names[-1])
-    check("newest migration gives Gus the Andrew voice",
-          "arena_private.quest_giver_voice" in newest
-          and "when 'Gus' then 'en-US-AndrewNeural'" in newest)
-    check("newest migration gives Belle the Emma voice",
-          "when 'Belle' then 'en-US-EmmaNeural'" in newest)
-    check("newest migration drops the dead Davis and Sara voices",
-          "when 'Gus' then 'en-US-DavisNeural'" not in newest
-          and "when 'Belle' then 'en-US-SaraNeural'" not in newest)
-    check("newest migration keeps the other giver voices",
-          "en-US-ChristopherNeural" in newest
-          and "en-US-JennyNeural" in newest
-          and "en-US-EricNeural" in newest
-          and "en-US-MichelleNeural" in newest)
-    check("newest migration touches no fight function",
-          "arena_fight" not in newest)
+    check("newest migration is the first-person narration one",
+          "first_person_narration" in names[-1])
+    check("newest migration says I hit in a fight",
+          "I hit the Scrap Rat for %s" in newest
+          and "I hit the %s for %s" in newest)
+    check("newest migration says the creature hits me",
+          "The Scrap Rat hits me for %s" in newest
+          and "The %s hits me for %s" in newest)
+    check("newest migration says I won and I lost",
+          "I won! I earned %s experience and %s credits." in newest
+          and "I lost. I need repairs, %s." in newest)
+    check("newest migration says repairs in the first person",
+          "My repairs are finished. I''m back to full health." in newest)
+    check("newest migration names the player on a finished quest",
+          "Quest done, %s! Thank you — you earned %s credits." in newest)
+    check("newest migration updates the NPC ability lines too",
+          "My hit bounces off!" in newest
+          and "My next hit is sticky and weak!" in newest)
+    check("newest migration keeps the dead voices dead",
+          "en-US-DavisNeural" not in newest
+          and "en-US-SaraNeural" not in newest)
     healing_mig = open(os.path.join(
         mig_dir, [n for n in names if "healing_skill" in n][0]),
         encoding="utf-8").read()
@@ -1946,7 +1980,9 @@ def game_action_speech_test():
     _drain(frame)
     frame.do_upgrade("weapon")
     check("starting an upgrade speaks",
-          _spoken(frame, "Upgrading Laser Blaster to level 2, "))
+          # The voice log keeps a 40-character preview, so
+          # the match has to fit inside it.
+          _spoken(frame, "I'm upgrading my Laser Blaster to level"))
     frame.on_close(mock.MagicMock())
 
     # 2. Quests starting, progressing and finishing speak.
@@ -2029,14 +2065,14 @@ def game_action_speech_test():
         server["fighter"]["quest_xp"] = qxp
         server["fighter"]["quest_points"] = qpoints
         quest_xp_line = (
-            "You earned %s quest experience. You have %s quest "
-            "experience, %s more to reach quest level %s."
+            "You earned %s quest experience, Bolt. You have %s quest "
+            "experience now, %s more to reach quest level %s."
             % (xp_earned, qxp,
                quests_module.quest_xp_to_next(qlevel) - qxp, qlevel + 1))
         quest_level_line = None
         if level_ups > 0:
             quest_level_line = (
-                "You are now quest level %s! You have %s quest %s to spend."
+                "You're now quest level %s, Bolt! You have %s quest %s to spend."
                 % (qlevel, qpoints,
                    "point" if qpoints == 1 else "points"))
         server["board"] = [q for q in server["board"] if q["id"] != quest_id]
@@ -2046,7 +2082,7 @@ def game_action_speech_test():
                 "quest": copy.deepcopy(quest),
                 "quests": copy.deepcopy(server["board"]),
                 "credits": reward,
-                "message": "Quest done! You earned %s credits." % reward,
+                "message": "Quest done, Bolt! Thank you — you earned %s credits." % reward,
                 "tier_line": None, "giver": giver,
                 "giver_voice": quest["giver_voice"],
                 "reputation": dict(server["rep"]),
@@ -2148,7 +2184,7 @@ def game_action_speech_test():
     qframe._quest_last_progress_at = time.time() - 301
     qframe.on_tick(mock.MagicMock())
     check("a quest progress update speaks",
-          _spoken(qframe, "Your quest is about "))
+          _spoken(qframe, "You're about "))
     # Finishing a quest speaks.
     _drain(qframe)
     finished_difficulty = qframe._quest_current["difficulty"]
@@ -2156,9 +2192,10 @@ def game_action_speech_test():
     server["active"]["finish_at"] = time.time() - 1
     qframe.on_tick(mock.MagicMock())
     check("a finished quest speaks",
-          _spoken(qframe, "Quest done! You earned "))
+          # 40-character voice-log preview, as above.
+          _spoken(qframe, "Quest done, Bolt! Thank you — you earned"))
     check("a finished quest announces the reputation gained",
-          _spoken(qframe, "You gained 1 reputation with %s" % giver))
+          _spoken(qframe, "You gained 1 reputation with me, Bolt"))
     check("a finished quest announces the quest experience earned",
           _spoken(qframe, "You earned %s quest experience"
                   % quests_module.quest_xp(finished_difficulty, 1)))
@@ -2537,7 +2574,7 @@ def quest_test():
           quests_module.quest_level_line(
               {"quest_level": 3, "quest_xp": 0})
           == "Quest level 3, 300 quest experience to level 4. "
-             "Your quest level adds 3 percent to Charm, Renown "
+             "My quest level adds 3 percent to Charm, Renown "
              "and Insight.")
     check("charm line says the automatic bonus on top of the points",
           quests_module.quest_stat_line(
@@ -2545,14 +2582,14 @@ def quest_test():
                "quest_stats": {"charm": 2, "renown": 0, "insight": 0}},
               "charm")
           == "Charm, 2. Quests pay 15 percent more credits, "
-             "5 from your quest level. One more point adds 5 percent.")
+             "5 from my quest level. One more point adds 5 percent.")
     check("renown line says the automatic bonus on top of the points",
           quests_module.quest_stat_line(
               {"quest_level": 5,
                "quest_stats": {"charm": 0, "renown": 0, "insight": 0}},
               "renown")
           == "Renown, 0. 5 percent chance of 1 bonus reputation "
-             "when a quest finishes, 5 from your quest level. "
+             "when a quest finishes, 5 from my quest level. "
              "One more point adds 10 percent.")
 
     # Quest levels (Phase 23): separate from combat. Only
@@ -2575,20 +2612,20 @@ def quest_test():
           quests_module.quest_level_line(
               {"quest_level": 1, "quest_xp": 60})
           == "Quest level 1, 40 quest experience to level 2. "
-             "Your quest level adds 1 percent to Charm, Renown "
+             "My quest level adds 1 percent to Charm, Renown "
              "and Insight.")
     check("charm line says what one more point does",
           quests_module.quest_stat_line(
               {"quest_stats": {"charm": 2, "renown": 0, "insight": 0}},
               "charm")
           == "Charm, 2. Quests pay 11 percent more credits, "
-             "1 from your quest level. One more point adds 5 percent.")
+             "1 from my quest level. One more point adds 5 percent.")
     check("renown line says the chance",
           quests_module.quest_stat_line(
               {"quest_stats": {"charm": 0, "renown": 10, "insight": 0}},
               "renown")
           == "Renown, 10. 100 percent chance of 1 bonus reputation "
-             "when a quest finishes, 1 from your quest level. "
+             "when a quest finishes, 1 from my quest level. "
              "One more point adds 10 percent.")
 
     fighter = game_logic.new_fighter("Bolt", "robot")
@@ -2740,14 +2777,14 @@ def quest_test():
         server["fighter"]["quest_xp"] = qxp
         server["fighter"]["quest_points"] = qpoints
         quest_xp_line = (
-            "You earned %s quest experience. You have %s quest "
-            "experience, %s more to reach quest level %s."
+            "You earned %s quest experience, Bolt. You have %s quest "
+            "experience now, %s more to reach quest level %s."
             % (xp_earned, qxp,
                quests_module.quest_xp_to_next(qlevel) - qxp, qlevel + 1))
         quest_level_line = None
         if level_ups > 0:
             quest_level_line = (
-                "You are now quest level %s! You have %s quest %s to spend."
+                "You're now quest level %s, Bolt! You have %s quest %s to spend."
                 % (qlevel, qpoints,
                    "point" if qpoints == 1 else "points"))
         server["board"] = [q for q in server["board"] if q["id"] != quest_id]
@@ -2755,18 +2792,25 @@ def quest_test():
         server["active"] = None
         tier_line = None
         if rep_before < 3 and rep_after >= 3:
-            tier_line = "%s says: Three jobs done. You are a helper now." % giver
+            tier_line = ("%s says: Three jobs done, Bolt, and not one of "
+                         "them sloppy. You're a helper now, and my quests "
+                         "pay a little extra for you." % giver)
         elif rep_before < 8 and rep_after >= 8:
-            tier_line = "%s says: Eight jobs done. You are a friend now." % giver
+            tier_line = ("%s says: Eight jobs done, Bolt. You're a friend "
+                         "now, and friends get looked after. Pick a free "
+                         "upgrade: your weapon or your armor." % giver)
             server["gift_pending"] = {"giver": giver, "tier": "Friend"}
         elif rep_before < 15 and rep_after >= 15:
             heal = server["fighter"].get("healing_level", 0)
             if heal < 5:
                 server["fighter"]["healing_level"] = heal + 1
-                tier_line = "%s says: Fifteen jobs done. Healing is now level %s." % (giver, heal + 1)
+                tier_line = ("%s says: Fifteen jobs done, Bolt. You're "
+                             "family now. Let me patch up that healing skill "
+                             "of yours — on the house. Healing is now level "
+                             "%s." % (giver, heal + 1))
         return {"fighter": _fighter_out(), "quest": copy.deepcopy(quest),
                 "credits": reward,
-                "message": "Quest done! You earned %s credits." % reward,
+                "message": "Quest done, Bolt! Thank you — you earned %s credits." % reward,
                 "tier_line": tier_line, "giver": giver,
                 "giver_voice": quest["giver_voice"],
                 "reputation": dict(server["rep"]),
@@ -2793,7 +2837,7 @@ def quest_test():
         points = server["fighter"].get("quest_points", 0)
         if points <= 0:
             return _fighter_out(), None, [], \
-                "You have no quest points to spend right now."
+                "I have no quest points to spend right now."
         qstats = server["fighter"].setdefault(
             "quest_stats", {"charm": 0, "renown": 0, "insight": 0})
         if qstats.get(stat, 0) >= 10:
@@ -2813,7 +2857,7 @@ def quest_test():
             line = ("Insight is now %s. Quests pay %s percent more "
                     "quest experience." % (value, value * 5))
         if points - 1 > 0:
-            line += " You have %s quest %s left." % (
+            line += " I have %s quest %s left." % (
                 points - 1, "point" if points - 1 == 1 else "points")
         else:
             line += " That was your last quest point."
@@ -2885,7 +2929,7 @@ def quest_test():
     check("the quest-start announcement never says about about",
           "about about" not in frame.message_line.GetLabel())
     check("the quest-start announcement still says how long it takes",
-          "takes about" in frame.message_line.GetLabel())
+          "That'll take about" in frame.message_line.GetLabel())
     check("starting quests starts the hangout music",
           frame.sounds.current_music_track == "hangout")
     check("the starting board has 5 quests",
@@ -2957,18 +3001,23 @@ def quest_test():
     # are checked, because without a voice the next quest's
     # line overwrites the message line at once.)
     check("reputation line says the gain, total and distance to Helper",
-          quests_module.reputation_line("Bolt", 1) ==
-          "You gained 1 reputation with Bolt. You have 1 reputation "
-          "with Bolt, 2 more to reach Helper.")
+          quests_module.reputation_line("Bolt", 1, fighter_name="Bolt") ==
+          "You gained 1 reputation with me, Bolt — thank you! "
+          "You have 1 reputation with me now, 2 more to reach Helper.")
     check("reputation line says 1 more at the edge of a tier",
-          quests_module.reputation_line("Bolt", 2) ==
-          "You gained 1 reputation with Bolt. You have 2 reputation "
-          "with Bolt, 1 more to reach Helper.")
+          quests_module.reputation_line("Bolt", 2, fighter_name="Bolt") ==
+          "You gained 1 reputation with me, Bolt — thank you! "
+          "You have 2 reputation with me now, 1 more to reach Helper.")
     check("reputation line at the top tier says so, with no cap",
-          quests_module.reputation_line("Bolt", 15) ==
-          "You gained 1 reputation with Bolt. You have 15 reputation "
-          "with Bolt. That is the top tier, Trusted Friend, and your "
-          "reputation keeps building with no cap.")
+          quests_module.reputation_line("Bolt", 15, fighter_name="Bolt") ==
+          "You gained 1 reputation with me, Bolt — thank you! "
+          "You have 15 reputation with me now. That is the top tier, "
+          "Trusted Friend, and your reputation keeps building with "
+          "no cap.")
+    check("reputation line leaves the name out when it has none",
+          quests_module.reputation_line("Bolt", 1) ==
+          "You gained 1 reputation with me — thank you! "
+          "You have 1 reputation with me now, 2 more to reach Helper.")
     check("next tier after Helper is Friend at 8",
           quests_module.next_tier(3) == (8, "Friend"))
     check("no next tier at or past Trusted Friend",
@@ -3149,16 +3198,16 @@ def quest_test():
     # and the three quest stat lines — next to the board.
     check("the Home tab shows the quest level line",
           "Quest level 1, 100 quest experience to level 2. "
-          "Your quest level adds 1 percent to Charm, Renown "
+          "My quest level adds 1 percent to Charm, Renown "
           "and Insight."
           in frame.list_items("Home"))
     check("the hangout list shows the quest level and the experience to the next",
           "Quest level 1, 100 quest experience to level 2. "
-          "Your quest level adds 1 percent to Charm, Renown "
+          "My quest level adds 1 percent to Charm, Renown "
           "and Insight."
           in frame.list_items("More"))
     check("the hangout list shows the banked quest points",
-          "You have no quest points to spend right now."
+          "I have no quest points to spend right now."
           in frame.list_items("More"))
     check("the hangout list shows the three quest stat lines",
           any(item.startswith("Charm,") for item in frame.list_items("More"))
@@ -3204,7 +3253,7 @@ def quest_test():
     check("a quest level-up banks 1 quest point",
           fighter.get("quest_points") == 1)
     check("a quest level-up is announced",
-          any("You are now quest level 2! You have 1 quest point to spend."
+          any("You're now quest level 2, Bolt! You have 1 quest point to spend."
               in line for line in spoken_lines))
 
     # Charm: +5% quest credits per point.
@@ -3229,7 +3278,7 @@ def quest_test():
           fighter.get("quest_xp") == expected_xp)
 
     # Renown at 10 points: every finished quest earns +1
-    # bonus reputation, announced as "Bonus reputation!".
+    # bonus reputation, announced by name.
     _set_quest_state(stats={"charm": 0, "renown": 10, "insight": 0})
     quest = frame._quest_current
     server["rep"][quest["giver"]] = 0
@@ -3237,12 +3286,13 @@ def quest_test():
     check("renown at 10 points earns bonus reputation every time",
           frame._quest_rep.get(quest["giver"]) == 2)
     check("bonus reputation is announced",
-          any("Bonus reputation!" in line for line in spoken_lines))
+          any("Bonus reputation, Bolt — thank you!" in line
+              for line in spoken_lines))
     check("the reputation line says 2 gained when the bonus lands",
-          quests_module.reputation_line(quest["giver"], 2, gained=2)
-          == "You gained 2 reputation with %s. You have 2 reputation "
-             "with %s, 1 more to reach Helper."
-             % (quest["giver"], quest["giver"]))
+          quests_module.reputation_line(quest["giver"], 2, gained=2,
+                                        fighter_name="Bolt")
+          == "You gained 2 reputation with me, Bolt — thank you! "
+             "You have 2 reputation with me now, 1 more to reach Helper.")
     # Renown at 0 points: no bonus, no announcement.
     _set_quest_state(stats={"charm": 0, "renown": 0, "insight": 0})
     quest = frame._quest_current
@@ -3252,7 +3302,7 @@ def quest_test():
     check("renown at 0 points earns no bonus reputation",
           frame._quest_rep.get(quest["giver"]) == 1)
     check("no bonus reputation is announced without renown",
-          not any("Bonus reputation!" in line for line in spoken_lines))
+          not any("Bonus reputation" in line for line in spoken_lines))
 
     # Spending a quest point: Enter on a quest stat line
     # spends one banked point there, one at a time.
@@ -3599,7 +3649,7 @@ def npc_test():
                   npc["name"] in " ".join(result["lines"]))
             worst = 0
             for line in result["lines"]:
-                for match in re.findall(r"hits you for (\d+) damage",
+                for match in re.findall(r"hits me for (\d+)",
                                         line):
                     worst = max(worst, int(match))
             check("no hit from %s at level %d takes more than "
@@ -3669,7 +3719,7 @@ def npc_test():
             frame._play_sound_for_line(
                 "A %s appears! Level 5." % npc["name"])
             frame._play_sound_for_line(
-                "The %s hits you for 10 damage." % npc["name"])
+                "The %s hits me for 10." % npc["name"])
         no_crash = True
     except Exception:
         no_crash = False
@@ -3690,16 +3740,16 @@ def npc_test():
     frame._play_sound_for_line("A Zip Scout appears! Level 5.")
     check("zip scout appear plays its own sound",
           full_bank._sounds["npc_zip_scout_appear"].played == 1)
-    frame._play_sound_for_line("The Zip Scout hits you for 10 damage.")
+    frame._play_sound_for_line("The Zip Scout hits me for 10.")
     check("zip scout hit plays its own sound",
           full_bank._sounds["npc_zip_scout_hit"].played == 1)
-    frame._play_sound_for_line("Test hits the Zip Scout for 10.")
+    frame._play_sound_for_line("I hit the Zip Scout for 10.")
     check("your own hit still plays the fighter's sound",
           full_bank._sounds["robot_laser"].played == 1)
     frame._play_sound_for_line("A Baker Belle appears! Level 5.")
     check("baker belle appear plays its own sound",
           full_bank._sounds["npc_baker_belle_appear"].played == 1)
-    frame._play_sound_for_line("The Baker Belle hits you for 10 damage.")
+    frame._play_sound_for_line("The Baker Belle hits me for 10.")
     check("baker belle hit plays its own sound",
           full_bank._sounds["npc_baker_belle_hit"].played == 1)
     frame._play_sound_for_line("A Scrap Rat appears! Level 5.")

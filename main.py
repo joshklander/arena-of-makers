@@ -589,12 +589,12 @@ class MainFrame(wx.Frame):
             points = fighter.get("stat_points", 0)
             if points > 0:
                 items.append(
-                    "You have %d stat %s to spend. Press Enter on a "
+                    "I have %d stat %s to spend. Press Enter on a "
                     "stat to spend one point."
                     % (points, "point" if points == 1 else "points")
                 )
             else:
-                items.append("You have no stat points to spend right now.")
+                items.append("I have no stat points to spend right now.")
             # Quest level (Phase 23), next to the fighter level:
             # one line, always shown, even at quest level 1.
             items.append(quests.quest_level_line(fighter))
@@ -672,8 +672,8 @@ class MainFrame(wx.Frame):
                         )
                     )
                 return (
-                    "Max affordable: your next %s level costs %d "
-                    "credits and you have %d credits."
+                    "Max affordable: my next %s level costs %d "
+                    "credits and I have %d credits."
                     % (plan["name"], plan["next_cost"], plan["credits"])
                 )
 
@@ -756,12 +756,12 @@ class MainFrame(wx.Frame):
                 qpoints = quests.quest_points_of(self.fighter)
                 if qpoints > 0:
                     items.append(
-                        "You have %d quest %s to spend. Press Enter on a "
+                        "I have %d quest %s to spend. Press Enter on a "
                         "quest stat to spend one point."
                         % (qpoints, "point" if qpoints == 1 else "points")
                     )
                 else:
-                    items.append("You have no quest points to spend right now.")
+                    items.append("I have no quest points to spend right now.")
                 for qstat in quests.QUEST_STAT_NAMES:
                     items.append(quests.quest_stat_line(self.fighter, qstat))
                 for line in quests.reputation_summary(self._quest_rep):
@@ -1140,9 +1140,9 @@ class MainFrame(wx.Frame):
         if not self.sound_on:
             return
         kind = self.fighter.get("kind", "robot")
-        if "You won!" in line:
+        if "I won!" in line:
             self.sounds.play_win()
-        elif "You lost." in line:
+        elif "I lost." in line:
             self.sounds.play_loss()
         elif "appears!" in line:
             npc_id = game_logic.creature_in_line(line)
@@ -1151,13 +1151,19 @@ class MainFrame(wx.Frame):
                     game_logic.NPCS[npc_id]["appear_sound"])
             else:
                 self.sounds.play_intro(kind)
+        elif "I hit the " in line:
+            # The fighter's hit, first person since Phase 28:
+            # "I hit the Zip Scout for 12." always means the
+            # fighter's own weapon sound, whoever the enemy is.
+            self.sounds.play_hit(kind)
         elif " hits " in line:
             # Who is hitting whom is in the words: "The Zip
-            # Scout hits Katprincess" is the creature hitting,
-            # "Katprincess hits the Zip Scout" is the fighter
-            # hitting. Matching the exact wording keeps a
-            # fighter whose name starts with "The" from
-            # stealing the creature's sound.
+            # Scout hits me" is the creature hitting. The
+            # fighter's hits no longer say "hits" at all —
+            # they say "I hit the ..." and are caught above.
+            # Matching the exact wording keeps a fighter
+            # whose name starts with "The" from stealing the
+            # creature's sound.
             npc_id = game_logic.creature_in_line(line)
             if npc_id and npc_id != "scrap_rat":
                 name = game_logic.NPCS[npc_id]["name"]
@@ -1459,7 +1465,7 @@ class MainFrame(wx.Frame):
         starts after them."""
         if game_logic.is_repairing(self.fighter):
             self.announce(
-                "Your fighter is still repairing. %s left."
+                "I'm still repairing. %s left."
                 % game_logic.format_time(
                     game_logic.repair_left_seconds(self.fighter)
                 )
@@ -1708,11 +1714,19 @@ class MainFrame(wx.Frame):
         self._quest_last_progress_at = time.time()
         giver = started.get("giver", "Bolt")
         voice = started.get("giver_voice")
+        # Phase 28: the giver asks the player by name for
+        # help, in their own voice — never a generic "asks".
+        # The giver and voice come from the server's answer,
+        # never the quest template (the starting board
+        # shuffles givers, so the template's giver can differ).
         self.announce_as(
-            "%s asks: %s That quest takes %s."
-            % (giver, started.get("description", ""),
-               game_logic.format_time(
-                   (started.get("duration_minutes") or 15) * 60)),
+            quests.quest_start_line(
+                giver,
+                self.fighter.get("name", "Katprincess"),
+                started.get("description", ""),
+                game_logic.format_time(
+                    (started.get("duration_minutes") or 15) * 60),
+                quest_id=started.get("id")),
             voice)
         # The quest's ambience loop starts now, under the
         # music and the voice, and keeps playing until the
@@ -1766,7 +1780,10 @@ class MainFrame(wx.Frame):
         if giver and rep is not None:
             gained = 1 + (1 if data.get("bonus_reputation") else 0)
             self.announce_as(
-                quests.reputation_line(giver, int(rep), gained=gained), voice)
+                quests.reputation_line(
+                    giver, int(rep), gained=gained,
+                    fighter_name=self.fighter.get("name", "Katprincess")),
+                voice)
         # Quest XP (Phase 23): what she earned, how far to the
         # next quest level, and a level-up line when it levels
         # her up — all in the giver's voice. The numbers come
@@ -1777,10 +1794,12 @@ class MainFrame(wx.Frame):
         if data.get("quest_level_line"):
             self.announce_as(data["quest_level_line"], voice)
         if data.get("bonus_reputation"):
-            self.announce_as("Bonus reputation!", voice)
+            self.announce_as(
+                "Bonus reputation, %s — thank you!"
+                % self.fighter.get("name", "Katprincess"), voice)
         if data.get("gift_pending"):
             self.announce(
-                "A free gift is waiting. Press 1 for a free weapon "
+                "I've got a free gift waiting. Press 1 for a free weapon "
                 "upgrade, or 2 for a free armor upgrade.")
         # The finished quest's ambience loop stops here: the
         # next quest starts its own loop in _begin_next_quest.
@@ -1804,15 +1823,24 @@ class MainFrame(wx.Frame):
         total = max(1.0, (quest.get("duration_minutes") or 15) * 60)
         left = max(0.0, finish - now)
         done = max(0.0, min(1.0, 1.0 - left / total))
-        line = (
-            "Your quest is about %d percent done. %s left."
-            % (int(done * 100), game_logic.format_time(left)))
+        # Phase 28: the giver speaks the quest part in their
+        # own voice — and the repair part is a separate line
+        # in the player's own voice, not the giver's. The
+        # two lines are queued in order, so the giver is
+        # still heard first.
+        self.announce_as(
+            quests.quest_progress_line(
+                quest.get("giver", "Bolt"),
+                int(done * 100),
+                game_logic.format_time(left),
+                quest_id=quest.get("id"),
+                fighter_name=self.fighter.get("name", "Katprincess")),
+            quest.get("giver_voice"))
         if game_logic.is_repairing(self.fighter):
-            line += (
-                " Your fighter is still repairing, %s left."
+            self.announce(
+                "I'm still repairing, %s left."
                 % game_logic.format_time(
                     game_logic.repair_left_seconds(self.fighter)))
-        self.announce_as(line, quest.get("giver_voice"))
         self._quest_last_progress_at = now
 
     def find_another_quest(self):
@@ -1836,8 +1864,11 @@ class MainFrame(wx.Frame):
         if quest:
             self._quest_board.append(quest)
             self.announce_as(
-                "A new quest: %s, %s, %s credits. %s asks: %s"
-                % (quest.get("name"), quest.get("difficulty"),
+                "%s has a new quest for you, %s: %s, %s, %s credits. "
+                "%s asks: %s"
+                % (quest.get("giver"),
+                   self.fighter.get("name", "Katprincess"),
+                   quest.get("name"), quest.get("difficulty"),
                    quests.quest_reward(
                        quest.get("difficulty"),
                        quests.quest_level_of(self.fighter)),
@@ -1911,12 +1942,12 @@ class MainFrame(wx.Frame):
         status = game_logic.upgrade_status(self.fighter)
         if status:
             self.announce(
-                "An upgrade is already running. Wait for it to "
+                "I've already got an upgrade running. I'll wait for it to "
                 "finish first. " + status
             )
         else:
             self.announce(
-                "An upgrade is already running. Wait for it to "
+                "I've already got an upgrade running. I'll wait for it to "
                 "finish first."
             )
 
@@ -1943,7 +1974,7 @@ class MainFrame(wx.Frame):
             return
         upgrade = self.fighter["upgrade"]
         self.announce(
-            "Upgrading %s to level %d, %s left."
+            "I'm upgrading my %s to level %d. It'll be done in %s."
             % (
                 upgrade["name"],
                 upgrade["level"],
@@ -1998,25 +2029,25 @@ class MainFrame(wx.Frame):
         fighter = self.fighter
         spent = sum(game_logic.stats_of(fighter).values())
         if spent <= 0:
-            self.announce("You have no stat points spent to reset.")
+            self.announce("I have no stat points spent to reset.")
             return
         used = fighter.get("respecs_used", 0)
         if used <= 0:
             question = (
-                "Reset all your stats? You have %d stat points spent. "
-                "They will all come back to spend again. Your first "
+                "Reset all my stats? I have %d stat points spent. "
+                "They will all come back to spend again. My first "
                 "respec is free. Do you want to do it?" % spent
             )
         else:
             question = (
-                "Reset all your stats? You have %d stat points spent. "
+                "Reset all my stats? I have %d stat points spent. "
                 "They will all come back to spend again. This respec "
-                "costs 100 credits and you have %d credits. Do you "
+                "costs 100 credits and I have %d credits. Do you "
                 "want to do it?"
                 % (spent, game_logic.credits_of(fighter))
             )
         if not self._confirm(question):
-            self.announce("Your stats stay as they are.")
+            self.announce("My stats stay as they are.")
             return
         if self.online_config:
             server_fighter, message, _messages, error = online_save.respec_stats(
@@ -2050,19 +2081,19 @@ class MainFrame(wx.Frame):
         plan = game_logic.max_affordable(fighter, slot)
         if plan.get("maxed"):
             self.announce(
-                "Your %s is already at its best, level %d."
+                "My %s is already at its best, level %d."
                 % (plan["name"], game_logic.HEALING_MAX_LEVEL)
             )
             return
         if not plan["levels"]:
             self.announce(
-                "Your next %s level costs %d credits and you have %d credits."
+                "My next %s level costs %d credits and I have %d credits."
                 % (plan["name"], plan["next_cost"], plan["credits"])
             )
             return
         count = len(plan["levels"])
         question = (
-            "Your %s can go up %d %s for %d credits, leaving %d. "
+            "My %s can go up %d %s for %d credits, leaving %d. "
             "It will take %s, one level after another. Do you want "
             "to do it?"
             % (
@@ -2075,7 +2106,7 @@ class MainFrame(wx.Frame):
             )
         )
         if not self._confirm(question):
-            self.announce("Nothing was bought. Your credits stay as they are.")
+            self.announce("Nothing was bought. My credits stay as they are.")
             return
         if self.online_config:
             server_fighter, message, _messages, error = online_save.max_upgrade(
@@ -2107,18 +2138,18 @@ class MainFrame(wx.Frame):
             self.announce(game_logic.status_text(fighter))
         elif item.startswith("Go to "):
             self.notebook.SetSelection(self.TAB_NAMES.index(item[6:]))
-        elif tab == "Home" and item.startswith("You have "):
+        elif tab == "Home" and item.startswith("I have "):
             points = fighter.get("stat_points", 0)
             if points > 0:
                 self.announce(
-                    "You have %d stat %s to spend. Move with the arrow "
+                    "I have %d stat %s to spend. Move with the arrow "
                     "keys to a stat and press Enter to spend one point."
                     % (points, "point" if points == 1 else "points")
                 )
             else:
                 self.announce(
-                    "You have no stat points to spend right now. You get "
-                    "2 stat points every time you level up."
+                    "I have no stat points to spend right now. I get "
+                    "2 stat points every time I level up."
                 )
         elif tab == "Home" and item.startswith("Strength,"):
             self.do_spend_stat("strength")
@@ -2162,9 +2193,10 @@ class MainFrame(wx.Frame):
             game_logic.HEALING_NAME + " is at its best"
         ):
             self.announce(item)
-        elif tab == "Shop" and item.startswith("Max affordable: your next"):
+        elif tab == "Shop" and item.startswith("Max affordable: my next"):
             self.announce(item)
-        elif tab == "Shop" and item.startswith("Upgrading "):
+        elif tab == "Shop" and (item.startswith("Upgrading ")
+                                 or item.startswith("I'm upgrading")):
             self.announce(game_logic.upgrade_status(fighter) or "No upgrade is running.")
         elif tab == "More" and item == "Visit the hangout":
             # Entering the hangout alone starts nothing: the
@@ -2200,18 +2232,18 @@ class MainFrame(wx.Frame):
             self.hear_quests()
         elif tab == "More" and item.startswith("Quest level "):
             self.announce(item)
-        elif tab == "More" and item.startswith("You have ") and "quest" in item:
+        elif tab == "More" and item.startswith("I have ") and "quest" in item:
             qpoints = quests.quest_points_of(fighter)
             if qpoints > 0:
                 self.announce(
-                    "You have %d quest %s to spend. Move with the arrow "
+                    "I have %d quest %s to spend. Move with the arrow "
                     "keys to a quest stat and press Enter to spend one point."
                     % (qpoints, "point" if qpoints == 1 else "points")
                 )
             else:
                 self.announce(
-                    "You have no quest points to spend right now. You get "
-                    "1 quest point every time you go up a quest level."
+                    "I have no quest points to spend right now. I get "
+                    "1 quest point every time I go up a quest level."
                 )
         elif tab == "More" and item.startswith("Charm,"):
             self.do_spend_quest_stat("charm")
@@ -2232,13 +2264,13 @@ class MainFrame(wx.Frame):
         elif tab == "More" and item.startswith("Hear repair status"):
             if game_logic.is_repairing(fighter):
                 self.announce(
-                    "Repairing. %s left."
+                    "I'm repairing. I'll be done in %s."
                     % game_logic.format_time(
                         game_logic.repair_left_seconds(fighter)
                     )
                 )
             else:
-                self.announce("No repairs running. Your fighter is ready.")
+                self.announce("No repairs running. I'm ready.")
         elif tab == "More" and item.startswith("Export my data"):
             self.do_export()
         elif tab == "More" and item.startswith("Look up a player"):
@@ -2411,13 +2443,13 @@ class MainFrame(wx.Frame):
             fighter = self.fighter
             if game_logic.is_repairing(fighter):
                 self.announce(
-                    "Repairing. %s left."
+                    "I'm repairing. I'll be done in %s."
                     % game_logic.format_time(
                         game_logic.repair_left_seconds(fighter)
                     )
                 )
             else:
-                self.announce("No repairs running. Your fighter is ready.")
+                self.announce("No repairs running. I'm ready.")
             return
         if on_list and self.current_tab() == "More":
             if key == ord("s"):
@@ -2472,7 +2504,7 @@ class MainFrame(wx.Frame):
                 self.do_fight(idle=True)
                 if game_logic.is_repairing(self.fighter):
                     self.idle_fighting = False
-                    self.announce("Idle fighting stopped while your fighter repairs.")
+                    self.announce("Idle fighting stopped while I'm repairing.")
                     # A loss that starts repairs ends the
                     # auto-fight session, so the fight music
                     # stops here too. (This was the bug Makenna
@@ -2491,7 +2523,7 @@ class MainFrame(wx.Frame):
             repairing = game_logic.is_repairing(self.fighter, now)
             if self.was_repairing and not repairing:
                 self.fighter["hp"] = self.fighter["max_hp"]
-                self.announce("Repairs finished. Your fighter is back to full health.")
+                self.announce("My repairs are finished. I'm back to full health.")
                 self.refresh_all()
         self.was_repairing = game_logic.is_repairing(self.fighter, now)
         self.SetStatusText(game_logic.status_text(self.fighter, now))

@@ -88,7 +88,7 @@ NPCS = {
         "hp_mult": 1.8, "dmg_mult": 0.7, "reward_mult": 1.1,
         "ability": "shield", "ability_every": 4,
         "ability_line": "Bulkhead raises its plating shield! "
-                        "Your hit bounces off!",
+                        "My hit bounces off!",
         "profile": {"speed": 1, "strength": 1, "health": 4,
                     "defense": 3, "luck": 1},
         "appear_sound": "npc_bulkhead_appear",
@@ -108,7 +108,7 @@ NPCS = {
         "name": "Ghost Drone", "kind": "robot",
         "hp_mult": 0.8, "dmg_mult": 1.2, "reward_mult": 1.2,
         "ability": "vanish", "ability_every": 3,
-        "ability_line": "Ghost Drone vanishes! Your hit misses!",
+        "ability_line": "Ghost Drone vanishes! My hit misses!",
         "profile": {"speed": 4, "strength": 3, "health": 1,
                     "defense": 0, "luck": 2},
         "appear_sound": "npc_ghost_drone_appear",
@@ -140,7 +140,7 @@ NPCS = {
         "hp_mult": 1.1, "dmg_mult": 1.0, "reward_mult": 1.2,
         "ability": "sugar_trap", "ability_every": 4,
         "ability_line": "Baker Belle throws a sugar trap! "
-                        "Your next hit is sticky and weak!",
+                        "My next hit is sticky and weak!",
         "profile": {"speed": 2, "strength": 2, "health": 3,
                     "defense": 2, "luck": 1},
         "appear_sound": "npc_baker_belle_appear",
@@ -160,7 +160,7 @@ NPCS = {
         "name": "Ember Owl", "kind": "animal",
         "hp_mult": 1.3, "dmg_mult": 0.95, "reward_mult": 1.1,
         "ability": "dodge", "ability_every": 5,
-        "ability_line": "Ember Owl swoops aside! Your hit misses!",
+        "ability_line": "Ember Owl swoops aside! My hit misses!",
         "profile": {"speed": 2, "strength": 1, "health": 4,
                     "defense": 2, "luck": 1},
         "appear_sound": "npc_ember_owl_appear",
@@ -538,28 +538,28 @@ def stat_line(fighter, stat):
     value = stats[stat]
     if stat == "strength":
         return (
-            "Strength, %d. One more point adds 2 damage. Your damage is %d."
+            "Strength, %d. One more point adds 2 damage. My damage is %d."
             % (value, weapon_damage(fighter))
         )
     if stat == "defense":
         return (
-            "Defense, %d. One more point soaks 1 more damage. You soak %d."
+            "Defense, %d. One more point soaks 1 more damage. I soak %d."
             % (value, armor_defense(fighter) // 2)
         )
     if stat == "health":
         return (
-            "Health, %d. One more point adds 10 health. Your health is %d."
+            "Health, %d. One more point adds 10 health. My health is %d."
             % (value, fighter_max_hp(fighter))
         )
     if stat == "speed":
         return (
-            "Speed, %d. One more point makes you a little faster. You hit "
-            "first when you are faster than your enemy."
+            "Speed, %d. One more point makes you a little faster. I hit "
+            "first when I am faster than my enemy."
             % value
         )
     if stat == "luck":
         return (
-            "Luck, %d. One more point adds a little critical chance. Your "
+            "Luck, %d. One more point adds a little critical chance. My "
             "critical chance is about %d percent. A critical hit deals half "
             "as much damage again."
             % (value, int(round(stat_crit_chance(value))))
@@ -575,7 +575,7 @@ def spend_stat(fighter, stat):
     if stat not in STAT_NAMES:
         return "Pick strength, defense, health, speed or luck.", None
     if fighter.get("stat_points", 0) <= 0:
-        return "You have no stat points to spend right now.", None
+        return "I have no stat points to spend right now.", None
     stats = stats_of(fighter)
     stats[stat] += 1
     fighter["stats"] = stats
@@ -589,12 +589,12 @@ def spend_stat(fighter, stat):
     # the bank is empty.
     left = fighter["stat_points"]
     if left > 0:
-        tail = " You have %d stat %s left." % (
+        tail = " I have %d stat %s left." % (
             left,
             "point" if left == 1 else "points",
         )
     else:
-        tail = " That was your last stat point."
+        tail = " That was my last stat point."
     return None, stat_line(fighter, stat) + tail
 
 
@@ -607,7 +607,7 @@ def spend_quest_stat(fighter, stat):
     if stat not in quests.QUEST_STAT_NAMES:
         return "Pick charm, renown, or insight.", None
     if fighter.get("quest_points", 0) <= 0:
-        return "You have no quest points to spend right now.", None
+        return "I have no quest points to spend right now.", None
     stats = quests.quest_stats_of(fighter)
     if stats[stat] >= quests.QUEST_STAT_MAX:
         return (
@@ -619,12 +619,12 @@ def spend_quest_stat(fighter, stat):
     fighter["quest_points"] -= 1
     left = fighter["quest_points"]
     if left > 0:
-        tail = " You have %d quest %s left." % (
+        tail = " I have %d quest %s left." % (
             left,
             "point" if left == 1 else "points",
         )
     else:
-        tail = " That was your last quest point."
+        tail = " That was my last quest point."
     return None, quests.quest_stat_line(fighter, stat) + tail
 
 
@@ -636,11 +636,11 @@ def respec_stats(fighter):
     stats = stats_of(fighter)
     spent = sum(stats.values())
     if spent <= 0:
-        return "You have no stat points spent to reset.", None
+        return "I have no stat points spent to reset.", None
     cost = 0 if fighter.get("respecs_used", 0) <= 0 else RESPEC_COST_CREDITS
     if cost > credits_of(fighter):
         return (
-            "A respec costs %d credits and you have %d credits."
+            "A respec costs %d credits and I have %d credits."
             % (cost, credits_of(fighter))
         ), None
     if cost > 0:
@@ -653,14 +653,14 @@ def respec_stats(fighter):
     fighter["hp"] = min(fighter["hp"], fighter["max_hp"])
     if cost > 0:
         line = (
-            "Your stats are reset. You have %d stat points to spend. "
+            "My stats are reset. I have %d stat points to spend. "
             "That respec cost %d credits."
             % (fighter["stat_points"], cost)
         )
     else:
         line = (
-            "Your stats are reset. You have %d stat points to spend. "
-            "Your first respec was free."
+            "My stats are reset. I have %d stat points to spend. "
+            "My first respec was free."
             % fighter["stat_points"]
         )
     return None, line
@@ -760,9 +760,9 @@ def fight(fighter, rng=None, now=None, npc_id="scrap_rat"):
         return {
             "won": None,
             "lines": [
-                "Your fighter is still repairing. %s left."
+                "I'm still repairing. %s left."
                 % format_time(repair_left_seconds(fighter, now)),
-                "You can visit the hangout or browse the shop while you wait.",
+                "I can visit the hangout or browse the shop while I wait.",
             ],
             "xp": 0,
             "credits": 0,
@@ -825,7 +825,7 @@ def fight(fighter, rng=None, now=None, npc_id="scrap_rat"):
         nonlocal sugar_trap_armed
         if rng.random() * 100 < creature_dodge:
             lines.append(
-                "Round %d: The %s dodges! Your hit misses."
+                "Round %d: The %s dodges! My hit misses."
                 % (round_no, creature["name"])
             )
             return False
@@ -841,13 +841,13 @@ def fight(fighter, rng=None, now=None, npc_id="scrap_rat"):
         creature_hp -= hit
         if crit:
             lines.append(
-                "Round %d: Critical hit! %s hits the %s for %d."
-                % (round_no, fighter["name"], creature["name"], hit)
+                "Round %d: Critical hit! I hit the %s for %d."
+                % (round_no, creature["name"], hit)
             )
         else:
             lines.append(
-                "Round %d: %s hits the %s for %d."
-                % (round_no, fighter["name"], creature["name"], hit)
+                "Round %d: I hit the %s for %d."
+                % (round_no, creature["name"], hit)
             )
         return True
 
@@ -856,21 +856,21 @@ def fight(fighter, rng=None, now=None, npc_id="scrap_rat"):
         nonlocal fighter_hp
         if rng.random() * 100 < fighter_dodge:
             lines.append(
-                "Round %d: %s dodges! The %s's hit misses."
-                % (round_no, fighter["name"], creature["name"])
+                "Round %d: I dodge! The %s's hit misses."
+                % (round_no, creature["name"])
             )
             return False
         hit, crit = creature_hit(power)
         fighter_hp -= hit
         if crit:
             lines.append(
-                "Round %d: Critical hit! The %s hits %s for %d."
-                % (round_no, creature["name"], fighter["name"], hit)
+                "Round %d: Critical hit! The %s hits me for %d."
+                % (round_no, creature["name"], hit)
             )
         else:
             lines.append(
-                "Round %d: The %s hits %s for %d."
-                % (round_no, creature["name"], fighter["name"], hit)
+                "Round %d: The %s hits me for %d."
+                % (round_no, creature["name"], hit)
             )
         return True
 
@@ -941,17 +941,17 @@ def fight(fighter, rng=None, now=None, npc_id="scrap_rat"):
             if fighter_hp < fighter["max_hp"]:
                 fighter["hp"] = fighter["max_hp"]
                 lines.append(
-                    "Your %s restored you to full health." % HEALING_NAME
+                    "My %s restored me to full health." % HEALING_NAME
                 )
             else:
                 fighter["hp"] = max(1, fighter_hp)
         else:
             fighter["hp"] = max(1, fighter_hp)
-        lines.append("You won! You earned %d experience and %d credits." % (xp, credits))
+        lines.append("I won! I earned %d experience and %d credits." % (xp, credits))
         if levels:
             lines.append(
-                "You are now level %d! Your health grew to %d. "
-                "You have %d stat points to spend."
+                "I'm now level %d! My health grew to %d. "
+                "I have %d stat points to spend."
                 % (
                     fighter["level"],
                     fighter["max_hp"],
@@ -980,25 +980,25 @@ def fight(fighter, rng=None, now=None, npc_id="scrap_rat"):
         fighter["repair_until"] = 0
         if fighter.get("healing_full_told"):
             lines.append(
-                "You lost. Your %s brought you back to full "
+                "I lost, but my %s brought me back to full "
                 "health. No repairs needed." % HEALING_NAME
             )
         else:
             fighter["healing_full_told"] = True
             lines.append(
-                "You lost. Your %s brought you back to full "
+                "I lost, but my %s brought me back to full "
                 "health. No repairs needed — at Healing level 5, "
-                "you never need repairs again." % HEALING_NAME
+                "I'll never need repairs again." % HEALING_NAME
             )
     else:
         fighter["hp"] = 1
         wait = repair_duration_seconds(fighter["level"])
         fighter["repair_until"] = now + wait
-        lines.append("You lost. Your fighter needs repairs, %s." % format_time(wait))
+        lines.append("I lost. I need repairs, %s." % format_time(wait))
     if lost:
-        lines.append("You lost %d credits." % lost)
+        lines.append("I lost %d credits." % lost)
     if (fighter.get("healing_level", 0) or 0) < HEALING_MAX_LEVEL:
-        lines.append("While repairs run, you can still visit the hangout.")
+        lines.append("While I'm repairing, I can still visit the hangout.")
     return {
         "won": False,
         "lines": lines,
@@ -1027,7 +1027,7 @@ def start_upgrade(fighter, slot, now=None):
     level = fighter.get(level_key, 0) or 0
     if slot == "healing":
         if level >= HEALING_MAX_LEVEL:
-            return "Your %s is already at its best, level %d." % (
+            return "My %s is already at its best, level %d." % (
                 HEALING_NAME, HEALING_MAX_LEVEL)
         name = HEALING_NAME
     else:
@@ -1035,7 +1035,7 @@ def start_upgrade(fighter, slot, now=None):
     cost = slot_upgrade_cost(slot, level)
     if credits_of(fighter) < cost:
         return (
-            "That upgrade costs %d credits and you have %d credits."
+            "That upgrade costs %d credits and I have %d credits."
             % (cost, credits_of(fighter))
         )
     fighter["credits"] = credits_of(fighter) - cost
@@ -1117,12 +1117,12 @@ def start_max_upgrade(fighter, slot, now=None):
     plan = max_affordable(fighter, slot)
     if plan.get("maxed"):
         return (
-            "Your %s is already at its best, level %d."
+            "My %s is already at its best, level %d."
             % (plan["name"], HEALING_MAX_LEVEL)
         ), None
     if not plan["levels"]:
         return (
-            "Your next %s level costs %d credits and you have %d credits."
+            "My next %s level costs %d credits and I have %d credits."
             % (plan["name"], plan["next_cost"], plan["credits"])
         ), None
     fighter["credits"] = plan["credits_left"]
@@ -1138,7 +1138,7 @@ def start_max_upgrade(fighter, slot, now=None):
     fighter["upgrade_total"] = len(plan["levels"])
     count = len(plan["levels"])
     line = (
-        "Your %s will go up %d %s for %d credits. All %d %s will be "
+        "My %s will go up %d %s for %d credits. All %d %s will be "
         "done in %s."
         % (
             plan["name"],
@@ -1167,7 +1167,7 @@ def finish_upgrade_if_ready(fighter, now=None):
     if now < upgrade["finish"]:
         return None
     fighter[upgrade["slot"] + "_level"] = upgrade["level"]
-    line = "Your %s is now level %d." % (upgrade["name"], upgrade["level"])
+    line = "My %s is now level %d." % (upgrade["name"], upgrade["level"])
     queue = list(fighter.get("upgrade_queue") or [])
     if queue:
         nxt = queue.pop(0)
@@ -1194,7 +1194,7 @@ def finish_upgrade_if_ready(fighter, now=None):
             if fighter.get("repair_until", 0) > now:
                 fighter["repair_until"] = 0
                 fighter["hp"] = fighter_max_hp(fighter)
-                line += " No more repairs — you are back to full health."
+                line += " No more repairs — I'm back to full health."
     return line
 
 
@@ -1207,7 +1207,7 @@ def upgrade_status(fighter, now=None):
     if not upgrade:
         return None
     left = max(0, upgrade["finish"] - now)
-    text = "Upgrading %s to level %d, %s left." % (
+    text = "I'm upgrading my %s to level %d, %s left." % (
         upgrade["name"],
         upgrade["level"],
         format_time(left),
@@ -1254,12 +1254,12 @@ def status_text(fighter, now=None):
     text += " " + quests.quest_level_line(fighter)
     points = fighter.get("stat_points", 0)
     if points > 0:
-        text += " You have %d stat %s to spend." % (
+        text += " I have %d stat %s to spend." % (
             points,
             "point" if points == 1 else "points",
         )
     if is_repairing(fighter, now):
-        text += " Repairing, %s left." % format_time(
+        text += " I'm repairing, %s left." % format_time(
             repair_left_seconds(fighter, now)
         )
     upgrade = upgrade_status(fighter, now)

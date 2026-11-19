@@ -313,7 +313,7 @@ def quest_level_line(fighter):
             % (level, to_next, level + 1))
     auto = quest_auto_bonus_percent(fighter)
     if auto > 0:
-        line += (" Your quest level adds %d percent to Charm, "
+        line += (" My quest level adds %d percent to Charm, "
                  "Renown and Insight." % auto)
     return line
 
@@ -363,7 +363,7 @@ def quest_stat_line(fighter, stat):
         if auto > 0:
             return (
                 "Charm, %d. Quests pay %d percent more credits, "
-                "%d from your quest level. "
+                "%d from my quest level. "
                 "One more point adds 5 percent."
                 % (value, total, auto)
             )
@@ -376,7 +376,7 @@ def quest_stat_line(fighter, stat):
         if auto > 0:
             return (
                 "Renown, %d. %d percent chance of 1 bonus reputation "
-                "when a quest finishes, %d from your quest level. "
+                "when a quest finishes, %d from my quest level. "
                 "One more point adds 10 percent."
                 % (value, total, auto)
             )
@@ -389,7 +389,7 @@ def quest_stat_line(fighter, stat):
         if auto > 0:
             return (
                 "Insight, %d. Quests pay %d percent more quest "
-                "experience, %d from your quest level. "
+                "experience, %d from my quest level. "
                 "One more point adds 5 percent."
                 % (value, total, auto)
             )
@@ -438,24 +438,135 @@ def next_tier(reputation):
     return None
 
 
-def reputation_line(giver, rep_after, gained=1):
+def reputation_line(giver, rep_after, gained=1, fighter_name=None):
     """One plain-words line for a finished quest: the reputation
     gained, the new total with that giver, and how far to the
     next tier — or the top tier, when there is no next tier.
     Spoken by the giver on completion. gained is normally 1;
-    Renown (Phase 23) can make it 2 when the bonus lands."""
+    Renown (Phase 23) can make it 2 when the bonus lands.
+    Phase 28: the giver speaks to the player by name, as
+    "with me" — the giver is the one speaking, so the player
+    is "you" to them, never "I". fighter_name is the
+    player's fighter name; when it is missing the line
+    leaves the name out rather than guessing one."""
+    name = ", %s" % fighter_name if fighter_name else ""
     nxt = next_tier(rep_after)
     if nxt is None:
         return (
-            "You gained %d reputation with %s. You have %s reputation "
-            "with %s. That is the top tier, Trusted Friend, and your "
-            "reputation keeps building with no cap."
-            % (gained, giver, rep_after, giver))
-    needed, name = nxt
+            "You gained %d reputation with me%s — thank you! "
+            "You have %s reputation with me now. That is the top "
+            "tier, Trusted Friend, and your reputation keeps "
+            "building with no cap."
+            % (gained, name, rep_after))
+    needed, tier = nxt
     return (
-        "You gained %d reputation with %s. You have %s reputation "
-        "with %s, %s more to reach %s."
-        % (gained, giver, rep_after, giver, needed - rep_after, name))
+        "You gained %d reputation with me%s — thank you! "
+        "You have %s reputation with me now, %s more to reach %s."
+        % (gained, name, rep_after, needed - rep_after, tier))
+
+
+# Quest-giver openings and progress closers (Phase 28):
+# each giver has two variants, warm and in character, so
+# the same giver does not say the same line every quest.
+# The variant is picked from the quest id, so one quest
+# always keeps the same variant from its start line to its
+# progress updates. The giver always speaks TO the player
+# by name — never as the player.
+GIVER_OPENINGS = {
+    "Bolt": (
+        ("Katprincess, I need a hand. ", " Get to it."),
+        ("Katprincess, the workshop needs you. ",
+         " Don't keep me waiting."),
+    ),
+    "Marge": (
+        ("Katprincess, love, could you help me in the kitchen? ",
+         " Thank you, dear."),
+        ("Katprincess, sweetheart, I could use your help. ",
+         " You're a dear, thank you."),
+    ),
+    "Pip": (
+        ("Katprincess, oh, please, please — I need your help! ",
+         " It'll be brilliant!"),
+        ("Katprincess, you've got to help me with this one! ",
+         " I knew I could count on you!"),
+    ),
+    "Dot": (
+        ("Katprincess, calmly now — I need a hand. ",
+         " Thank you for helping."),
+        ("Katprincess, steady does it — could you help me? ",
+         " I appreciate it."),
+    ),
+    "Gus": (
+        ("Katprincess, an old grill master needs a hand. ",
+         " Much obliged."),
+        ("Katprincess, my grill could use your help. ",
+         " You're a good soul, thank you."),
+    ),
+    "Belle": (
+        ("Katprincess, oh, thank you for helping me! ",
+         " You're the best!"),
+        ("Katprincess, I'm so glad you're here to help! ",
+         " Thank you ever so much!"),
+    ),
+}
+
+GIVER_PROGRESS_CLOSERS = {
+    "Bolt": ("Good work, keep at it.", "Nearly there. Keep going."),
+    "Marge": ("You're doing lovely, dear.",
+              "Wonderful work, dear, keep going."),
+    "Pip": ("You're doing brilliantly, keep going!",
+            "Oh, this is going so well!"),
+    "Dot": ("Steady and calm, you're doing well.",
+            "Right on track. Well done."),
+    "Gus": ("You're doing fine, keep at it.",
+            "That's the way. Nearly done."),
+    "Belle": ("You're doing wonderfully!",
+              "Oh, you're nearly there — keep going!"),
+}
+
+
+def quest_variant(quest_id):
+    """Which of a giver's two variants a quest uses: 0 or 1,
+    picked from the quest id so it never changes mid-quest.
+    The sum of the id's characters is stable across runs
+    (unlike hash(), which is randomised per process)."""
+    return sum(ord(c) for c in str(quest_id or "")) % 2
+
+
+def quest_start_line(giver, fighter_name, description, duration_text,
+                     quest_id=None):
+    """The quest-start line, spoken by the giver in their own
+    voice: the giver asks the player by name for help, then
+    the task, then how long it takes, then a thank-you. The
+    fighter's own name is used, never a hardcoded one — a
+    different player's fighter is called by their own name.
+    Only the opening/closer vary by giver; the task and the
+    time are the quest's own, unchanged."""
+    openings = GIVER_OPENINGS.get(giver) or GIVER_OPENINGS["Bolt"]
+    opening, closer = openings[quest_variant(quest_id)]
+    # The openings were written for Katprincess; swap in the
+    # real fighter name so every player hears their own name.
+    opening = opening.replace("Katprincess", fighter_name or "Katprincess")
+    return (
+        "%s asks: %s%s That'll take %s.%s"
+        % (giver, opening, description, duration_text, closer)
+    )
+
+
+def quest_progress_line(giver, percent, left_text, quest_id=None,
+                        fighter_name="Katprincess"):
+    """The 5-minute progress update, spoken by the giver in
+    their own voice: how far the quest is, how long is left,
+    and a word of encouragement in the giver's own style.
+    The repair part is NOT in this line — the player's voice
+    says that separately (Phase 28)."""
+    closers = GIVER_PROGRESS_CLOSERS.get(giver) \
+        or GIVER_PROGRESS_CLOSERS["Bolt"]
+    return (
+        "You're about %d percent done, %s — %s left. %s"
+        % (percent, fighter_name or "Katprincess", left_text,
+           closers[quest_variant(quest_id)])
+    )
 
 
 def reputation_summary(reputation):
