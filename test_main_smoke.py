@@ -1333,10 +1333,12 @@ def currency_wording_test():
     # (Phase 23) adds arena_spend_quest_stat and redefines
     # complete so it awards quest XP and banks quest points.
     # The npc creatures one (Phase 24) adds arena_fight_npc.
-    # The newest migration is now the healing skill one
-    # (Phase 25), which redefines the upgrade and fight
-    # functions so Healing can be bought and level 5 heals
-    # to full after every fight. The quest pause migration
+    # The healing skill one (Phase 25) redefines the upgrade
+    # and fight functions so Healing can be bought and level
+    # 5 heals to full after every fight. The newest migration
+    # is now the quest growth one (Phase 26): durations,
+    # quest credits and the automatic quest-stat bonus all
+    # grow with the quest level. The quest pause migration
     # (Phase 22) is still there, and quest completion must
     # never check repairs. No migration may say "points"
     # for the currency.
@@ -1364,20 +1366,34 @@ def currency_wording_test():
     check("the npc creatures migration adds the npc fight function",
           "arena_fight_npc" in npc_mig)
     newest = open(os.path.join(mig_dir, names[-1]), encoding="utf-8").read()
-    check("newest migration is the healing skill one",
-          "healing_skill" in names[-1])
-    check("newest migration redefines the upgrade functions",
-          "arena_start_upgrade" in newest
-          and "arena_max_upgrade" in newest)
-    check("newest migration redefines the fight functions",
-          "arena_fight" in newest and "arena_fight_npc" in newest)
-    check("newest migration names the skill Second Wind",
-          "Second Wind" in newest)
-    check("newest migration heals to full at level 5",
-          "healing_level" in newest
-          and "never need repairs again" in newest)
+    check("newest migration is the quest growth one",
+          "quest_growth" in names[-1])
+    check("newest migration redefines the quest dealing and completion functions",
+          "arena_new_quest" in newest
+          and "arena_complete_quest" in newest)
+    check("newest migration keys quest credits to the quest level",
+          "quest_level" in newest
+          and "arena_private.quest_reward" in newest)
+    check("newest migration grows durations with the quest level but caps at 4 hours",
+          "240" in newest and "quest_level" in newest)
+    check("newest migration adds the automatic quest-stat bonus",
+          "v_auto" in newest)
     check("newest migration never says points for the currency",
           "Your points are now called credits" not in newest)
+    healing_mig = open(os.path.join(
+        mig_dir, [n for n in names if "healing_skill" in n][0]),
+        encoding="utf-8").read()
+    check("the healing skill migration redefines the upgrade functions",
+          "arena_start_upgrade" in healing_mig
+          and "arena_max_upgrade" in healing_mig)
+    check("the healing skill migration redefines the fight functions",
+          "arena_fight" in healing_mig
+          and "arena_fight_npc" in healing_mig)
+    check("the healing skill migration names the skill Second Wind",
+          "Second Wind" in healing_mig)
+    check("the healing skill migration heals to full at level 5",
+          "healing_level" in healing_mig
+          and "never need repairs again" in healing_mig)
     levels_mig = open(os.path.join(
         mig_dir, [n for n in names if "quest_levels" in n][0]),
         encoding="utf-8").read()
@@ -1641,16 +1657,23 @@ def game_action_speech_test():
             return {}, "That quest is not done yet."
         giver = quest["giver"]
         server["rep"][giver] = server["rep"].get(giver, 0) + 1
-        reward = quests_module.quest_reward(
-            quest["difficulty"], server["fighter"]["level"])
+        # Quest growth (Phase 26): credits are keyed to the
+        # quest level, not the fighter level, and the
+        # automatic bonus (+1% per quest level-up) applies.
+        # At quest level 1 here the bonus is 0.
+        qlevel = server["fighter"].get("quest_level", 1)
+        auto = max(0, qlevel - 1)
+        reward = int(quests_module.quest_reward(
+            quest["difficulty"], qlevel) * (1 + 0.01 * auto))
         server["fighter"]["credits"] += reward
         # Quest levels (Phase 23), same rules as quest_test:
         # quest XP for the difficulty, level-ups banking a
-        # quest point. No quest stats here, so no boosts.
-        qlevel = server["fighter"].get("quest_level", 1)
+        # quest point. No quest stats here, so no boosts
+        # beyond the automatic bonus.
         qxp = server["fighter"].get("quest_xp", 0)
         qpoints = server["fighter"].get("quest_points", 0)
-        xp_earned = quests_module.quest_xp(quest["difficulty"], qlevel)
+        xp_earned = int(quests_module.quest_xp(
+            quest["difficulty"], qlevel) * (1 + 0.01 * auto))
         qxp += xp_earned
         level_ups = 0
         while qxp >= quests_module.quest_xp_to_next(qlevel):
@@ -1705,7 +1728,8 @@ def game_action_speech_test():
         quest = quests_module.generate_quest(
             random.Random(len(ids)), None, ids,
             coop_allowed=not any(q.get("coop") for q in server["board"]),
-            existing_names=names)
+            existing_names=names,
+            quest_level=server["fighter"].get("quest_level", 1))
         server["board"].append(quest)
         return {"fighter": _fighter_out(),
                 "quest": copy.deepcopy(quest)}, None
@@ -2086,16 +2110,106 @@ def quest_test():
           all("kind" not in q for q in quests_module.QUEST_TEMPLATES)
           and all("kind" not in q
                   for q in quests_module.starting_board(random.Random(2))))
-    check("easy quest pays 7 credits at level 1",
+    check("easy quest pays 7 credits at quest level 1",
           quests_module.quest_reward("Easy", 1) == 7)
-    check("medium quest pays what a fight win pays",
+    check("medium quest pays 15 credits at quest level 1",
           quests_module.quest_reward("Medium", 1) == 15)
-    check("hard quest pays double a fight win",
+    check("hard quest pays 30 credits at quest level 1",
           quests_module.quest_reward("Hard", 1) == 30)
     check("quest durations never pass 4 hours",
           all(quests_module.quest_duration_minutes(d, random.Random(i)) <= 240
               for i, d in enumerate(
                   ["Easy", "Medium", "Hard"] * 20)))
+
+    # Quest growth (Phase 26): durations, credits and the
+    # automatic quest-stat bonus all grow with the quest
+    # level. The timer still caps at 4 hours; the rewards
+    # never cap. Quest XP formulas are unchanged.
+    class _MinRng:
+        def randint(self, low, high):
+            return low
+
+    class _MaxRng:
+        def randint(self, low, high):
+            return high
+
+    check("quest durations are unchanged at quest level 1",
+          quests_module.quest_duration_minutes("Easy", _MinRng(), 1) == 5
+          and quests_module.quest_duration_minutes("Easy", _MaxRng(), 1) == 15
+          and quests_module.quest_duration_minutes("Medium", _MinRng(), 1) == 15
+          and quests_module.quest_duration_minutes("Medium", _MaxRng(), 1) == 45
+          and quests_module.quest_duration_minutes("Hard", _MinRng(), 1) == 60
+          and quests_module.quest_duration_minutes("Hard", _MaxRng(), 1) == 240)
+    check("quest durations grow with the quest level",
+          quests_module.quest_duration_minutes("Easy", _MinRng(), 5) == 7
+          and quests_module.quest_duration_minutes("Easy", _MaxRng(), 5) == 21
+          and quests_module.quest_duration_minutes("Medium", _MinRng(), 5) == 21
+          and quests_module.quest_duration_minutes("Medium", _MaxRng(), 5) == 62
+          and quests_module.quest_duration_minutes("Hard", _MinRng(), 5) == 84
+          and quests_module.quest_duration_minutes("Hard", _MaxRng(), 5) == 240
+          and quests_module.quest_duration_minutes("Easy", _MinRng(), 10) == 9
+          and quests_module.quest_duration_minutes("Easy", _MaxRng(), 10) == 28
+          and quests_module.quest_duration_minutes("Hard", _MinRng(), 10) == 114)
+    check("quest durations never pass 4 hours at high quest levels",
+          all(quests_module.quest_duration_minutes(d, random.Random(i), level) <= 240
+              for level in (5, 10, 50, 200)
+              for i, d in enumerate(["Easy", "Medium", "Hard"] * 20)))
+    check("a board dealt at quest level 5 has longer durations",
+          all(5 <= q["duration_minutes"] <= 240
+              for q in quests_module.starting_board(random.Random(3), 5))
+          and any(q["duration_minutes"] > 15
+                  for q in quests_module.starting_board(random.Random(3), 5)
+                  if q["difficulty"] == "Easy"))
+    check("quest credits grow with the quest level",
+          quests_module.quest_reward("Easy", 5) == 15
+          and quests_module.quest_reward("Medium", 5) == 35
+          and quests_module.quest_reward("Hard", 5) == 70
+          and quests_module.quest_reward("Medium", 10) == 60
+          and quests_module.quest_reward("Hard", 10) == 120)
+    check("quest experience formulas are unchanged at quest level 5",
+          quests_module.quest_xp("Easy", 5) == 20
+          and quests_module.quest_xp("Medium", 5) == 45
+          and quests_module.quest_xp("Hard", 5) == 90)
+    check("the automatic quest-stat bonus is 0 at quest level 1",
+          quests_module.quest_auto_bonus_percent({"quest_level": 1}) == 0)
+    check("the automatic quest-stat bonus is 4 percent at quest level 5",
+          quests_module.quest_auto_bonus_percent({"quest_level": 5}) == 4)
+    check("the automatic bonus stacks with spent charm points",
+          quests_module.quest_stat_effect_percent(
+              {"quest_level": 5,
+               "quest_stats": {"charm": 2, "renown": 0, "insight": 0}},
+              "charm") == 14)
+    check("the automatic bonus stacks with spent insight points",
+          quests_module.quest_stat_effect_percent(
+              {"quest_level": 5,
+               "quest_stats": {"charm": 0, "renown": 0, "insight": 2}},
+              "insight") == 14)
+    check("renown chance never passes 100 percent",
+          quests_module.quest_stat_effect_percent(
+              {"quest_level": 5,
+               "quest_stats": {"charm": 0, "renown": 10, "insight": 0}},
+              "renown") == 100)
+    check("the quest level line says the automatic bonus from level 2 up",
+          quests_module.quest_level_line(
+              {"quest_level": 3, "quest_xp": 0})
+          == "Quest level 3, 300 quest experience to level 4. "
+             "Your quest level adds 2 percent to Charm, Renown "
+             "and Insight.")
+    check("charm line says the automatic bonus on top of the points",
+          quests_module.quest_stat_line(
+              {"quest_level": 5,
+               "quest_stats": {"charm": 2, "renown": 0, "insight": 0}},
+              "charm")
+          == "Charm, 2. Quests pay 14 percent more credits, "
+             "4 from your quest level. One more point adds 5 percent.")
+    check("renown line says the automatic bonus on top of the points",
+          quests_module.quest_stat_line(
+              {"quest_level": 5,
+               "quest_stats": {"charm": 0, "renown": 0, "insight": 0}},
+              "renown")
+          == "Renown, 0. 4 percent chance of 1 bonus reputation "
+             "when a quest finishes, 4 from your quest level. "
+             "One more point adds 10 percent.")
 
     # Quest levels (Phase 23): separate from combat. Only
     # finishing a quest earns quest XP; starting, stopping
@@ -2154,12 +2268,15 @@ def quest_test():
         # server only ever deals a fresh quest, and the
         # client treats a finished id on the board as stale
         # and drops it, so re-dealing one would kill the loop.
+        # The quest is dealt at the fighter's quest level
+        # (Phase 26), so its duration grows with it.
         ids = [q["id"] for q in server["board"]] + list(server["done"])
         names = [q["name"] for q in server["board"]]
         coop_ok = not any(q.get("coop") for q in server["board"])
         quest = quests_module.generate_quest(
             random.Random(len(ids)), None, ids,
-            coop_allowed=coop_ok, existing_names=names)
+            coop_allowed=coop_ok, existing_names=names,
+            quest_level=server["fighter"].get("quest_level", 1))
         server["board"].append(quest)
         return {"fighter": _fighter_out(), "quest": copy.deepcopy(quest)}, None
 
@@ -2240,29 +2357,31 @@ def quest_test():
             return {}, "That quest is not done yet."
         # Never check repairs here, exactly like the server.
         giver = quest["giver"]
-        # Quest levels (Phase 23), same rules as the migration:
-        # Renown rolls the bonus reputation, Charm boosts the
-        # credits, Insight boosts the quest XP, and quest XP
-        # levels up at 100 x quest level, banking 1 point.
+        # Quest growth (Phase 26), same rules as the migration:
+        # credits are keyed to the quest level, not the fighter
+        # level, and the automatic bonus (+1% per quest
+        # level-up) stacks with Charm, Renown and Insight.
+        # Quest XP levels up at 100 x quest level, banking 1 point.
         qstats = server["fighter"].get("quest_stats", {}) or {}
         charm = qstats.get("charm", 0)
         renown = qstats.get("renown", 0)
         insight = qstats.get("insight", 0)
-        bonus_rep = 1 if random.random() < renown * 0.10 else 0
+        qlevel = server["fighter"].get("quest_level", 1)
+        auto = max(0, qlevel - 1)
+        bonus_rep = 1 if random.random() < min(1.0, renown * 0.10 + auto * 0.01) else 0
         rep_before = server["rep"].get(giver, 0)
         rep_after = rep_before + 1 + bonus_rep
         server["rep"][giver] = rep_after
         reward = quests_module.quest_reward(
-            quest["difficulty"], server["fighter"]["level"])
+            quest["difficulty"], qlevel)
         if rep_before >= 3:
             reward = int(reward * 1.25)
-        reward = int(reward * (1 + 0.05 * charm))
+        reward = int(reward * (1 + 0.05 * charm + 0.01 * auto))
         server["fighter"]["credits"] += reward
-        qlevel = server["fighter"].get("quest_level", 1)
         qxp = server["fighter"].get("quest_xp", 0)
         qpoints = server["fighter"].get("quest_points", 0)
         xp_earned = int(quests_module.quest_xp(
-            quest["difficulty"], qlevel) * (1 + 0.05 * insight))
+            quest["difficulty"], qlevel) * (1 + 0.05 * insight + 0.01 * auto))
         qxp += xp_earned
         level_ups = 0
         while qxp >= quests_module.quest_xp_to_next(qlevel):
@@ -2743,7 +2862,8 @@ def quest_test():
     server["rep"][quest["giver"]] = 0
     credits_before = fighter["credits"]
     expected_credits = int(quests_module.quest_reward(
-        quest["difficulty"], fighter["level"]) * 1.10)
+        quest["difficulty"],
+        server["fighter"].get("quest_level", 1)) * 1.10)
     _finish_current_quest()
     check("charm boosts quest credits by 5 percent a point",
           fighter["credits"] - credits_before == expected_credits)
@@ -2822,6 +2942,72 @@ def quest_test():
           quests_module.quest_stats_of(fighter)["renown"] == 0)
     check("spending with no quest points says so",
           "no quest points to spend" in frame.message_line.GetLabel())
+
+    # Quest growth (Phase 26): credits follow the quest
+    # level, not the fighter level; the automatic bonus
+    # applies and stacks with spent points; a quest dealt
+    # at a higher quest level takes longer; pausing and
+    # resuming still freeze the remaining time.
+    _set_quest_state(level=1)
+    fighter["level"] = 5
+    server["fighter"]["level"] = 5
+    quest = frame._quest_current
+    server["rep"][quest["giver"]] = 0
+    credits_before = fighter["credits"]
+    expected_credits = quests_module.quest_reward(
+        quest["difficulty"], 1)
+    _finish_current_quest()
+    check("quest credits follow the quest level, not the fighter level",
+          fighter["credits"] - credits_before == expected_credits)
+    _set_quest_state(level=5)
+    fighter["level"] = 1
+    server["fighter"]["level"] = 1
+    quest = frame._quest_current
+    server["rep"][quest["giver"]] = 0
+    credits_before = fighter["credits"]
+    expected_credits = int(quests_module.quest_reward(
+        quest["difficulty"], 5) * 1.04)
+    expected_xp = int(quests_module.quest_xp(
+        quest["difficulty"], 5) * 1.04)
+    _finish_current_quest()
+    check("quest credits grow with the quest level",
+          fighter["credits"] - credits_before == expected_credits)
+    check("the automatic bonus adds quest experience too",
+          fighter.get("quest_xp") == expected_xp)
+    _set_quest_state(level=5,
+                     stats={"charm": 2, "renown": 0, "insight": 2})
+    quest = frame._quest_current
+    server["rep"][quest["giver"]] = 0
+    credits_before = fighter["credits"]
+    expected_credits = int(quests_module.quest_reward(
+        quest["difficulty"], 5) * 1.14)
+    expected_xp = int(quests_module.quest_xp(
+        quest["difficulty"], 5) * 1.14)
+    _finish_current_quest()
+    check("the automatic bonus stacks with spent charm points",
+          fighter["credits"] - credits_before == expected_credits)
+    check("the automatic bonus stacks with spent insight points",
+          fighter.get("quest_xp") == expected_xp)
+    _set_quest_state(level=5)
+    frame.find_another_quest()
+    dealt = frame._quest_board[-1]
+    low, high = quests_module.DURATION_MINUTES[dealt["difficulty"]]
+    scaled_low = min(240, int(low * 1.4))
+    scaled_high = min(240, int(high * 1.4))
+    check("a quest dealt at quest level 5 has a longer duration range",
+          scaled_low <= dealt["duration_minutes"] <= scaled_high)
+    # Pausing still freezes the remaining time at quest
+    # level 5, with the longer durations.
+    remaining_at_stop = frame._quest_current["finish_at"] - time.time()
+    frame.stop_quests()
+    check("stopping quests at quest level 5 freezes the remaining time",
+          abs(server["active"]["remaining_seconds"] - remaining_at_stop) < 5)
+    frame.start_quests()
+    check("starting again at quest level 5 resumes the same quest",
+          frame._quest_current is not None)
+    check("starting again at quest level 5 does not lose quest time",
+          abs((frame._quest_current["finish_at"] - time.time())
+              - remaining_at_stop) < 5)
 
     # Quest ambience loops (Phase 23): while a quest runs,
     # a sound matching the kind of work plays in a loop on

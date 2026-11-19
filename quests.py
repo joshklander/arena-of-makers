@@ -21,15 +21,22 @@ so the game and the headless tests use the same numbers the
 server uses. The game never pays itself from here in online
 play: it only shows what the server sends back.
 
-Rewards, by difficulty and level (a Medium quest pays exactly
-what a fight win pays; Hard pays double a fight):
-  Easy:   5 + 2 x level credits
-  Medium: 10 + 5 x level credits
-  Hard:   20 + 10 x level credits
+Rewards, by difficulty and quest level (Phase 26, Makenna
+2026-11-18): a Medium quest pays what a fight win pays only
+when the quest level and the fighter level happen to match —
+credits are keyed to the quest level now, not the fighter
+level, and grow infinitely with no cap, even though quest
+timers cap at 4 hours.
+  Easy:   5 + 2 x quest level credits
+  Medium: 10 + 5 x quest level credits
+  Hard:   20 + 10 x quest level credits
 
-Quest durations: a few minutes to 2-4 hours, never over 4
-hours. Easy quests are short (5-15 minutes), Medium longer
-(15-45 minutes), Hard longest (1-4 hours).
+Quest durations (Phase 26): a few minutes to 2-4 hours,
+never over 4 hours. At quest level 1 the ranges are exactly
+as before — Easy 5-15 minutes, Medium 15-45, Hard 60-240 —
+and they grow with the quest level from there: the base
+range is multiplied by (1 + 0.1 x (quest level - 1)),
+capped at 240 minutes.
 
 Reputation, per giver, +1 each time you finish one of their
 quests, no cap: 3 = Helper (their quests pay +25% from then
@@ -59,6 +66,16 @@ up a quest level. Each quest level-up banks 1 quest point
 for Charm (+5% quest credits), Renown (+10% chance of +1
 bonus reputation) or Insight (+5% quest XP), each max 10.
 Quest levels give no max HP and no combat stat points.
+
+Automatic quest-stat bonus (Phase 26, Makenna 2026-11-18):
+like combat's automatic +10 HP per combat level, each quest
+level-up also gives a little bit of each of the three quest
+stats automatically — +1% per quest level-up to Charm,
+Renown and Insight — and the banked quest point a player
+spends adds its bigger bonus on top. At quest level 1
+nothing has levelled up yet, so the automatic bonus is 0;
+at quest level 5 it is 4%. It stacks with spent points and
+never caps.
 """
 
 import random
@@ -197,6 +214,10 @@ DIFFICULTIES = ("Easy", "Medium", "Hard")
 # Quest duration in minutes, by difficulty. Never over 4 hours.
 DURATION_MINUTES = {"Easy": (5, 15), "Medium": (15, 45), "Hard": (60, 240)}
 
+# The quest timer cap (Phase 26): no quest ever takes
+# longer than 4 hours, however high the quest level gets.
+QUEST_DURATION_CAP_MINUTES = 240
+
 # Reputation tiers, per giver. Proposed numbers from the design,
 # decided by Makenna 2026-11-18 as the tiers to build.
 REPUTATION_TIERS = [
@@ -209,9 +230,11 @@ HEALING_MAX_LEVEL = 5
 HEALING_PERCENTS = {1: 19, 2: 38, 3: 57, 4: 76, 5: 95}
 
 
-def quest_reward(difficulty, level):
-    """Credits a quest pays, before any reputation bonus."""
-    level = max(1, int(level))
+def quest_reward(difficulty, quest_level):
+    """Credits a quest pays, before any reputation bonus.
+    Keyed to the quest level (Phase 26), not the fighter
+    level: credits grow infinitely as quests level up."""
+    level = max(1, int(quest_level))
     if difficulty == "Easy":
         return 5 + 2 * level
     if difficulty == "Hard":
@@ -280,32 +303,95 @@ def quest_points_of(fighter):
 def quest_level_line(fighter):
     """One plain-words line for the quest level, for the Home
     tab next to the fighter level: 'Quest level 3, 40 quest
-    experience to level 4.'"""
+    experience to level 4.' At quest level 2 and up it also
+    says the automatic bonus the quest level adds to all
+    three quest stats (Phase 26)."""
     level = quest_level_of(fighter)
     to_next = quest_xp_to_next(level) - quest_xp_of(fighter)
-    return ("Quest level %d, %d quest experience to level %d."
+    line = ("Quest level %d, %d quest experience to level %d."
             % (level, to_next, level + 1))
+    auto = quest_auto_bonus_percent(fighter)
+    if auto > 0:
+        line += (" Your quest level adds %d percent to Charm, "
+                 "Renown and Insight." % auto)
+    return line
+
+
+def quest_auto_bonus_percent(fighter):
+    """The automatic bonus percent the quest level itself
+    adds to each of the three quest stats (Phase 26, Makenna
+    2026-11-18): +1% per quest level-up, like combat's
+    automatic +10 HP per combat level. At quest level 1
+    nothing has levelled up yet, so the bonus is 0; at quest
+    level 5 it is 4%. It stacks with spent quest points and
+    never caps. Makenna can ask for a different rate."""
+    return max(0, quest_level_of(fighter) - 1)
+
+
+def quest_stat_effect_percent(fighter, stat):
+    """The full effect of a quest stat, in percent: what the
+    spent points give, plus the automatic bonus from the
+    quest level (Phase 26). Charm and Insight give 5% per
+    spent point, Renown 10% per spent point, and every stat
+    gets +1% per quest level-up. Renown's chance can never
+    pass 100%."""
+    stats = quest_stats_of(fighter)
+    auto = quest_auto_bonus_percent(fighter)
+    if stat == "charm":
+        return stats["charm"] * 5 + auto
+    if stat == "renown":
+        return min(100, stats["renown"] * 10 + auto)
+    if stat == "insight":
+        return stats["insight"] * 5 + auto
+    return auto
 
 
 def quest_stat_line(fighter, stat):
     """One plain-words line for a quest stat, saying its value
     and what one more point does. This is what the hangout
-    list speaks; Enter on the line spends one banked point."""
+    list speaks; Enter on the line spends one banked point.
+    The percent shown is the full effect: spent points plus
+    the automatic bonus from the quest level (Phase 26). At
+    quest level 1 the automatic bonus is 0, so the line
+    reads exactly as it did before."""
     stats = quest_stats_of(fighter)
     value = stats[stat]
+    auto = quest_auto_bonus_percent(fighter)
+    total = quest_stat_effect_percent(fighter, stat)
     if stat == "charm":
+        if auto > 0:
+            return (
+                "Charm, %d. Quests pay %d percent more credits, "
+                "%d from your quest level. "
+                "One more point adds 5 percent."
+                % (value, total, auto)
+            )
         return (
             "Charm, %d. Quests pay %d percent more credits. "
             "One more point adds 5 percent."
             % (value, value * 5)
         )
     if stat == "renown":
+        if auto > 0:
+            return (
+                "Renown, %d. %d percent chance of 1 bonus reputation "
+                "when a quest finishes, %d from your quest level. "
+                "One more point adds 10 percent."
+                % (value, total, auto)
+            )
         return (
             "Renown, %d. %d percent chance of 1 bonus reputation "
             "when a quest finishes. One more point adds 10 percent."
             % (value, value * 10)
         )
     if stat == "insight":
+        if auto > 0:
+            return (
+                "Insight, %d. Quests pay %d percent more quest "
+                "experience, %d from your quest level. "
+                "One more point adds 5 percent."
+                % (value, total, auto)
+            )
         return (
             "Insight, %d. Quests pay %d percent more quest "
             "experience. One more point adds 5 percent."
@@ -314,9 +400,19 @@ def quest_stat_line(fighter, stat):
     return stat
 
 
-def quest_duration_minutes(difficulty, rng=None):
-    """How long a quest takes, in minutes. Never over 4 hours."""
+def quest_duration_minutes(difficulty, rng=None, quest_level=1):
+    """How long a quest takes, in minutes. Grows with the
+    quest level (Phase 26, Makenna 2026-11-18): the base
+    range is multiplied by (1 + 0.1 x (quest level - 1)),
+    never over 4 hours (240 minutes). At quest level 1 the
+    ranges are exactly as before: Easy 5-15, Medium 15-45,
+    Hard 60-240. The server uses the same rule, so a quest
+    dealt on either side takes the same kind of time."""
     low, high = DURATION_MINUTES.get(difficulty, (15, 45))
+    factor = 1 + 0.1 * (max(1, int(quest_level)) - 1)
+    low = min(QUEST_DURATION_CAP_MINUTES, int(low * factor))
+    high = min(QUEST_DURATION_CAP_MINUTES, int(high * factor))
+    high = max(low, high)
     rng = rng or random
     return rng.randint(low, high)
 
@@ -372,7 +468,7 @@ def reputation_summary(reputation):
 
 
 def generate_quest(rng=None, difficulty=None, existing_ids=None,
-                   coop_allowed=True, existing_names=None):
+                   coop_allowed=True, existing_names=None, quest_level=1):
     """Deal one fresh quest, endlessly generated.
 
     A template name and giver, varied with a random task, item,
@@ -383,7 +479,9 @@ def generate_quest(rng=None, difficulty=None, existing_ids=None,
     dealt when coop_allowed is true, so at most one co-op
     quest is ever on the board at once. No quest is ever
     restricted by fighter kind: every quest here is open to
-    robots and chefs alike.
+    robots and chefs alike. The quest's duration grows with
+    the quest level (Phase 26); at quest level 1 it is the
+    plain base range.
     """
     rng = rng or random.Random()
     existing = set(existing_ids or [])
@@ -419,18 +517,19 @@ def generate_quest(rng=None, difficulty=None, existing_ids=None,
             "difficulty": template["difficulty"],
             "ambience": template["ambience"],
             "duration_minutes": quest_duration_minutes(
-                template["difficulty"], rng),
+                template["difficulty"], rng, quest_level),
             "coop": bool(template.get("coop")),
         }
     raise ValueError("could not deal a fresh quest")
 
 
-def starting_board(rng=None):
+def starting_board(rng=None, quest_level=1):
     """The starting board of 5: 2 Easy, 2 Medium, 1 Hard.
 
     Givers are dealt in a shuffled order from all six, so the
     board always holds both male and female givers — three
     male, three female in the full set, never one gender only.
+    Durations grow with the quest level (Phase 26).
     """
     rng = rng or random.Random()
     givers = list(GIVERS)
@@ -441,7 +540,8 @@ def starting_board(rng=None):
     for i, difficulty in enumerate(
             ["Easy", "Easy", "Medium", "Medium", "Hard"]):
         quest = generate_quest(rng, difficulty, seen,
-                               existing_names=names)
+                               existing_names=names,
+                               quest_level=quest_level)
         names.add(quest["name"])
         # Deal the shuffled givers in order, so the board
         # mixes male and female givers instead of leaving

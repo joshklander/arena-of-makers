@@ -1793,7 +1793,7 @@ class MainFrame(wx.Frame):
                 % (quest.get("name"), quest.get("difficulty"),
                    quests.quest_reward(
                        quest.get("difficulty"),
-                       self.fighter.get("level", 1)),
+                       quests.quest_level_of(self.fighter)),
                    quest.get("giver"), quest.get("description")),
                 quest.get("giver_voice"))
         self.refresh_all()
@@ -1814,7 +1814,7 @@ class MainFrame(wx.Frame):
                 % (quest.get("name"), quest.get("difficulty"),
                    quests.quest_reward(
                        quest.get("difficulty"),
-                       self.fighter.get("level", 1)),
+                       quests.quest_level_of(self.fighter)),
                    quest.get("giver")))
         self.announce("; ".join(lines))
 
