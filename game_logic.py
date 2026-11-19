@@ -7,6 +7,7 @@ front end over these functions.
 
 Design rules from the design note, kept here in code:
 - Endless progression: weapon, armor and fighter levels have no cap.
+  Healing is the one exception: it stops at level 5.
 - Every timer is capped at 2 to 4 hours. The longest wait in the game is
   4 hours (MAX_TIMER_SECONDS); early waits are minutes.
 - Errors are plain sentences, never codes.
@@ -30,6 +31,27 @@ import random
 import time
 
 import quests
+
+# The Healing skill (Phase 25, Makenna Nov 18, 2026): bought
+# with credits on the Shop tab, like weapon and armor, but
+# with its own cost and time curves and a hard cap at level 5
+# — the ONLY upgrade in the game with a cap. Weapon, armor
+# and all other upgrades climb forever; Healing stops at 5.
+# Cost is exponential, NOT the normal upgrade curve:
+# level 1 = 50, 2 = 85, 3 = 140, 4 = 240, 5 = 400 credits
+# (about 915 in total). Time is slower than normal upgrades:
+# reaching level 1 takes 12 minutes, level 2 takes 24, and
+# so on — 12 minutes times the level being reached (about
+# 3 hours in total), inside the same 4-hour cap.
+# Each level heals 19% of max health on a tag-team jump-in
+# (level 1 = 19%, level 5 = 95%, never more, never past max
+# health). At level 5 it also heals the fighter to FULL health
+# after every fight, so no repair is ever needed again.
+HEALING_NAME = "Second Wind"
+HEALING_MAX_LEVEL = 5
+HEALING_COSTS = (50, 85, 140, 240, 400)
+HEALING_MINUTES_PER_LEVEL = 12
+HEALING_PERCENT_PER_LEVEL = 19
 
 # The longest any upgrade or repair may take: 4 hours.
 MAX_TIMER_SECONDS = 4 * 3600
@@ -272,8 +294,14 @@ def new_fighter(name, kind, gender="male"):
         "upgrade_total": 0,
         # Healing skill, from hangout quest gifts (Phase 18):
         # level 0-5, healing 19%, 38%, 57%, 76%, 95% of health.
-        # It never goes past level 5, 95%.
+        # It never goes past level 5, 95%. Buyable in the Shop
+        # since Phase 25, under the name Second Wind.
         "healing_level": 0,
+        # Whether the level-5 auto-heal has already been
+        # explained in full (Phase 25): the first time it
+        # saves a repair, the game says the whole line; after
+        # that it says the short line.
+        "healing_full_told": False,
         # Quest levels (Phase 23): separate from the combat
         # level. Quests give quest XP toward a separate quest
         # level; each quest level-up banks 1 quest point for
@@ -404,6 +432,67 @@ def upgrade_cost(level):
 def upgrade_duration_seconds(level):
     """How long an upgrade to the next level takes, capped at 4 hours."""
     return min(60 * level, MAX_TIMER_SECONDS)
+
+
+def healing_cost(level):
+    """Credits to raise Healing from this level to the next.
+    Exponential, NOT the normal upgrade curve (Makenna,
+    Nov 18, 2026): 50, 85, 140, 240, 400. Level is the
+    current level, 0 to 4; level 5 is the cap and has no
+    next cost, so it returns None there."""
+    if level < 0 or level >= HEALING_MAX_LEVEL:
+        return None
+    return HEALING_COSTS[level]
+
+
+def healing_duration_seconds(level):
+    """How long a Healing upgrade to the next level takes:
+    12 minutes times the level being reached, capped at
+    4 hours. Level is the current level, 0 to 4."""
+    return min(HEALING_MINUTES_PER_LEVEL * 60 * (level + 1), MAX_TIMER_SECONDS)
+
+
+def healing_percent(level):
+    """What share of max health one tag-team heal restores
+    at this Healing level: 19% per level, capped at 95% —
+    a teammate can never fully restore you."""
+    return min(HEALING_PERCENT_PER_LEVEL * max(0, int(level)), 95)
+
+
+def healing_heal_amount(fighter, hp=None):
+    """Health a teammate's jump-in restores, set by YOUR
+    Healing skill level — the recipient's skill, not the
+    helper's (Makenna, Nov 17, 2026). Level 0 heals
+    nothing: the strike still lands, there is just no
+    heal. The heal never overheals: it stops at max
+    health. This is the shared helper the tag-team phase
+    will call later; nothing calls it in a fight yet."""
+    level = fighter.get("healing_level", 0) or 0
+    if level <= 0:
+        return 0
+    max_hp = fighter_max_hp(fighter)
+    if hp is None:
+        hp = fighter.get("hp", max_hp)
+    amount = int(round(healing_percent(level) / 100.0 * max_hp))
+    return max(0, min(amount, max_hp - hp))
+
+
+def slot_upgrade_cost(slot, level):
+    """Credits for the next level of one upgrade slot:
+    the normal curve for weapon and armor, the Healing
+    curve for healing."""
+    if slot == "healing":
+        return healing_cost(level)
+    return upgrade_cost(level)
+
+
+def slot_upgrade_duration_seconds(slot, level):
+    """Seconds for the next level of one upgrade slot:
+    the normal wait for weapon and armor, the Healing
+    wait for healing."""
+    if slot == "healing":
+        return healing_duration_seconds(level)
+    return upgrade_duration_seconds(level)
 
 
 def repair_duration_seconds(level):
@@ -845,7 +934,19 @@ def fight(fighter, rng=None, now=None, npc_id="scrap_rat"):
         fighter["credits"] = credits_of(fighter) + credits
         fighter.pop("points", None)
         fighter["wins"] += 1
-        fighter["hp"] = max(1, fighter_hp)
+        if (fighter.get("healing_level", 0) or 0) >= HEALING_MAX_LEVEL:
+            # Level 5 Healing (Phase 25): after every fight
+            # the fighter is back to full health at once, so
+            # no repair is ever needed again.
+            if fighter_hp < fighter["max_hp"]:
+                fighter["hp"] = fighter["max_hp"]
+                lines.append(
+                    "Your %s restored you to full health." % HEALING_NAME
+                )
+            else:
+                fighter["hp"] = max(1, fighter_hp)
+        else:
+            fighter["hp"] = max(1, fighter_hp)
         lines.append("You won! You earned %d experience and %d credits." % (xp, credits))
         if levels:
             lines.append(
@@ -870,13 +971,34 @@ def fight(fighter, rng=None, now=None, npc_id="scrap_rat"):
     fighter["credits"] = credits_of(fighter) - lost
     fighter.pop("points", None)
     fighter["losses"] += 1
-    fighter["hp"] = 1
-    wait = repair_duration_seconds(fighter["level"])
-    fighter["repair_until"] = now + wait
-    lines.append("You lost. Your fighter needs repairs, %s." % format_time(wait))
+    if (fighter.get("healing_level", 0) or 0) >= HEALING_MAX_LEVEL:
+        # Level 5 Healing (Phase 25): no repair is ever
+        # needed again. The fighter is back to full health
+        # at once, and the game says so — in full the first
+        # time it saves a repair, in short after that.
+        fighter["hp"] = fighter["max_hp"]
+        fighter["repair_until"] = 0
+        if fighter.get("healing_full_told"):
+            lines.append(
+                "You lost. Your %s brought you back to full "
+                "health. No repairs needed." % HEALING_NAME
+            )
+        else:
+            fighter["healing_full_told"] = True
+            lines.append(
+                "You lost. Your %s brought you back to full "
+                "health. No repairs needed — at Healing level 5, "
+                "you never need repairs again." % HEALING_NAME
+            )
+    else:
+        fighter["hp"] = 1
+        wait = repair_duration_seconds(fighter["level"])
+        fighter["repair_until"] = now + wait
+        lines.append("You lost. Your fighter needs repairs, %s." % format_time(wait))
     if lost:
         lines.append("You lost %d credits." % lost)
-    lines.append("While repairs run, you can still visit the hangout.")
+    if (fighter.get("healing_level", 0) or 0) < HEALING_MAX_LEVEL:
+        lines.append("While repairs run, you can still visit the hangout.")
     return {
         "won": False,
         "lines": lines,
@@ -887,21 +1009,28 @@ def fight(fighter, rng=None, now=None, npc_id="scrap_rat"):
 
 
 def start_upgrade(fighter, slot, now=None):
-    """Begin a timed upgrade of 'weapon' or 'armor'.
+    """Begin a timed upgrade of 'weapon', 'armor' or 'healing'.
 
     Returns a plain-words error, or None when the upgrade started.
-    Costs climb forever; the wait is capped at 4 hours.
-    """
+    Weapon and armor costs climb forever; the wait is capped at
+    4 hours. Healing has its own cost and time curves and stops
+    at level 5 (Phase 25)."""
     if now is None:
         now = time.time()
-    if slot not in ("weapon", "armor"):
-        return "Pick weapon or armor to upgrade."
+    if slot not in ("weapon", "armor", "healing"):
+        return "Pick weapon, armor or healing to upgrade."
     if fighter.get("upgrade"):
         return "An upgrade is already running. Wait for it to finish first."
     level_key = slot + "_level"
-    name_key = slot + "_name"
     level = fighter[level_key]
-    cost = upgrade_cost(level)
+    if slot == "healing":
+        if level >= HEALING_MAX_LEVEL:
+            return "Your %s is already at its best, level %d." % (
+                HEALING_NAME, HEALING_MAX_LEVEL)
+        name = HEALING_NAME
+    else:
+        name = fighter[slot + "_name"]
+    cost = slot_upgrade_cost(slot, level)
     if credits_of(fighter) < cost:
         return (
             "That upgrade costs %d credits and you have %d credits."
@@ -911,9 +1040,9 @@ def start_upgrade(fighter, slot, now=None):
     fighter.pop("points", None)
     fighter["upgrade"] = {
         "slot": slot,
-        "name": fighter[name_key],
+        "name": name,
         "level": level + 1,
-        "finish": now + upgrade_duration_seconds(level),
+        "finish": now + slot_upgrade_duration_seconds(slot, level),
     }
     return None
 
@@ -928,15 +1057,20 @@ def max_affordable(fighter, slot):
     TIME: it stops adding levels as soon as the next level would
     cost more credits than are left, or would push the total wait
     past 4 hours. "levels" is empty when even one level is out of
-    reach."""
+    reach. Healing also stops at level 5 — it never buys past
+    the cap — and reports "maxed" so the game can say plainly
+    that the skill is already at its best."""
     level = fighter[slot + "_level"]
+    start_level = level
     credits = credits_of(fighter)
     levels = []
     total_cost = 0
     total_seconds = 0
     while True:
-        cost = upgrade_cost(level)
-        seconds = upgrade_duration_seconds(level)
+        if slot == "healing" and level >= HEALING_MAX_LEVEL:
+            break
+        cost = slot_upgrade_cost(slot, level)
+        seconds = slot_upgrade_duration_seconds(slot, level)
         if total_cost + cost > credits:
             break
         if total_seconds + seconds > MAX_TIMER_SECONDS:
@@ -945,15 +1079,21 @@ def max_affordable(fighter, slot):
         total_cost += cost
         total_seconds += seconds
         level += 1
+    # "maxed" means the skill is already at its best before
+    # this queue starts — not that the queue happens to reach
+    # level 5. (level above is the loop variable, so it ends
+    # at 5 whenever the queue buys all five levels.)
+    maxed = slot == "healing" and start_level >= HEALING_MAX_LEVEL
     return {
         "slot": slot,
-        "name": fighter[slot + "_name"],
+        "name": HEALING_NAME if slot == "healing" else fighter[slot + "_name"],
         "levels": levels,
         "cost": total_cost,
         "seconds": total_seconds,
         "credits_left": credits - total_cost,
-        "next_cost": upgrade_cost(level),
+        "next_cost": None if maxed else slot_upgrade_cost(slot, level),
         "credits": credits,
+        "maxed": maxed,
     }
 
 
@@ -966,11 +1106,16 @@ def start_max_upgrade(fighter, slot, now=None):
     the queue runs to the end — there is no cancelling."""
     if now is None:
         now = time.time()
-    if slot not in ("weapon", "armor"):
-        return "Pick weapon or armor to upgrade.", None
+    if slot not in ("weapon", "armor", "healing"):
+        return "Pick weapon, armor or healing to upgrade.", None
     if fighter.get("upgrade"):
         return "An upgrade is already running. Wait for it to finish first.", None
     plan = max_affordable(fighter, slot)
+    if plan.get("maxed"):
+        return (
+            "Your %s is already at its best, level %d."
+            % (plan["name"], HEALING_MAX_LEVEL)
+        ), None
     if not plan["levels"]:
         return (
             "Your next %s level costs %d credits and you have %d credits."
@@ -983,7 +1128,7 @@ def start_max_upgrade(fighter, slot, now=None):
         "slot": slot,
         "name": plan["name"],
         "level": first,
-        "finish": now + upgrade_duration_seconds(first - 1),
+        "finish": now + slot_upgrade_duration_seconds(slot, first - 1),
     }
     fighter["upgrade_queue"] = plan["levels"][1:]
     fighter["upgrade_total"] = len(plan["levels"])
@@ -1026,7 +1171,8 @@ def finish_upgrade_if_ready(fighter, now=None):
             "slot": upgrade["slot"],
             "name": upgrade["name"],
             "level": nxt,
-            "finish": now + upgrade_duration_seconds(nxt - 1),
+            "finish": now + slot_upgrade_duration_seconds(
+                upgrade["slot"], nxt - 1),
         }
         fighter["upgrade_queue"] = queue
     else:
@@ -1036,6 +1182,15 @@ def finish_upgrade_if_ready(fighter, now=None):
         fighter["upgrade_total"] = 0
         if total > 1:
             line += " All %d levels are done." % total
+        if upgrade["slot"] == "healing" and upgrade["level"] >= HEALING_MAX_LEVEL:
+            # Reaching Healing level 5 ends repairs for good:
+            # a fighter still under repair when the skill
+            # maxes out is back to full health at once, with
+            # no wait left.
+            if fighter.get("repair_until", 0) > now:
+                fighter["repair_until"] = 0
+                fighter["hp"] = fighter_max_hp(fighter)
+                line += " No more repairs — you are back to full health."
     return line
 
 
@@ -1085,8 +1240,10 @@ def status_text(fighter, now=None):
         )
     )
     healing = fighter.get("healing_level", 0) or 0
-    if healing > 0:
-        text += " Healing level %d." % healing
+    # Healing skill (Phase 25): always shown, by its name,
+    # so the skill is visible even before the first level
+    # is bought.
+    text += " %s level %d." % (HEALING_NAME, healing)
     # Quest level (Phase 23), next to the fighter level: one
     # line, no "points" word here, so the currency wording
     # checks stay clean.

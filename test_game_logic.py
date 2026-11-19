@@ -148,6 +148,164 @@ def main():
     check("upgrade refused when broke",
           game_logic.start_upgrade(poor, "weapon", now=1000000.0) is not None)
 
+    # Healing skill (Phase 25, Makenna Nov 18, 2026): bought
+    # in the Shop like weapon and armor, max level 5, with
+    # its own cost and time curves — NOT the normal upgrade
+    # curve. Its name is Second Wind, for robots and chefs.
+    check("healing is called Second Wind",
+          game_logic.HEALING_NAME == "Second Wind")
+    check("healing costs 50, 85, 140, 240, 400",
+          [game_logic.healing_cost(level) for level in range(5)]
+          == [50, 85, 140, 240, 400])
+    check("healing costs 915 in total",
+          sum(game_logic.healing_cost(level) for level in range(5)) == 915)
+    check("healing times are 12, 24, 36, 48, 60 minutes",
+          [game_logic.healing_duration_seconds(level) // 60
+           for level in range(5)] == [12, 24, 36, 48, 60])
+    check("healing times total about 3 hours",
+          sum(game_logic.healing_duration_seconds(level)
+              for level in range(5)) == 3 * 3600)
+    check("healing has no next cost at level 5",
+          game_logic.healing_cost(5) is None)
+    check("healing percents are 0, 19, 38, 57, 76, 95",
+          [game_logic.healing_percent(level) for level in range(6)]
+          == [0, 19, 38, 57, 76, 95])
+
+    # The tag-team heal helper (Phase 25): set by YOUR
+    # Healing level, once per jump-in, never past max health.
+    # The worked example from the design: a level 5 fighter
+    # with 150 max health, level 1 Healing, heals 19% — about
+    # 28. At 134 health only 16 of it fits before max health,
+    # so the heal stops at 150 and the rest is lost.
+    healer = game_logic.new_fighter("Healer", "robot")
+    healer["level"] = 5
+    healer["stats"] = {"strength": 4, "defense": 1, "health": 1, "speed": 0, "luck": 2}
+    healer["max_hp"] = game_logic.fighter_max_hp(healer)
+    healer["hp"] = 100
+    healer["healing_level"] = 1
+    check("level 1 heals 19 percent, about 28 at 150 max",
+          game_logic.healing_heal_amount(healer) == 28)
+    healer["hp"] = 134
+    check("level 1 heal stops at max health, 16 fits",
+          game_logic.healing_heal_amount(healer) == 16)
+    healer["healing_level"] = 5
+    check("level 5 heal also stops at max health",
+          game_logic.healing_heal_amount(healer) == 16)
+    healer["hp"] = 150
+    check("a full fighter heals nothing",
+          game_logic.healing_heal_amount(healer) == 0)
+    healer["healing_level"] = 0
+    healer["hp"] = 100
+    check("level 0 heals nothing, the strike still lands",
+          game_logic.healing_heal_amount(healer) == 0)
+
+    # Buying Healing: one level at a time, then the cap.
+    buyer = game_logic.new_fighter("Buyer", "chef")
+    buyer["credits"] = 1000
+    error = game_logic.start_upgrade(buyer, "healing", now=1000000.0)
+    check("healing upgrade starts when affordable", error is None)
+    check("healing costs 50 credits for level 1", buyer["credits"] == 950)
+    check("healing upgrade targets healing",
+          buyer["upgrade"]["slot"] == "healing"
+          and buyer["upgrade"]["name"] == "Second Wind")
+    check("healing level 1 takes 12 minutes",
+          buyer["upgrade"]["finish"] == 1000000.0 + 12 * 60)
+    line = game_logic.finish_upgrade_if_ready(
+        buyer, now=1000000.0 + 12 * 60 + 1)
+    check("healing finishes at level 1", buyer["healing_level"] == 1)
+    # One upgrade set at a time, both directions (Phase 24):
+    # a Healing set blocks weapon and armor, and a weapon
+    # set blocks Healing.
+    error = game_logic.start_upgrade(buyer, "healing", now=1000000.0 + 13 * 60)
+    check("second healing level starts after the first", error is None)
+    check("weapon is blocked while a healing set runs",
+          game_logic.start_upgrade(buyer, "weapon", now=1000000.0 + 13 * 60 + 1) is not None)
+    check("max weapon is blocked while a healing set runs",
+          game_logic.start_max_upgrade(buyer, "weapon", now=1000000.0 + 13 * 60 + 1)[0] is not None)
+    armed = game_logic.new_fighter("Armed", "robot")
+    armed["credits"] = 10000
+    game_logic.start_upgrade(armed, "weapon", now=1000000.0)
+    check("healing is blocked while a weapon set runs",
+          game_logic.start_upgrade(armed, "healing", now=1000001.0) is not None)
+    check("max healing is blocked while a weapon set runs",
+          game_logic.start_max_upgrade(armed, "healing", now=1000001.0)[0] is not None)
+
+    # Max affordable Healing: 1000 credits from level 0 buys
+    # all 5 levels for 915 credits in about 3 hours, never
+    # past level 5; at level 5 there is nothing to buy.
+    maxer = game_logic.new_fighter("MaxHeal", "robot")
+    maxer["credits"] = 1000
+    plan = game_logic.max_affordable(maxer, "healing")
+    check("1000 credits buys all 5 healing levels", len(plan["levels"]) == 5)
+    check("5 healing levels cost 915 credits", plan["cost"] == 915)
+    check("5 healing levels take about 3 hours", plan["seconds"] == 3 * 3600)
+    error, line = game_logic.start_max_upgrade(maxer, "healing", now=1000000.0)
+    check("max healing starts the queue", error is None and "5 levels" in line
+          and "915 credits" in line)
+    check("max healing queue is called Second Wind",
+          maxer["upgrade"]["name"] == "Second Wind")
+    now = 1000000.0
+    while maxer.get("upgrade"):
+        now = maxer["upgrade"]["finish"] + 1
+        game_logic.finish_upgrade_if_ready(maxer, now=now)
+    check("max healing queue drains to level 5", maxer["healing_level"] == 5)
+    error = game_logic.start_upgrade(maxer, "healing", now=now)
+    check("level 5 cannot be bought again",
+          error is not None and "at its best" in error)
+    check("max affordable at level 5 buys nothing",
+          game_logic.max_affordable(maxer, "healing")["levels"] == []
+          and game_logic.max_affordable(maxer, "healing")["maxed"] is True)
+    check("max upgrade at level 5 is refused",
+          game_logic.start_max_upgrade(maxer, "healing", now=now)[0] is not None)
+
+    # Level 5 auto-heal (Phase 25): after every fight the
+    # fighter is back to full health, and no repair ever
+    # starts. A win at low health heals to full; a loss at
+    # 1 health ends at full with no repair, and the first
+    # saved repair is announced in full, the next in short.
+    full = game_logic.new_fighter("Full", "robot")
+    full["healing_level"] = 5
+    full["hp"] = 50
+    result = game_logic.fight(full, rng=random.Random(3))
+    check("level 5 win restores full health",
+          result["won"] is True and full["hp"] == full["max_hp"])
+    check("level 5 win says Second Wind restored you",
+          any("Second Wind restored you to full health" in line
+              for line in result["lines"]))
+    doomed = game_logic.new_fighter("Doomed", "robot")
+    doomed["healing_level"] = 5
+    doomed["hp"] = 1
+    result = game_logic.fight(doomed, rng=random.Random(3))
+    check("level 5 loss ends at full health, no repair",
+          result["won"] is False and doomed["hp"] == doomed["max_hp"]
+          and doomed["repair_until"] == 0)
+    check("first saved repair is announced in full",
+          any("never need repairs again" in line for line in result["lines"]))
+    doomed["hp"] = 1
+    result = game_logic.fight(doomed, rng=random.Random(3))
+    check("second saved repair is announced in short",
+          any("No repairs needed." in line for line in result["lines"])
+          and not any("never need repairs again" in line
+                      for line in result["lines"]))
+    # Without level 5, a loss at 1 health still repairs.
+    plain = game_logic.new_fighter("Plain", "robot")
+    plain["hp"] = 1
+    result = game_logic.fight(plain, rng=random.Random(3))
+    check("a loss without level 5 still needs repairs",
+          result["won"] is False and plain["hp"] == 1
+          and plain["repair_until"] > 0)
+    # Reaching level 5 ends a repair already running.
+    mending = game_logic.new_fighter("Mending", "robot")
+    mending["credits"] = 1000
+    mending["healing_level"] = 4
+    mending["hp"] = 20
+    mending["repair_until"] = 2000000.0
+    game_logic.start_upgrade(mending, "healing", now=1000000.0)
+    line = game_logic.finish_upgrade_if_ready(mending, now=1000000.0 + 3601)
+    check("reaching level 5 ends a running repair",
+          mending["repair_until"] == 0 and mending["hp"] == mending["max_hp"]
+          and "No more repairs" in line)
+
     # The stats draft's worked example: level 5 robot, weapon
     # 3, armor 2, Strength 4, Luck 2, Health 1, Defense 1,
     # Speed 0. Damage 38, defense 10 (soak 5), max HP 150,

@@ -705,6 +705,151 @@ def main_test():
     check("the new set finishes too",
           fighter.get("upgrade") is None)
 
+    # Healing skill (Phase 25, Makenna Nov 18, 2026): a third
+    # Shop slot, bought like weapon and armor, max level 5,
+    # with its own cost and time. It is called Second Wind —
+    # a name that fits a robot and a chef.
+    fighter["credits"] = 500
+    server["fighter"]["credits"] = 500
+    frame.notebook.SetSelection(2)  # Shop tab
+    frame.refresh_list("Shop")
+    shop_items = frame.list_items("Shop")
+    check("shop shows Second Wind with its cost",
+          any(item == "Upgrade Second Wind to level 1, costs 50 credits (press H)"
+              for item in shop_items))
+    check("shop shows max affordable Second Wind with its time",
+          any(item.startswith("Max affordable: Second Wind up")
+              and "done in" in item for item in shop_items))
+    check("home status says the Second Wind level",
+          "Second Wind level 0" in game_logic.status_text(fighter))
+
+    # Enter on the Second Wind line starts the upgrade on
+    # the server, and the tick finishes it like any upgrade.
+    frame.notebook.SetSelection(2)  # Shop tab
+    frame.refresh_list("Shop")
+    shop_items = frame.list_items("Shop")
+    shop_box.SetSelection(
+        [i for i, item in enumerate(shop_items)
+         if item.startswith("Upgrade Second Wind")][0])
+    frame.activate_current()
+    check("second wind starts an upgrade", fighter["upgrade"] is not None)
+    check("second wind ran on the server", "upgrade" in server["calls"])
+    check("second wind targets healing", fighter["upgrade"]["slot"] == "healing")
+    fighter["upgrade"]["finish"] = 0.0
+    server["fighter"]["upgrade"]["finish"] = 0.0
+    frame._last_timer_check = 0
+    frame.on_tick(mock.MagicMock())
+    check("second wind finishes at level 1", fighter["healing_level"] == 1)
+
+    # One upgrade set at a time (Phase 24) covers Healing
+    # both ways: a Second Wind set blocks weapon and armor,
+    # and a weapon set blocks Second Wind.
+    frame.do_upgrade("healing")
+    check("a second wind set is running",
+          fighter.get("upgrade") is not None
+          and fighter["upgrade"]["slot"] == "healing")
+    frame.do_upgrade("weapon")
+    check("weapon is blocked while a second wind set runs",
+          fighter.get("upgrade") is not None
+          and fighter["upgrade"]["slot"] == "healing")
+    check("the weapon block is spoken with the time left",
+          "already running" in frame.message_line.GetLabel()
+          and "left" in frame.message_line.GetLabel())
+    max_calls = server["calls"].count("max_upgrade")
+    frame.do_max_upgrade("armor")
+    check("max armor is blocked while a second wind set runs",
+          server["calls"].count("max_upgrade") == max_calls)
+    fighter["upgrade"]["finish"] = 0.0
+    server["fighter"]["upgrade"]["finish"] = 0.0
+    frame._last_timer_check = 0
+    frame.on_tick(mock.MagicMock())
+    check("second wind finishes at level 2", fighter["healing_level"] == 2)
+    fighter["credits"] = 1000  # the weapon is level 7 by now,
+    server["fighter"]["credits"] = 1000  # so its next level costs 427
+    frame.do_upgrade("weapon")
+    check("a weapon set is running",
+          fighter.get("upgrade") is not None
+          and fighter["upgrade"]["slot"] == "weapon")
+    frame.do_upgrade("healing")
+    check("second wind is blocked while a weapon set runs",
+          fighter.get("upgrade") is not None
+          and fighter["upgrade"]["slot"] == "weapon")
+    fighter["upgrade"]["finish"] = 0.0
+    server["fighter"]["upgrade"]["finish"] = 0.0
+    frame._last_timer_check = 0
+    frame.on_tick(mock.MagicMock())
+    check("the weapon set finishes too",
+          fighter.get("upgrade") is None)
+
+    # Max affordable Second Wind: with 365 credits left,
+    # level 3 (140) fits and level 4 (240) does not, so the
+    # queue buys one level. Saying yes starts it.
+    fighter["credits"] = 365
+    server["fighter"]["credits"] = 365
+    frame.refresh_list("Shop")
+    shop_items = frame.list_items("Shop")
+    check("max affordable second wind buys one level here",
+          any(item.startswith("Max affordable: Second Wind up 1 level")
+              and "140 credits" in item for item in shop_items))
+    sys.modules["wx"].Dialog.modal_result = sys.modules["wx"].ID_YES
+    shop_box.SetSelection(
+        [i for i, item in enumerate(shop_items)
+         if item.startswith("Max affordable: Second Wind")][0])
+    frame.activate_current()
+    sys.modules["wx"].Dialog.modal_result = 1  # back to ID_OK
+    check("max second wind starts the queue on yes",
+          fighter.get("upgrade") is not None
+          and fighter["upgrade"]["slot"] == "healing")
+    for _ in range(10):
+        if fighter.get("upgrade") is None:
+            break
+        fighter["upgrade"]["finish"] = 0.0
+        server["fighter"]["upgrade"]["finish"] = 0.0
+        frame._last_timer_check = 0
+        frame.on_tick(mock.MagicMock())
+    check("max second wind queue drains to level 3",
+          fighter["healing_level"] == 3)
+
+    # Level 5 is the cap: at level 5 the Shop says so, and
+    # buying or max-buying is refused in plain words.
+    server["fighter"]["healing_level"] = 5
+    fighter["healing_level"] = 5
+    frame.refresh_list("Shop")
+    shop_items = frame.list_items("Shop")
+    check("shop says second wind is at its best at level 5",
+          any(item == "Second Wind is at its best, level 5."
+              for item in shop_items))
+    check("no second wind buy line at level 5",
+          not any(item.startswith("Upgrade Second Wind")
+                  for item in shop_items))
+    check("no max second wind line at level 5",
+          not any(item.startswith("Max affordable: Second Wind")
+                  for item in shop_items))
+    frame.do_upgrade("healing")
+    check("buying past level 5 is refused",
+          "at its best" in frame.message_line.GetLabel())
+    frame.do_max_upgrade("healing")
+    check("max buying past level 5 is refused",
+          "at its best" in frame.message_line.GetLabel())
+
+    # Level 5 auto-heal (Phase 25): at full Healing the
+    # fighter comes back to full health after a fight, win
+    # or loss, and no repair ever starts.
+    server["fighter"]["hp"] = 10
+    fighter["hp"] = 10
+    server["fighter"]["repair_until"] = 0
+    fighter["repair_until"] = 0
+    log_before = len(frame.logs["Combat"].text)
+    frame.do_fight()
+    check("level 5 auto-heal restores full health after a fight",
+          fighter["hp"] == fighter["max_hp"])
+    check("level 5 auto-heal starts no repair",
+          fighter["repair_until"] == 0)
+    check("level 5 auto-heal is narrated",
+          "Second Wind" in frame.logs["Combat"].text[log_before:])
+    server["fighter"]["healing_level"] = 3
+    fighter["healing_level"] = 3
+
     # Music rule (2026-11-18, quests Phase 18): no music
     # at launch, hangout music only once quests have
     # started in the hangout, fight music only while
@@ -1187,11 +1332,14 @@ def currency_wording_test():
     # arena_get_quests and friends. The quest levels one
     # (Phase 23) adds arena_spend_quest_stat and redefines
     # complete so it awards quest XP and banks quest points.
-    # The newest migration is now the npc creatures one
-    # (Phase 24), which adds arena_fight_npc. The quest
-    # pause migration (Phase 22) is still there, and quest
-    # completion must never check repairs. No migration may
-    # say "points" for the currency.
+    # The npc creatures one (Phase 24) adds arena_fight_npc.
+    # The newest migration is now the healing skill one
+    # (Phase 25), which redefines the upgrade and fight
+    # functions so Healing can be bought and level 5 heals
+    # to full after every fight. The quest pause migration
+    # (Phase 22) is still there, and quest completion must
+    # never check repairs. No migration may say "points"
+    # for the currency.
     quests_mig = open(os.path.join(
         mig_dir, [n for n in names if "add_hangout_quests" in n][0]),
         encoding="utf-8").read()
@@ -1208,11 +1356,26 @@ def currency_wording_test():
           "arena_pause_quest" in pause_mig
           and "arena_start_quest" in pause_mig
           and "arena_complete_quest" in pause_mig)
+    check("an npc creatures migration exists",
+          any("npc_creatures" in name for name in names))
+    npc_mig = open(os.path.join(
+        mig_dir, [n for n in names if "npc_creatures" in n][0]),
+        encoding="utf-8").read()
+    check("the npc creatures migration adds the npc fight function",
+          "arena_fight_npc" in npc_mig)
     newest = open(os.path.join(mig_dir, names[-1]), encoding="utf-8").read()
-    check("newest migration is the npc creatures one",
-          "npc_creatures" in names[-1])
-    check("newest migration adds the npc fight function",
-          "arena_fight_npc" in newest)
+    check("newest migration is the healing skill one",
+          "healing_skill" in names[-1])
+    check("newest migration redefines the upgrade functions",
+          "arena_start_upgrade" in newest
+          and "arena_max_upgrade" in newest)
+    check("newest migration redefines the fight functions",
+          "arena_fight" in newest and "arena_fight_npc" in newest)
+    check("newest migration names the skill Second Wind",
+          "Second Wind" in newest)
+    check("newest migration heals to full at level 5",
+          "healing_level" in newest
+          and "never need repairs again" in newest)
     check("newest migration never says points for the currency",
           "Your points are now called credits" not in newest)
     levels_mig = open(os.path.join(

@@ -9,8 +9,10 @@ does something once; Shift plus the same letter starts the idle loop.
     Shift+F   idle fighting on and off (Combat tab)
     U         upgrade weapon (Shop tab)
     A         upgrade armor (Shop tab)
+    H         upgrade healing (Shop tab)
     Shift+U   max affordable weapon upgrade (Shop tab)
     Shift+A   max affordable armor upgrade (Shop tab)
+    Shift+H   max affordable healing upgrade (Shop tab)
     R         hear repair status (More tab)
     S         start or stop quests (hangout, More tab)
     1 / 2     choose a free gift upgrade: weapon or armor (More tab)
@@ -445,7 +447,7 @@ class MainFrame(wx.Frame):
     TAB_HINTS = {
         "Home": "Home. Your fighter, and where to go next.",
         "Combat": "Combat. Fight one creature, or let idle fighting keep going.",
-        "Shop": "Shop. Upgrade your weapon and armor, or buy as many levels as you can afford. Upgrades take time, capped at 4 hours.",
+        "Shop": "Shop. Upgrade your weapon, armor and healing, or buy as many levels as you can afford. Upgrades take time, capped at 4 hours.",
         "More": "More. Hangout, repairs, and quests.",
         "Settings": "Settings. Voice, sound effects, and volume.",
     }
@@ -617,69 +619,108 @@ class MainFrame(wx.Frame):
                 "Hear my fighter status",
             ]
         if tab == "Shop":
-            weapon_cost = game_logic.upgrade_cost(fighter["weapon_level"])
-            armor_cost = game_logic.upgrade_cost(fighter["armor_level"])
             upgrade = game_logic.upgrade_status(fighter)
+            # The three upgrade slots, in Shop order, with
+            # their list key: weapon U, armor A, healing H
+            # (Phase 25). Healing is called Second Wind and
+            # stops at level 5; the other two climb forever.
+            slots = (
+                ("weapon", "U"),
+                ("armor", "A"),
+                ("healing", "H"),
+            )
+
+            def _single_line(slot, key):
+                """One line for buying the next level of a
+                slot, or the maxed line for a Healing skill
+                already at level 5."""
+                name = game_logic.HEALING_NAME if slot == "healing" \
+                    else fighter[slot + "_name"]
+                level = fighter[slot + "_level"]
+                if slot == "healing" and level >= game_logic.HEALING_MAX_LEVEL:
+                    return "%s is at its best, level %d." % (
+                        name, game_logic.HEALING_MAX_LEVEL)
+                cost = game_logic.slot_upgrade_cost(slot, level)
+                return (
+                    "Upgrade %s to level %d, costs %d credits (press %s)"
+                    % (name, level + 1, cost, key)
+                )
+
+            def _max_line(slot, key):
+                """One max-affordable line for a slot, or None
+                when the slot has nothing to say: a Healing
+                skill already at level 5 has its maxed line
+                up above instead of a max-affordable line."""
+                plan = game_logic.max_affordable(fighter, slot)
+                if plan.get("maxed"):
+                    return None
+                if plan["levels"]:
+                    count = len(plan["levels"])
+                    return (
+                        "Max affordable: %s up %d %s for %d credits, "
+                        "done in %s (press Shift %s)"
+                        % (
+                            plan["name"],
+                            count,
+                            "level" if count == 1 else "levels",
+                            plan["cost"],
+                            game_logic.format_time(plan["seconds"]),
+                            key,
+                        )
+                    )
+                return (
+                    "Max affordable: your next %s level costs %d "
+                    "credits and you have %d credits."
+                    % (plan["name"], plan["next_cost"], plan["credits"])
+                )
+
             if upgrade:
                 # One upgrade set at a time (Makenna, Nov 18,
                 # 2026): while a set is running, the Shop shows
                 # the running set with its time left first, and
-                # the other slot says plainly that it waits —
-                # it never pretends the next upgrade is ready
-                # to start. Enter on either line still goes
-                # through do_upgrade, which speaks the block
-                # with the time left.
+                # the other slots say plainly that they wait —
+                # they never pretend the next upgrade is ready
+                # to start. Enter on any of those lines still
+                # goes through do_upgrade, which speaks the
+                # block with the time left.
                 running_slot = (fighter.get("upgrade") or {}).get("slot")
-                other_slot = "armor" if running_slot == "weapon" else "weapon"
-                other_name = fighter[other_slot + "_name"]
-                other_level = fighter[other_slot + "_level"] + 1
-                other_cost = game_logic.upgrade_cost(fighter[other_slot + "_level"])
-                other_key = "A" if other_slot == "armor" else "U"
-                items = [
-                    upgrade,
-                    "Upgrade %s to level %d, costs %d credits "
-                    "-- waits until the running upgrade finishes, "
-                    "%s left (press %s)"
-                    % (other_name, other_level, other_cost,
-                       game_logic.format_time(
-                           max(0, fighter["upgrade"]["finish"] - time.time())),
-                       other_key),
-                ]
+                items = [upgrade]
+                for slot, key in slots:
+                    if slot == running_slot:
+                        continue
+                    name = game_logic.HEALING_NAME if slot == "healing" \
+                        else fighter[slot + "_name"]
+                    level = fighter[slot + "_level"]
+                    if slot == "healing" and level >= game_logic.HEALING_MAX_LEVEL:
+                        items.append(
+                            "%s is at its best, level %d."
+                            % (name, game_logic.HEALING_MAX_LEVEL)
+                        )
+                        continue
+                    cost = game_logic.slot_upgrade_cost(slot, level)
+                    items.append(
+                        "Upgrade %s to level %d, costs %d credits "
+                        "-- waits until the running upgrade finishes, "
+                        "%s left (press %s)"
+                        % (
+                            name,
+                            level + 1,
+                            cost,
+                            game_logic.format_time(
+                                max(0, fighter["upgrade"]["finish"]
+                                    - time.time())),
+                            key,
+                        )
+                    )
             else:
-                weapon_line = (
-                    "Upgrade %s to level %d, costs %d credits (press U)"
-                    % (fighter["weapon_name"], fighter["weapon_level"] + 1, weapon_cost)
-                )
-                armor_line = (
-                    "Upgrade %s to level %d, costs %d credits (press A)"
-                    % (fighter["armor_name"], fighter["armor_level"] + 1, armor_cost)
-                )
-                items = [weapon_line, armor_line]
+                items = [_single_line(slot, key) for slot, key in slots]
                 # Max affordable: one line per slot, worked out
                 # from the fighter the server sent back. The
                 # server decides the real queue and price.
-                for slot, key in (("weapon", "U"), ("armor", "A")):
-                    plan = game_logic.max_affordable(fighter, slot)
-                    if plan["levels"]:
-                        count = len(plan["levels"])
-                        items.append(
-                            "Max affordable: %s up %d %s for %d credits, "
-                            "done in %s (press Shift %s)"
-                            % (
-                                plan["name"],
-                                count,
-                                "level" if count == 1 else "levels",
-                                plan["cost"],
-                                game_logic.format_time(plan["seconds"]),
-                                key,
-                            )
-                        )
-                    else:
-                        items.append(
-                            "Max affordable: your next %s level costs %d "
-                            "credits and you have %d credits."
-                            % (plan["name"], plan["next_cost"], plan["credits"])
-                        )
+                for slot, key in slots:
+                    line = _max_line(slot, key)
+                    if line:
+                        items.append(line)
             items.append("Hear my fighter status")
             return items
         if tab == "More":
@@ -1960,6 +2001,12 @@ class MainFrame(wx.Frame):
             self._announce_upgrade_block()
             return
         plan = game_logic.max_affordable(fighter, slot)
+        if plan.get("maxed"):
+            self.announce(
+                "Your %s is already at its best, level %d."
+                % (plan["name"], game_logic.HEALING_MAX_LEVEL)
+            )
+            return
         if not plan["levels"]:
             self.announce(
                 "Your next %s level costs %d credits and you have %d credits."
@@ -2056,6 +2103,18 @@ class MainFrame(wx.Frame):
             "Max affordable: " + fighter["armor_name"] + " up"
         ):
             self.do_max_upgrade("armor")
+        elif tab == "Shop" and item.startswith(
+            "Upgrade " + game_logic.HEALING_NAME
+        ):
+            self.do_upgrade("healing")
+        elif tab == "Shop" and item.startswith(
+            "Max affordable: " + game_logic.HEALING_NAME + " up"
+        ):
+            self.do_max_upgrade("healing")
+        elif tab == "Shop" and item.startswith(
+            game_logic.HEALING_NAME + " is at its best"
+        ):
+            self.announce(item)
         elif tab == "Shop" and item.startswith("Max affordable: your next"):
             self.announce(item)
         elif tab == "Shop" and item.startswith("Upgrading "):
@@ -2241,7 +2300,8 @@ class MainFrame(wx.Frame):
         # game are logged: F, Shift F, U, Shift U, A, Shift A,
         # R, Return, Escape.
         if on_list and key in (
-            ord("f"), ord("F"), ord("u"), ord("U"), ord("a"), ord("A"), ord("r"),
+            ord("f"), ord("F"), ord("u"), ord("U"), ord("a"), ord("A"),
+            ord("h"), ord("H"), ord("r"),
             wx.WXK_RETURN, wx.WXK_ESCAPE,
         ):
             label = chr(key) if 32 <= key < 127 else str(key)
@@ -2288,11 +2348,17 @@ class MainFrame(wx.Frame):
             if key == ord("a"):
                 self.do_upgrade("armor")
                 return
+            if key == ord("h"):
+                self.do_upgrade("healing")
+                return
             if key == ord("U"):
                 self.do_max_upgrade("weapon")
                 return
             if key == ord("A"):
                 self.do_max_upgrade("armor")
+                return
+            if key == ord("H"):
+                self.do_max_upgrade("healing")
                 return
         if on_list and self.current_tab() == "More" and key == ord("r"):
             fighter = self.fighter
