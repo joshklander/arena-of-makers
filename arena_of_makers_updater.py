@@ -65,15 +65,43 @@ FOLDER_STATE_FILE = os.path.join(SCRIPT_DIR, "arena_updater_state.json")
 VERSION_FILE_NAME = "arena_version.json"
 GAME_FOLDER_NAME = "Arena of Makers"
 
-# Files the updater itself uses. They are never written by a sync, even if
-# a future version of the repository ever listed them, because overwriting
-# the program while it is running could break it.
+# Files the updater itself uses. They are never written by the
+# updater's own sync, even if a future version of the
+# repository ever listed them, because overwriting the program
+# while it is running could break it. That protection is what
+# left Makenna's computer on the old updater in 2026-11-18:
+# the fixed updater was on GitHub, but her copy could never
+# fetch it, so none of the fixes reached her. The game may
+# refresh the updater's .py file (see _is_protected): the
+# updater is not running while the game updates, so the
+# backup updater never goes stale. The launcher .bat, the
+# updater's own folder-choice state, and the version note
+# stay protected always.
 PROTECTED_FILES = {
     "arena_of_makers_updater.py",
     "run_arena_of_makers_updater.bat",
     "arena_updater_state.json",
     VERSION_FILE_NAME,
 }
+
+
+def _is_protected(path, include_updater=False):
+    """True when a sync must leave a file alone.
+
+    With include_updater False (the standalone updater's own
+    sync, and the default), every protected file is left
+    alone. With include_updater True (the game's launch
+    update, Phase 19), only the updater's .py file may be
+    refreshed: the updater is not running then, and keeping
+    it current is what keeps the backup working. Its
+    launcher .bat, its folder-choice state, and the version
+    note are never written by a sync either way — the note
+    is written by save_state, not by downloading it."""
+    if path not in PROTECTED_FILES:
+        return False
+    return not (
+        include_updater and path == "arena_of_makers_updater.py"
+    )
 
 
 def normalise_install_folder(folder):
@@ -136,11 +164,14 @@ def save_folder_choice(folder):
 # GitHub API helpers (plain urllib, no extra packages, no token needed)
 # --------------------------------------------------------------------------
 
-def api_get(path):
+def api_get(path, timeout=60):
     """GET one public API path. Returns (status, payload dict or list).
 
     Status 403 usually means GitHub's free limit for unsigned-in requests
     was reached. Status 404 means the thing asked for is not there.
+    The timeout is short for the game's launch check, so a slow
+    GitHub never holds up starting the game; the updater's own
+    sync keeps the slower default.
     """
     url = API_BASE + path
     req = urllib.request.Request(url, method="GET")
@@ -148,7 +179,7 @@ def api_get(path):
     req.add_header("X-GitHub-Api-Version", "2022-11-28")
     req.add_header("User-Agent", "ArenaOfMakersUpdater")
     try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.status, json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         try:
@@ -160,20 +191,20 @@ def api_get(path):
         return 0, {"message": "Could not reach GitHub: %s" % e}
 
 
-def get_head_sha():
+def get_head_sha(timeout=60):
     """Return the newest commit id on main, or None when it cannot be read."""
-    status, payload = api_get("/git/refs/heads/main")
+    status, payload = api_get("/git/refs/heads/main", timeout=timeout)
     if status == 200:
         return payload.get("object", {}).get("sha")
     return None
 
 
-def get_tree():
+def get_tree(timeout=60):
     """Return the full file list of main, or None when it cannot be read.
 
     Each entry has path, sha (the git blob id) and size.
     """
-    status, payload = api_get("/git/trees/main?recursive=1")
+    status, payload = api_get("/git/trees/main?recursive=1", timeout=timeout)
     if status == 200 and isinstance(payload, dict):
         return [t for t in payload.get("tree", []) if t.get("type") == "blob"]
     return None
@@ -188,9 +219,9 @@ GAME_EXE_NAME = "ArenaOfMakers.exe"
 UPDATER_EXE_NAME = "ArenaOfMakersUpdater.exe"
 
 
-def get_latest_release():
+def get_latest_release(timeout=60):
     """Return (tag, asset download url for the game exe), or (None, None)."""
-    status, payload = api_get("/releases/latest")
+    status, payload = api_get("/releases/latest", timeout=timeout)
     if status != 200 or not isinstance(payload, dict):
         return None, None
     for asset in payload.get("assets", []):
@@ -360,7 +391,7 @@ def find_installed_folder(folder):
     return None
 
 
-def plan_sync(tree, game_dir):
+def plan_sync(tree, game_dir, include_updater=False):
     """Compare the repository file list with the local folder.
 
     Returns (to_download, left_in_place, synced_files). to_download is a
@@ -368,13 +399,17 @@ def plan_sync(tree, game_dir):
     left_in_place is a list of files that were synced before but are no
     longer in the repository; they are never deleted, only reported.
     synced_files is the full set of files the sync will leave in place.
+    With include_updater True, the updater's own .py file is
+    compared and synced like any other file (the game's
+    launch update); with False, it is left alone (the
+    standalone updater's own sync, which is running then).
     """
     _head, previous_files = load_state(game_dir)
     to_download = []
     synced_files = set()
     for entry in tree:
         path = entry["path"]
-        if path in PROTECTED_FILES:
+        if _is_protected(path, include_updater):
             continue
         synced_files.add(path)
         local = os.path.join(game_dir, path)
@@ -382,7 +417,7 @@ def plan_sync(tree, game_dir):
             to_download.append(entry)
     left_in_place = []
     for path in sorted(previous_files):
-        if path in PROTECTED_FILES:
+        if _is_protected(path, include_updater):
             continue
         if path not in synced_files and os.path.exists(os.path.join(game_dir, path)):
             left_in_place.append(path)
@@ -409,7 +444,7 @@ def download_zipball(dest):
         return False, "Could not download the game: %s" % e
 
 
-def install_from_zip(zip_path, game_dir, log):
+def install_from_zip(zip_path, game_dir, log, include_updater=False):
     """Unpack a GitHub zipball into the game folder.
 
     Returns (ok, message, installed_files). Files are copied
@@ -420,6 +455,10 @@ def install_from_zip(zip_path, game_dir, log):
     nested one level deeper. installed_files is the set of
     files written, so a fresh install can write its version
     note even when the file list from GitHub is not available.
+    With include_updater True, the updater's own .py file is
+    installed too (the game's launch update); with False it
+    is left alone (the standalone updater's own install,
+    which is running then).
     """
     installed = set()
     try:
@@ -438,7 +477,8 @@ def install_from_zip(zip_path, game_dir, log):
                     for name in files:
                         s = os.path.join(root, name)
                         rel = os.path.relpath(s, src)
-                        if rel.replace(os.sep, "/") in PROTECTED_FILES:
+                        if _is_protected(rel.replace(os.sep, "/"),
+                                         include_updater):
                             continue
                         d = os.path.join(game_dir, rel)
                         os.makedirs(os.path.dirname(d), exist_ok=True)
@@ -451,11 +491,16 @@ def install_from_zip(zip_path, game_dir, log):
         return False, "Could not unpack the game: %s" % e, installed
 
 
-def sync_game(game_dir, log):
+def sync_game(game_dir, log, include_updater=False):
     """Install the game or bring it up to date. Runs in a worker thread.
 
     log(text) is called with plain-word progress lines. Returns True when
-    the local game now matches GitHub, False otherwise.
+    the local game now matches GitHub, False otherwise. With
+    include_updater True (the game's launch update), the
+    updater's own .py file is synced too, so the backup
+    updater never goes stale; with False (the standalone
+    updater's own sync, and the default) it is left alone,
+    because the updater is running then.
     """
     # Frozen exe mode: update the bundled exe from GitHub Releases,
     # never by syncing source files over it.
@@ -484,7 +529,9 @@ def sync_game(game_dir, log):
             log(message)
             return False
         try:
-            ok, message, installed_files = install_from_zip(tmp, game_dir, log)
+            ok, message, installed_files = install_from_zip(
+                tmp, game_dir, log, include_updater
+            )
             if not ok:
                 log(message)
                 return False
@@ -498,7 +545,9 @@ def sync_game(game_dir, log):
         tree = get_tree()
         if tree is not None:
             files = {
-                e["path"] for e in tree if e["path"] not in PROTECTED_FILES
+                e["path"]
+                for e in tree
+                if not _is_protected(e["path"], include_updater)
             }
         else:
             files = installed_files
@@ -518,7 +567,9 @@ def sync_game(game_dir, log):
     if tree is None:
         log("Could not read the file list from GitHub. Try again later.")
         return False
-    to_download, left_in_place, synced_files = plan_sync(tree, game_dir)
+    to_download, left_in_place, synced_files = plan_sync(
+        tree, game_dir, include_updater
+    )
     if not to_download:
         save_state(game_dir, head, synced_files)
         for path in left_in_place:

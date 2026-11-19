@@ -76,6 +76,7 @@ except ImportError:
     pygame = None
 
 import account
+import arena_of_makers_updater
 import game_logic
 import online_save
 import remember
@@ -85,6 +86,16 @@ import voice_engine
 
 APP_TITLE = "Arena of Makers"
 LOG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "arena_log.txt")
+
+# Where this copy of the game lives on disk. The launch
+# update check reads the version note from this folder.
+GAME_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# How long the launch update check waits for GitHub to
+# answer, in seconds. Longer than this and the game just
+# plays the current version: a slow check must never hold
+# up starting the game.
+UPDATE_CHECK_TIMEOUT_SECONDS = 10
 
 # Idle fighting does one fight about every 5 seconds.
 IDLE_FIGHT_GAP = 5
@@ -1690,6 +1701,184 @@ class MainFrame(wx.Frame):
         event.Skip()
 
 
+def check_for_update_at_launch(game_dir):
+    """Ask GitHub whether main is newer than this copy.
+
+    Returns a small dict: available (a newer version is
+    waiting), unreachable (GitHub did not answer), folder
+    (the folder holding the game), remote (the remote
+    version id — a commit id in source mode, a release tag
+    in exe mode), reason (why there is nothing to offer).
+
+    Nothing here ever raises: any failure means "play the
+    current version". The check is quick on purpose — see
+    UPDATE_CHECK_TIMEOUT_SECONDS — and it never writes a
+    local save file. The one file it may write is the
+    updater's own version note, and only when the files on
+    disk already match main, so a later launch can compare
+    versions without asking again.
+    """
+    try:
+        folder = arena_of_makers_updater.find_installed_folder(game_dir)
+    except Exception:
+        folder = None
+    if folder is None:
+        # A hand-installed copy has no version note yet, so
+        # the updater cannot find it — but main.py in the
+        # folder itself still means the game is here. Look
+        # in the folder, one level down, and the parent, the
+        # same places the updater looks, and take the first
+        # one holding main.py.
+        normal = arena_of_makers_updater.normalise_install_folder(game_dir)
+        candidates = [
+            normal,
+            os.path.join(normal, "Arena of Makers"),
+            os.path.dirname(normal),
+        ]
+        seen = set()
+        for candidate in candidates:
+            candidate = os.path.abspath(candidate)
+            if candidate in seen:
+                continue
+            seen.add(candidate)
+            if os.path.exists(os.path.join(candidate, "main.py")):
+                folder = candidate
+                break
+    if folder is None:
+        return {"available": False, "unreachable": False,
+                "folder": None, "remote": None,
+                "reason": "no-install-found"}
+    try:
+        stored_head, _files = arena_of_makers_updater.load_state(folder)
+    except Exception:
+        stored_head = None
+    try:
+        if getattr(sys, "frozen", False):
+            tag, _url = arena_of_makers_updater.get_latest_release(
+                timeout=UPDATE_CHECK_TIMEOUT_SECONDS
+            )
+            if tag is None:
+                return {"available": False, "unreachable": True,
+                        "folder": folder, "remote": None,
+                        "reason": "github-unreachable"}
+            if not stored_head:
+                # No version note: offer the release, and the
+                # update itself writes the note.
+                return {"available": True, "unreachable": False,
+                        "folder": folder, "remote": tag,
+                        "reason": "no-version-note"}
+            return {"available": tag != stored_head,
+                    "unreachable": False, "folder": folder,
+                    "remote": tag, "reason": ""}
+        head = arena_of_makers_updater.get_head_sha(
+            timeout=UPDATE_CHECK_TIMEOUT_SECONDS
+        )
+        if head is None:
+            return {"available": False, "unreachable": True,
+                    "folder": folder, "remote": None,
+                    "reason": "github-unreachable"}
+        if stored_head:
+            return {"available": stored_head != head,
+                    "unreachable": False, "folder": folder,
+                    "remote": head, "reason": ""}
+        # No version note (a hand-installed copy, like the
+        # nested-folder installs): compare the files
+        # themselves. If they already match main, write the
+        # note quietly and play on; if they differ, offer
+        # the update, and the update writes the note.
+        tree = arena_of_makers_updater.get_tree(
+            timeout=UPDATE_CHECK_TIMEOUT_SECONDS
+        )
+        if tree is None:
+            return {"available": False, "unreachable": True,
+                    "folder": folder, "remote": None,
+                    "reason": "github-unreachable"}
+        to_download, _left, synced = arena_of_makers_updater.plan_sync(
+            tree, folder, include_updater=True
+        )
+        if not to_download:
+            arena_of_makers_updater.save_state(folder, head, synced)
+            return {"available": False, "unreachable": False,
+                    "folder": folder, "remote": head, "reason": ""}
+        return {"available": True, "unreachable": False,
+                "folder": folder, "remote": head,
+                "reason": "no-version-note"}
+    except Exception:
+        logging.exception("Launch: update check failed.")
+        return {"available": False, "unreachable": True,
+                "folder": folder, "remote": None,
+                "reason": "github-unreachable"}
+
+
+def maybe_update_at_launch(game_dir):
+    """Offer a newer version at launch, if there is one.
+
+    Returns True when the game should stop after an update,
+    so the player restarts into the new version. Returns
+    False when the game should carry on and play: no update
+    waiting, GitHub unreachable, the player said No, or the
+    update did not finish. Nothing here ever updates
+    without the player saying Yes first.
+
+    Why stop instead of restarting in place: Python has
+    already loaded the old .py files, so the new files only
+    take effect after a restart. The check runs before any
+    sound file is loaded, so replacing files on disk is
+    safe — nothing the game is using is open — but
+    restarting from inside the game on Windows is fragile
+    (the .bat, the frozen exe), so the game says so in
+    plain words and closes instead.
+    """
+    update = check_for_update_at_launch(game_dir)
+    if update["unreachable"]:
+        logging.info("Launch: could not reach GitHub to check for updates.")
+        wx.MessageBox(
+            "Could not check for updates just now. "
+            "Playing the current version.",
+            APP_TITLE,
+            wx.OK | wx.ICON_INFORMATION,
+        )
+        return False
+    if not update["available"]:
+        return False
+    question = (
+        "A new version of Arena of Makers is ready. "
+        "Do you want to update now? If you say No, you can "
+        "keep playing this version, and the game will ask "
+        "again next time you open it."
+    )
+    dialog = _ConfirmDialog(None, question)
+    answer = dialog.ShowModal()
+    dialog.Destroy()
+    if answer != wx.ID_YES:
+        logging.info("Launch: player said No to the update.")
+        return False
+    lines = []
+    ok = arena_of_makers_updater.sync_game(
+        update["folder"], lines.append, include_updater=True
+    )
+    if ok:
+        logging.info("Launch: updated to %s.", update["remote"])
+        wx.MessageBox(
+            "Update finished. Close the game and open it again "
+            "to play the new version.",
+            APP_TITLE,
+            wx.OK | wx.ICON_INFORMATION,
+        )
+        return True
+    logging.warning(
+        "Launch: update did not finish: %s",
+        lines[-1] if lines else "no detail",
+    )
+    wx.MessageBox(
+        "The update did not finish. You can keep playing this "
+        "version, or close the game and run the updater to try again.",
+        APP_TITLE,
+        wx.OK | wx.ICON_INFORMATION,
+    )
+    return False
+
+
 def run_game():
     app = wx.App()
     # Launch gate: online-only. No .env, no key in the right
@@ -1703,6 +1892,17 @@ def run_game():
             "Arena of Makers - online check",
             wx.OK | wx.ICON_INFORMATION,
         )
+        return
+
+    # Update check (Phase 19): quietly ask GitHub whether
+    # main is newer than this copy, before signing in. If
+    # the player says Yes and the update works, the game
+    # stops here so a restart plays the new version.
+    # Anything else — no update, no answer from GitHub,
+    # No, or a failed update — just plays the current
+    # version. The standalone updater stays as the backup
+    # if this ever fails to connect or take the new version.
+    if maybe_update_at_launch(GAME_DIR):
         return
 
     # Sign in: the player types their username,

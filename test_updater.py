@@ -237,10 +237,140 @@ def test_sync_game_uses_found_folder():
     print("Sync game found folder tests passed.")
 
 
+def test_updater_file_protection():
+    """The updater's own file: the standalone updater never
+    replaces it (it is running then), but the game's launch
+    update may refresh it, so the backup never goes stale
+    the way Makenna's old updater did in 2026-11-18.
+    """
+    base = tempfile.mkdtemp()
+    game_dir = os.path.join(base, "Arena of Makers")
+    _make_game(game_dir, head="abc123")
+    _write(os.path.join(game_dir, "arena_of_makers_updater.py"),
+           "# old updater\n")
+    tree = [
+        {"path": "main.py",
+         "sha": updater.local_blob_hash(os.path.join(game_dir, "main.py"))},
+        {"path": "arena_of_makers_updater.py",
+         "sha": updater.blob_hash(b"# new updater\n")},
+    ]
+
+    # The standalone updater's own sync: the updater file is
+    # skipped, so a running updater never replaces itself.
+    to_download, _left, synced = updater.plan_sync(tree, game_dir)
+    check("standalone sync skips the updater file",
+          all(e["path"] != "arena_of_makers_updater.py"
+              for e in to_download)
+          and "arena_of_makers_updater.py" not in synced)
+
+    # The game's launch update: the updater file is compared
+    # and synced like any other file.
+    to_download, _left, synced = updater.plan_sync(
+        tree, game_dir, include_updater=True)
+    check("game sync offers the new updater file",
+          any(e["path"] == "arena_of_makers_updater.py"
+              for e in to_download)
+          and "arena_of_makers_updater.py" in synced)
+
+    # A fresh install from a zipball: the standalone install
+    # skips the updater file, the game's install takes it.
+    zip_path = os.path.join(base, "game.zip")
+    _make_zipball(zip_path, {
+        "main.py": "# game\n",
+        "arena_of_makers_updater.py": "# new updater\n",
+    })
+    fresh = os.path.join(base, "Fresh")
+    log = []
+    ok, _message, installed = updater.install_from_zip(
+        zip_path, fresh, log.append)
+    check("standalone install skips the updater file",
+          ok is True
+          and not os.path.exists(
+              os.path.join(fresh, "arena_of_makers_updater.py")))
+    ok, _message, installed = updater.install_from_zip(
+        zip_path, fresh, log.append, include_updater=True)
+    check("game install takes the updater file",
+          ok is True
+          and os.path.exists(
+              os.path.join(fresh, "arena_of_makers_updater.py"))
+          and "arena_of_makers_updater.py" in installed)
+    print("Updater file protection tests passed.")
+
+
+def test_sync_game_updates_updater():
+    """End to end, headless: the game's sync replaces the
+    old updater file, and the standalone sync leaves it
+    alone. The launcher .bat stays protected either way.
+    """
+    base = tempfile.mkdtemp()
+    game_dir = os.path.join(base, "Arena of Makers")
+    _make_game(game_dir, head="oldhead")
+    _write(os.path.join(game_dir, "arena_of_makers_updater.py"),
+           "# old updater\n")
+    _write(os.path.join(game_dir, "run_arena_of_makers_updater.bat"),
+           "old launcher\n")
+    new_updater = b"# new updater\n"
+    contents = {
+        "main.py": b"# game\n",
+        "arena_of_makers_updater.py": new_updater,
+    }
+    tree = [
+        {"path": path, "sha": updater.blob_hash(data)}
+        for path, data in contents.items()
+    ]
+
+    logs = []
+    old_head = updater.get_head_sha
+    old_tree = updater.get_tree
+    old_download = updater.download_file
+    try:
+        updater.get_head_sha = lambda: "newhead"
+        updater.get_tree = lambda: tree
+
+        def _fake_download(path, sha, size, dest):
+            with open(dest, "wb") as handle:
+                handle.write(contents[path])
+            return True, ""
+
+        updater.download_file = _fake_download
+
+        # Standalone first: the updater file is untouched.
+        result = updater.sync_game(game_dir, logs.append)
+        check("standalone sync succeeds", result is True)
+        check("standalone sync leaves the updater file alone",
+              open(os.path.join(
+                  game_dir, "arena_of_makers_updater.py"),
+                  encoding="utf-8").read() == "# old updater\n")
+
+        # The game's sync: the updater file is refreshed,
+        # the launcher .bat is still left alone.
+        result = updater.sync_game(
+            game_dir, logs.append, include_updater=True)
+        check("game sync succeeds", result is True)
+        check("game sync refreshes the updater file",
+              open(os.path.join(
+                  game_dir, "arena_of_makers_updater.py"),
+                  encoding="utf-8").read() == "# new updater\n")
+        check("game sync still leaves the launcher alone",
+              open(os.path.join(
+                  game_dir, "run_arena_of_makers_updater.bat"),
+                  encoding="utf-8").read() == "old launcher\n")
+        head, _files = updater.load_state(game_dir)
+        check("the version note holds the new commit id",
+              head == "newhead")
+    finally:
+        updater.get_head_sha = old_head
+        updater.get_tree = old_tree
+        updater.download_file = old_download
+    print("Sync game updates updater tests passed.")
+
+
 if __name__ == "__main__":
     test_folder_normalisation()
     test_find_installed_folder()
     test_install_from_zip()
     test_sync_game_writes_version_note()
     test_sync_game_uses_found_folder()
+    test_updater_file_protection()
+    test_sync_game_updates_updater()
     print("\nAll updater tests passed.")

@@ -15,6 +15,25 @@ Run it with: `python main.py`
 - **Settings** — change voice, turn sound effects or background
   music on or off, and raise or lower the volume.
 
+## Updates
+
+When the game opens, it quietly checks GitHub to see whether a
+newer version is on `main`. If there is one, it asks, in plain
+words, whether you want to update now or keep playing this
+version. Say Yes and it downloads the update, then tells you to
+close the game and open it again to play the new version. Say
+No and it just plays, and asks again next time you open it. It
+never updates without asking, and never updates silently. If
+GitHub cannot be reached, it just plays the current version and
+says so. In exe mode it offers the latest Release the same way.
+
+If the in-game update ever fails to connect or does not take
+the new version, the standalone updater is still there as a
+backup: run `arena_of_makers_updater.py` (or
+`run_arena_of_makers_updater.bat`) and press "Check for
+updates". The game keeps the updater itself up to date, so the
+backup never goes stale.
+
 ## Sounds
 
 Sound effects and background music are royalty-free only, from

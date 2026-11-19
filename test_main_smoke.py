@@ -1201,6 +1201,126 @@ def sounds_test():
     print("\nAll sound bank tests passed.")
 
 
+def launch_update_test():
+    """Launch update check (Phase 19): the game asks
+    GitHub at launch, offers Yes/No, and never updates
+    without being told to. No network is used: the
+    updater's GitHub calls are stubbed here.
+    """
+    import json
+    import tempfile
+    import arena_of_makers_updater as updater
+
+    def _make_game(folder, head="abc123"):
+        os.makedirs(folder, exist_ok=True)
+        with open(os.path.join(folder, "main.py"),
+                  "w", encoding="utf-8") as handle:
+            handle.write("# game\n")
+        with open(os.path.join(folder, updater.VERSION_FILE_NAME),
+                  "w", encoding="utf-8") as handle:
+            json.dump({"head_sha": head, "files": ["main.py"]}, handle)
+
+    wx = sys.modules["wx"]
+    base = tempfile.mkdtemp()
+    game_dir = os.path.join(base, "Arena of Makers")
+    _make_game(game_dir)
+
+    old_head = updater.get_head_sha
+    old_tree = updater.get_tree
+    old_release = updater.get_latest_release
+    old_sync = updater.sync_game
+    try:
+        # Up to date: no question, just play.
+        updater.get_head_sha = lambda timeout=60: "abc123"
+        result = main.check_for_update_at_launch(game_dir)
+        check("up to date means no update offered",
+              result["available"] is False
+              and result["unreachable"] is False)
+
+        # GitHub unreachable: play on, not a crash, and the
+        # player is told in plain words.
+        updater.get_head_sha = lambda timeout=60: None
+        result = main.check_for_update_at_launch(game_dir)
+        check("GitHub unreachable means play on, not a crash",
+              result["available"] is False
+              and result["unreachable"] is True)
+        check("unreachable still plays on",
+              main.maybe_update_at_launch(game_dir) is False)
+
+        # A newer version is waiting: No plays on and does
+        # not start the update.
+        updater.get_head_sha = lambda timeout=60: "def456"
+        calls = []
+        updater.sync_game = (
+            lambda folder, log, include_updater=False:
+            calls.append(include_updater) or True
+        )
+        wx.Dialog.modal_result = wx.ID_NO
+        check("saying No to the update plays on",
+              main.maybe_update_at_launch(game_dir) is False)
+        check("saying No does not start the update", calls == [])
+
+        # Yes applies the update, including the updater's
+        # own file, and the game stops so a restart plays
+        # the new version.
+        wx.Dialog.modal_result = wx.ID_YES
+        check("saying Yes stops the game after the update",
+              main.maybe_update_at_launch(game_dir) is True)
+        check("Yes updates through the game, updater file included",
+              calls == [True])
+
+        # A failed update plays on instead of quitting.
+        updater.sync_game = (
+            lambda folder, log, include_updater=False: False
+        )
+        check("a failed update plays on",
+              main.maybe_update_at_launch(game_dir) is False)
+        wx.Dialog.modal_result = 1  # back to ID_OK
+
+        # No version note, files already matching main: the
+        # note is written quietly and no question is asked.
+        plain_dir = os.path.join(base, "Plain")
+        os.makedirs(plain_dir)
+        with open(os.path.join(plain_dir, "main.py"),
+                  "w", encoding="utf-8") as handle:
+            handle.write("# game\n")
+        updater.get_tree = lambda timeout=60: [
+            {"path": "main.py",
+             "sha": updater.local_blob_hash(
+                 os.path.join(plain_dir, "main.py"))}
+        ]
+        result = main.check_for_update_at_launch(plain_dir)
+        check("matching files without a note play on quietly",
+              result["available"] is False
+              and result["unreachable"] is False)
+        head, _files = updater.load_state(plain_dir)
+        check("matching files write the version note",
+              head == "def456")
+
+        # No version note, files different from main: the
+        # update is offered.
+        updater.get_tree = lambda timeout=60: [
+            {"path": "main.py",
+             "sha": updater.blob_hash(b"# newer game\n")},
+            {"path": "arena_of_makers_updater.py",
+             "sha": updater.blob_hash(b"# newer updater\n")},
+        ]
+        plain2 = os.path.join(base, "Plain2")
+        os.makedirs(plain2)
+        with open(os.path.join(plain2, "main.py"),
+                  "w", encoding="utf-8") as handle:
+            handle.write("# game\n")
+        result = main.check_for_update_at_launch(plain2)
+        check("different files without a note are offered the update",
+              result["available"] is True)
+    finally:
+        updater.get_head_sha = old_head
+        updater.get_tree = old_tree
+        updater.get_latest_release = old_release
+        updater.sync_game = old_sync
+    print("Launch update tests passed.")
+
+
 if __name__ == "__main__":
     main_test()
     currency_wording_test()
@@ -1209,3 +1329,4 @@ if __name__ == "__main__":
     sounds_test()
     voice_failure_test()
     voice_playback_failure_test()
+    launch_update_test()
