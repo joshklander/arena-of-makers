@@ -479,7 +479,8 @@ def main_test():
     # Phase 24 (Makenna, Nov 18, 2026): the button says just
     # "Fight" — no creature name — and pressing it picks a
     # random creature each time, not always Scrap Rat.
-    # Auto-fight is unchanged: its fights are Scrap Rat.
+    # (Auto-fight picks random creatures too — see the
+    # idle-fight check below, Makenna Nov 18, 2026.)
     frame.random.seed(11)
     log_before = len(frame.logs["Combat"].text)
     seen_creatures = set()
@@ -500,19 +501,28 @@ def main_test():
     check("pressing Fight picks different creatures, "
           "not always scrap rat",
           len(seen_creatures) > 1)
-    # Auto-fight is unchanged (Makenna, Nov 18, 2026): an
-    # idle fight is against Scrap Rat, as before — the random
-    # pick applies to the manual Fight button only.
-    server["fighter"]["repair_until"] = 0
-    fighter["repair_until"] = 0
-    server["fighter"]["hp"] = game_logic.fighter_max_hp(
-        server["fighter"])
-    fighter["hp"] = game_logic.fighter_max_hp(fighter)
+    # Phase 24 follow-up (Makenna, Nov 18, 2026): auto-fight
+    # picks a random creature too — repeated idle fights give
+    # different creatures, not always Scrap Rat.
+    frame.random.seed(23)
+    idle_creatures = set()
     log_before = len(frame.logs["Combat"].text)
-    frame.do_fight(idle=True)
-    check("an idle fight is still against scrap rat",
-          "A Scrap Rat appears!"
-          in frame.logs["Combat"].text[log_before:])
+    for _ in range(10):
+        server["fighter"]["repair_until"] = 0
+        fighter["repair_until"] = 0
+        server["fighter"]["hp"] = game_logic.fighter_max_hp(
+            server["fighter"])
+        fighter["hp"] = game_logic.fighter_max_hp(fighter)
+        frame.do_fight(idle=True)
+        new_text = frame.logs["Combat"].text[log_before:]
+        log_before = len(frame.logs["Combat"].text)
+        for name in ["Scrap Rat"] + [npc["name"]
+                                     for npc in game_logic.NPCS.values()]:
+            if ("A %s appears!" % name) in new_text:
+                idle_creatures.add(name)
+    check("auto-fight picks different creatures, "
+          "not always scrap rat",
+          len(idle_creatures) > 1)
 
     # Idle fighting toggles on and off.
     frame.toggle_idle()

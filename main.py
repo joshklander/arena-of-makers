@@ -1269,16 +1269,16 @@ class MainFrame(wx.Frame):
         so the 5-second gap is a minimum wait, never an
         interrupt.
 
-        The opponent for a manual fight is one creature picked
-        at random from the pool — Scrap Rat or one of the 9 NPCs
-        (Phase 24, Makenna Nov 18, 2026) — all at the fighter's
-        own level, so fights stay fair. Auto-fight is unchanged:
-        it is just a toggle, on or off, and its fights are
-        against Scrap Rat, as before — the random pick applies
-        to the manual Fight button only. A caller may pass
-        npc_id to fight one creature in particular (the tests
-        do). A fight against another player (opponent_code)
-        never picks a creature.
+        The opponent for a fight — manual or idle — is one
+        creature picked at random from the pool — Scrap Rat or
+        one of the 9 NPCs (Phase 24, Makenna Nov 18, 2026) —
+        all at the fighter's own level, so fights stay fair.
+        Auto-fight picks random creatures too (Makenna, Nov 18,
+        2026 — follow-up to Phase 24): it is still just a
+        toggle, on or off, and nothing else about it changes.
+        A caller may pass npc_id to fight one creature in
+        particular (the tests do). A fight against another
+        player (opponent_code) never picks a creature.
 
         Online, the server runs the fight with its own dice and
         sends back the lines and the new fighter; the server
@@ -1288,11 +1288,11 @@ class MainFrame(wx.Frame):
         # Music follows the fight: an auto-fight keeps the fight
         # track playing, a manual fight has sound effects only.
         self._refresh_music()
-        if opponent_code is None and npc_id is None and not idle:
-            # Manual Fight only: one creature picked at random
-            # each press (Makenna, Nov 18, 2026). Auto-fight is
-            # unchanged — its fights are against Scrap Rat, as
-            # before — so the random pick never touches it.
+        if opponent_code is None and npc_id is None:
+            # One creature picked at random each fight
+            # (Makenna, Nov 18, 2026) — manual Fight and
+            # auto-fight alike. Auto-fight is still just a
+            # toggle, on or off; only its opponent is random now.
             npc_id = game_logic.random_npc_id(self.random)
         if self.online_config:
             if opponent_code is not None:
