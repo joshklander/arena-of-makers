@@ -95,10 +95,10 @@ GIVERS = [
     {"name": "Dot", "voice": "en-US-MichelleNeural",
      "gender": "female",
      "personality": "the calm repair drone"},
-    {"name": "Gus", "voice": "en-US-DavisNeural",
+    {"name": "Gus", "voice": "en-US-AndrewNeural",
      "gender": "male",
      "personality": "the old grill master"},
-    {"name": "Belle", "voice": "en-US-SaraNeural",
+    {"name": "Belle", "voice": "en-US-EmmaNeural",
      "gender": "female",
      "personality": "the cheerful baker"},
 ]

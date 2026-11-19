@@ -859,7 +859,10 @@ class MainFrame(wx.Frame):
                 error,
             )
             return None
-        voice = voice_engine.EdgeVoice(voice_name, self._on_voice_file)
+        voice = voice_engine.EdgeVoice(
+            voice_name, self._on_voice_file,
+            fail_callback=self._on_voice_failed,
+            fallback_voice=voice_name)
         if not voice.start():
             return None
         self._player_ready = True
@@ -869,6 +872,23 @@ class MainFrame(wx.Frame):
         """Called on the voice thread when a line is ready to play.
         Hop to the UI thread before touching the player."""
         wx.CallAfter(self._play_voice_file, path)
+
+    def _on_voice_failed(self):
+        """Called on the voice thread when a line could not be
+        spoken at all, even after a retry and a fallback voice.
+        Hop to the UI thread before touching the narration flags."""
+        wx.CallAfter(self._clear_narration_waiting)
+
+    def _clear_narration_waiting(self):
+        """A line that will never sound is over: stop waiting
+        for it, so the next queued line can speak. Without this,
+        one failed line leaves _narration_waiting True forever
+        and every later quest line queues behind it, unheard —
+        exactly what Makenna saw on 2026-11-18, when a dead
+        giver voice silenced the whole hangout (Phase 27)."""
+        self._narration_waiting = False
+        self._narration_playing = False
+        self._narration_next_at = 0.0
 
     def _release_voice_file(self):
         """Stop playback and let go of the current file, so Windows
@@ -991,9 +1011,13 @@ class MainFrame(wx.Frame):
         voice when voice_name is None. Quest givers speak in
         their own voice (Bolt, Marge, Pip, Dot, Gus, Belle);
         the player's fighter keeps the voice they chose.
-        Narration entries are (text, voice) pairs, so a
-        giver's line queued behind a fight is still spoken
-        in the giver's voice when its turn comes."""
+        When a giver's voice cannot be reached, the voice
+        engine speaks that line in the player's voice instead
+        (Phase 27), so the game never goes silent — the giver's
+        name stays in the spoken text. Narration entries are
+        (text, voice) pairs, so a giver's line queued behind a
+        fight is still spoken in the giver's voice when its
+        turn comes."""
         text = (text or "").strip()
         if not text:
             return
@@ -1008,7 +1032,11 @@ class MainFrame(wx.Frame):
         # The line is being made now: mark it waiting, so the
         # next idle fight does not start and cut it off while
         # the voice is still synthesising it. _play_voice_file
-        # clears this the moment the line starts sounding.
+        # clears this the moment the line starts sounding, and
+        # _on_voice_failed clears it when the line can never
+        # sound. If speak() itself refuses the line, clear it
+        # here: a refused line must never leave the narration
+        # stuck waiting for it.
         self._narration_waiting = True
         if voice_name:
             self.voice.set_voice(voice_name)
@@ -1016,7 +1044,8 @@ class MainFrame(wx.Frame):
             self.voice.set_voice(
                 voice_engine.voice_for_gender(
                     self.fighter.get("gender", "male")))
-        self.voice.speak(text)
+        if not self.voice.speak(text):
+            self._narration_waiting = False
 
     def announce_sequence(self, lines, pause_seconds=TURN_PAUSE_SECONDS):
         """Speak lines one at a time, in order, with a short pause
@@ -1056,17 +1085,29 @@ class MainFrame(wx.Frame):
             self.voice.set_voice(
                 voice_engine.voice_for_gender(
                     self.fighter.get("gender", "male")))
-        self.voice.speak(line)
+        if not self.voice.speak(line):
+            # The voice refused the line (its thread died, or
+            # the service is gone): it will never sound, so do
+            # not wait for it — the next queued line must still
+            # get its turn (Phase 27).
+            self._narration_waiting = False
 
     def _advance_narration(self, now):
         """Called once a second from on_tick. Speaks the next
         narration line when the current one has finished playing
         and the pause after it has passed. Does nothing while a
-        line is still being made or is still sounding."""
+        line is still being made or is still sounding. If the
+        voice died while a line was being made, that line will
+        never sound: stop waiting for it here too, so the queue
+        can still drain (Phase 27 — the safety net under the
+        voice engine's failed-line notice)."""
         if not self._narration_queue:
             return
         if self._narration_waiting:
-            return
+            if self.voice is not None and not self.voice.available:
+                self._clear_narration_waiting()
+            else:
+                return
         if pygame is None:
             return
         try:

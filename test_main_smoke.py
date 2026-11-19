@@ -1190,8 +1190,10 @@ def _make_failing_edge_tts():
 
 def voice_failure_test():
     """With a voice service that always fails, the failure is logged
-    in plain words, the engine goes dead, and later lines are dropped
-    with one log line instead of silence or a flood."""
+    in plain words naming the voice, the line is retried once, and
+    the engine stays alive: one failed line never kills the voice
+    for the whole session (Phase 27, Makenna 2026-11-18). Later
+    lines are tried again instead of being silently dropped."""
     import importlib
     import voice_engine
 
@@ -1201,15 +1203,28 @@ def voice_failure_test():
     voice = voice_engine.EdgeVoice(voice_engine.FEMALE_VOICE, lambda path: None)
     check("failing voice still starts its thread", voice.start() is True)
     voice.speak("This line will fail.")
-    check("failed synthesis is logged in plain words",
-          wait_for_log("the voice service failed (ConnectionError: test: no network)"))
-    check("engine is dead after a failed synthesis", voice.available is False)
-    before = LOG_CAPTURE.getvalue().count("Voice: not spoken")
+    check("failed synthesis is logged in plain words naming the voice",
+          wait_for_log("the voice service failed for voice "
+                       "en-US-AriaNeural (ConnectionError: test: no network)"))
+    check("a transient failure is retried once",
+          wait_for_log("Voice en-US-AriaNeural failed once "
+                       "(ConnectionError: test: no network); trying once more."))
+    check("engine is still available after a transient failure",
+          voice.available is True)
+    failures_before = LOG_CAPTURE.getvalue().count(
+        "the voice service failed for voice")
     voice.speak("Another line.")
-    voice.speak("And another.")
-    time.sleep(0.5)
-    check("dropped lines are logged once, not once per line",
-          LOG_CAPTURE.getvalue().count("Voice: not spoken") == before + 1)
+    deadline = time.time() + 5
+    tried_again = False
+    while time.time() < deadline:
+        time.sleep(0.05)
+        if LOG_CAPTURE.getvalue().count(
+                "the voice service failed for voice") > failures_before:
+            tried_again = True
+            break
+    check("a later line is tried again after a failure", tried_again)
+    check("engine is still available after the second failure",
+          voice.available is True)
     voice.stop()
     check("voice thread shutdown is logged",
           "Voice thread stopped." in LOG_CAPTURE.getvalue())
@@ -1234,6 +1249,240 @@ def voice_playback_failure_test():
           wait_for_log("the voice file could not be played"))
     frame.on_close(mock.MagicMock())
     print("\nAll voice playback failure tests passed.")
+
+
+def _make_dead_voice_edge_tts():
+    """A stand-in edge-tts where the two retired voices (Davis,
+    Sara) always fail with NoAudioReceived, and every other voice
+    works. Counts every synthesis attempt per voice, so a test
+    can tell whether a dead voice was retried."""
+
+    class NoAudioReceived(Exception):
+        pass
+
+    class _DeadVoiceCommunicate:
+        attempts = {}
+
+        def __init__(self, text, voice):
+            self.text = text
+            self.voice = voice
+
+        async def save(self, path):
+            _DeadVoiceCommunicate.attempts[self.voice] = \
+                _DeadVoiceCommunicate.attempts.get(self.voice, 0) + 1
+            if self.voice in ("en-US-DavisNeural", "en-US-SaraNeural"):
+                raise NoAudioReceived(
+                    "No audio was received. Please verify that your "
+                    "parameters are correct.")
+            with open(path, "wb") as handle:
+                handle.write(("fake-mp3:" + self.text).encode("utf-8"))
+
+    module = types.ModuleType("edge_tts")
+    module.Communicate = _DeadVoiceCommunicate
+    return module
+
+
+def phase27_voice_test():
+    """Dead giver voices (Makenna Nov 18, 2026, Phase 27): Gus
+    and Belle get working voices, a line in a dead voice falls
+    back to the player's voice instead of silencing the game,
+    and a failed line never leaves the narration stuck waiting
+    — the next line, and the 5-minute quest progress update,
+    still speak."""
+    import copy
+    import importlib
+    import quests as quests_module
+    import online_save as _online_save
+    import voice_engine
+
+    # 1. The giver table: Gus and Belle have working voices now,
+    #    and nobody else changed.
+    check("Gus speaks with Andrew now",
+          quests_module.GIVER_BY_NAME["Gus"]["voice"] == "en-US-AndrewNeural")
+    check("Belle speaks with Emma now",
+          quests_module.GIVER_BY_NAME["Belle"]["voice"] == "en-US-EmmaNeural")
+    check("Bolt, Marge, Pip and Dot keep their voices",
+          quests_module.GIVER_BY_NAME["Bolt"]["voice"]
+          == "en-US-ChristopherNeural"
+          and quests_module.GIVER_BY_NAME["Marge"]["voice"]
+          == "en-US-JennyNeural"
+          and quests_module.GIVER_BY_NAME["Pip"]["voice"]
+          == "en-US-EricNeural"
+          and quests_module.GIVER_BY_NAME["Dot"]["voice"]
+          == "en-US-MichelleNeural")
+    check("the dead Davis and Sara voices are gone from the giver table",
+          all(giver["voice"] not in ("en-US-DavisNeural", "en-US-SaraNeural")
+              for giver in quests_module.GIVERS))
+    check("the player voices are unchanged",
+          voice_engine.MALE_VOICE == "en-US-GuyNeural"
+          and voice_engine.FEMALE_VOICE == "en-US-AriaNeural")
+
+    # 2. A line in a dead voice falls back to the player's voice.
+    sys.modules["edge_tts"] = _make_dead_voice_edge_tts()
+    importlib.reload(voice_engine)
+    importlib.reload(main)
+    media = sys.modules["pygame"].mixer.music
+    media.fail_load = False
+
+    def _drain(frame):
+        while frame._narration_queue:
+            _finish_line_and_advance(frame)
+        media.finish()
+
+    def _spoken(frame, text, timeout=8.0, after=0):
+        """True once the voice log shows this line being spoken.
+        Advances the one-second timer while waiting, like the
+        real game does — a line queued behind one still
+        speaking only sounds once the timer advances it. `after`
+        is a log position to look past, so a line an earlier
+        test already spoke cannot pass this check."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if ('Voice: speaking "' + text) in LOG_CAPTURE.getvalue()[after:]:
+                return True
+            _finish_line_and_advance(frame)
+        return ('Voice: speaking "' + text) in LOG_CAPTURE.getvalue()[after:]
+
+    fighter = game_logic.new_fighter("Katprincess", "robot", "male")
+    fighter["credits"] = 100
+    fighter["player_code"] = "2169"
+    frame = main.MainFrame(fighter)
+    check("voice is on for the Phase 27 test", frame.voice is not None)
+    check("welcome line speaks first",
+          _wait_spoken(frame, "Welcome to Arena of Makers, Katprincess."))
+    _drain(frame)
+    frame.announce_as("Gus asks: fetch the scrap.", "en-US-DavisNeural")
+    check("a dead-voice line is still spoken, in the fallback voice",
+          _wait_spoken(frame, "Gus asks: fetch the scrap."))
+    check("the dead voice is logged by name",
+          wait_for_log("Voice en-US-DavisNeural is not available "
+                       "from the voice service"))
+    check("the fallback line was made with the player's voice",
+          wait_for_log('Voice: made "Gus asks: fetch the scrap." '
+                       "with en-US-GuyNeural"))
+    check("the dead voice was tried only once",
+          sys.modules["edge_tts"].Communicate.attempts.get(
+              "en-US-DavisNeural", 0) == 1)
+    check("the engine stays available after a dead voice",
+          frame.voice.available is True)
+    _finish_line_and_advance(frame)
+    frame.announce_as("Gus asks: fetch another scrap.", "en-US-DavisNeural")
+    check("a second dead-voice line falls back too",
+          _wait_spoken(frame, "Gus asks: fetch another scrap."))
+    check("the dead voice is not retried",
+          sys.modules["edge_tts"].Communicate.attempts.get(
+              "en-US-DavisNeural", 0) == 1)
+    _drain(frame)
+
+    # 3. A Gus quest starts in Andrew's voice, a Belle quest in
+    #    Emma's voice, and the 5-minute progress update speaks.
+    board = [
+        {"id": "q-gus", "name": "Rescue the Burnt Dish",
+         "difficulty": "Medium", "giver": "Gus",
+         "giver_voice": "en-US-AndrewNeural", "ambience": "cooking",
+         "description": "A pan was left on too long. Save dinner "
+                        "before the smoke alarm goes off.",
+         "duration_minutes": 30},
+        {"id": "q-belle", "name": "Perfect the Recipe",
+         "difficulty": "Medium", "giver": "Belle",
+         "giver_voice": "en-US-EmmaNeural", "ambience": "cooking",
+         "description": "A cake keeps coming out flat. Taste it and "
+                        "tell the baker what it needs.",
+         "duration_minutes": 30},
+    ]
+
+    def _fake_start_quest(config, quest_id):
+        quest = next((q for q in board if q["id"] == quest_id), None)
+        if quest is None:
+            return {}, "That quest is not on your board."
+        started = dict(quest)
+        started["started_at"] = time.time()
+        started["finish_at"] = (started["started_at"]
+                                + started["duration_minutes"] * 60)
+        return {"fighter": copy.deepcopy(fighter),
+                "quest": started}, None
+
+    _online_save.start_quest = _fake_start_quest
+    frame._quests_active = True
+    frame._quest_board = list(board)
+    log_before = LOG_CAPTURE.getvalue()
+    frame._begin_quest(board[0])
+    check("a Gus quest speaks in Andrew's voice",
+          _spoken(frame, "Gus asks: A pan was left on too",
+                  after=len(log_before)))
+    # The "speaking" log appears at once, but the worker logs
+    # "made" a moment later — wait for it in the new log
+    # before checking which voice made it.
+    deadline = time.time() + 5
+    new_log = ""
+    while time.time() < deadline:
+        time.sleep(0.05)
+        new_log = LOG_CAPTURE.getvalue()[len(log_before):]
+        if 'Voice: made "Gus asks: A pan was left on' in new_log:
+            break
+    check("the Gus quest line was made with Andrew",
+          'Voice: made "Gus asks: A pan was left on' in new_log
+          and "with en-US-AndrewNeural" in new_log)
+    _drain(frame)
+    frame._quest_current["finish_at"] = time.time() + 600
+    frame._quest_last_progress_at = time.time() - 301
+    log_before = LOG_CAPTURE.getvalue()
+    frame.on_tick(mock.MagicMock())
+    check("a quest progress update still speaks",
+          _spoken(frame, "Your quest is about ", after=len(log_before)))
+    _drain(frame)
+    log_before = LOG_CAPTURE.getvalue()
+    frame._begin_quest(board[1])
+    check("a Belle quest speaks in Emma's voice",
+          _spoken(frame, "Belle asks: A cake keeps coming out",
+                  after=len(log_before)))
+    deadline = time.time() + 5
+    new_log = ""
+    while time.time() < deadline:
+        time.sleep(0.05)
+        new_log = LOG_CAPTURE.getvalue()[len(log_before):]
+        if 'Voice: made "Belle asks: A cake keeps coming out' in new_log:
+            break
+    check("the Belle quest line was made with Emma",
+          'Voice: made "Belle asks: A cake keeps coming out' in new_log
+          and "with en-US-EmmaNeural" in new_log)
+    _drain(frame)
+    frame.on_close(mock.MagicMock())
+
+    # 4. When every voice fails, the failed line does not leave
+    #    the narration stuck waiting — the next line is still
+    #    attempted, not queued forever.
+    sys.modules["edge_tts"] = _make_failing_edge_tts()
+    importlib.reload(voice_engine)
+    importlib.reload(main)
+    sys.modules["pygame"].mixer.music.fail_load = False
+    dead_frame = main.MainFrame(
+        game_logic.new_fighter("Rusty", "robot", "male"))
+    check("voice is on even when the service always fails",
+          dead_frame.voice is not None)
+    check("the welcome line fails and names the voice",
+          wait_for_log("the voice service failed for voice "
+                       "en-US-GuyNeural (ConnectionError: test: no network)"))
+    time.sleep(0.5)
+    dead_frame.announce_as("Gus asks: fetch the scrap.",
+                           "en-US-AndrewNeural")
+    check("a failed quest line is logged naming the voice",
+          wait_for_log("the voice service failed for voice "
+                       "en-US-AndrewNeural (ConnectionError: test: no network)"))
+    time.sleep(0.5)
+    check("a failed line does not leave the narration waiting",
+          dead_frame._narration_waiting is False)
+    check("a failed line does not leave the narration busy",
+          dead_frame._narration_busy() is False)
+    check("the engine stays available after a total failure",
+          dead_frame.voice.available is True)
+    dead_frame.announce("A later line still speaks.")
+    check("a later line is attempted, not queued forever",
+          wait_for_log('Voice: speaking "A later line still speaks.'))
+    check("the later line is not stuck in the queue",
+          dead_frame._narration_queue == [])
+    dead_frame.on_close(mock.MagicMock())
+    print("\nAll Phase 27 voice tests passed.")
 
 
 def _wait_spoken(frame, text, timeout=5.0):
@@ -1374,9 +1623,9 @@ def currency_wording_test():
     # 5 heals to full after every fight. The quest growth one
     # (Phase 26) makes durations, quest credits and the
     # automatic quest-stat bonus all grow with the quest
-    # level. The newest migration is the quest bonus one
-    # (Makenna Nov 18, 2026): the automatic bonus grows
-    # right from the start, 1% already at quest level 1.
+    # level. The newest migration is the dead giver voices one
+    # (Phase 27, Makenna Nov 18, 2026): Gus speaks with Andrew
+    # and Belle with Emma, because Davis and Sara are retired.
     # The quest pause migration (Phase 22) is still there,
     # and quest completion must never check repairs. No
     # migration may say "points" for the currency.
@@ -1439,18 +1688,41 @@ def currency_wording_test():
           "coalesce((f ->> 'healing_level')::integer, 0) + 1" in hotfix_mig)
     check("hotfix migration touches no fight function",
           "arena_fight" not in hotfix_mig)
-    # Quest bonus from level 1 (Makenna Nov 18, 2026): the newest
-    # migration redefines arena_complete_quest so the automatic
-    # bonus is quest level x 1% — 1% already at quest level 1.
-    newest = open(os.path.join(mig_dir, names[-1]), encoding="utf-8").read()
-    check("newest migration is the quest bonus from level 1",
-          "quest_bonus_from_level1" in names[-1])
+    # Quest bonus from level 1 (Makenna Nov 18, 2026): it redefines
+    # arena_complete_quest so the automatic bonus is quest level x
+    # 1% — 1% already at quest level 1. It is no longer the newest
+    # migration — the dead giver voices one (Phase 27, below) is —
+    # so it is read by name, like the hotfix above.
+    bonus_mig = open(os.path.join(
+        mig_dir, [n for n in names if "quest_bonus_from_level1" in n][0]),
+        encoding="utf-8").read()
     check("bonus migration gives 1 percent at quest level 1",
-          "arena_complete_quest" in newest
-          and "v_auto := greatest(0, v_qlevel);" in newest)
+          "arena_complete_quest" in bonus_mig
+          and "v_auto := greatest(0, v_qlevel);" in bonus_mig)
     check("bonus migration drops the old level minus one formula",
-          "v_qlevel - 1" not in newest)
+          "v_qlevel - 1" not in bonus_mig)
     check("bonus migration touches no fight function",
+          "arena_fight" not in bonus_mig)
+    # Dead giver voices (Makenna Nov 18, 2026, Phase 27): the newest
+    # migration redefines quest_giver_voice so Gus speaks with
+    # Andrew and Belle with Emma — Davis and Sara are retired.
+    newest = open(os.path.join(mig_dir, names[-1]), encoding="utf-8").read()
+    check("newest migration is the dead giver voices one",
+          "replace_dead_giver_voices" in names[-1])
+    check("newest migration gives Gus the Andrew voice",
+          "arena_private.quest_giver_voice" in newest
+          and "when 'Gus' then 'en-US-AndrewNeural'" in newest)
+    check("newest migration gives Belle the Emma voice",
+          "when 'Belle' then 'en-US-EmmaNeural'" in newest)
+    check("newest migration drops the dead Davis and Sara voices",
+          "when 'Gus' then 'en-US-DavisNeural'" not in newest
+          and "when 'Belle' then 'en-US-SaraNeural'" not in newest)
+    check("newest migration keeps the other giver voices",
+          "en-US-ChristopherNeural" in newest
+          and "en-US-JennyNeural" in newest
+          and "en-US-EricNeural" in newest
+          and "en-US-MichelleNeural" in newest)
+    check("newest migration touches no fight function",
           "arena_fight" not in newest)
     healing_mig = open(os.path.join(
         mig_dir, [n for n in names if "healing_skill" in n][0]),
@@ -3447,4 +3719,5 @@ if __name__ == "__main__":
     sounds_test()
     voice_failure_test()
     voice_playback_failure_test()
+    phase27_voice_test()
     launch_update_test()

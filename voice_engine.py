@@ -16,6 +16,19 @@ the engine reports itself unavailable and the game carries on with
 text only. One plain line about why is written to the log file.
 No secrets of any kind live here: the service needs no key.
 
+One failed line never kills the voice for the whole session
+(Phase 27, Makenna 2026-11-19): a voice the service no longer
+carries — Microsoft retired Gus's Davis and Belle's Sara, so
+their lines failed and the old engine marked the whole voice
+dead, silencing every later line while the music kept playing —
+is remembered as dead for that voice only, and the line is
+spoken once in the player's own voice instead, so the player
+still hears it. A one-off network failure is retried once with
+the same voice. Only a dead background thread marks the whole
+engine dead. Every failure names the voice that failed, in the
+log, so a dead voice can be found and replaced instead of
+guessed at.
+
 For diagnosis, the engine also logs every speak attempt to the same
 log file: the line it tried to speak and the voice it used, whether
 the sound file was made and how big it was, and whether the player
@@ -63,19 +76,42 @@ class EdgeVoice:
     any window (in wxPython, wx.CallAfter does that).
     """
 
-    def __init__(self, voice, play_callback):
+    def __init__(self, voice, play_callback, fail_callback=None,
+                 fallback_voice=None):
+        """One background voice. Give it text, it hands back MP3 files.
+
+        play_callback is called on the voice thread with the path of
+        each finished MP3. fail_callback, when given, is called on the
+        voice thread when a line could not be spoken at all, even
+        after a retry and a fallback voice, so the caller can stop
+        waiting for it. fallback_voice, when given, is the voice a
+        line is spoken in when its own voice is dead — the player's
+        own voice, so a giver is still heard, just not in their own
+        voice, instead of going silent.
+        """
         self.voice = voice
         self._play = play_callback
+        self._fail = fail_callback
+        self._fallback_voice = fallback_voice
         self._queue = queue.Queue(maxsize=1)
         self._stop = threading.Event()
         self._thread = None
         self._dead = False
+        # Voices the service no longer carries, remembered for
+        # this session so they are never retried: a retired voice
+        # fails the same way every time, and retrying it would
+        # only delay the line that could be speaking instead.
+        self._dead_voices = set()
+        self._dead_voice_logged = set()
         self._made_files = []
         self._dropped_logged = False
 
     @property
     def available(self):
-        """False when there is no voice service to speak with."""
+        """False when there is no voice service to speak with, or
+        when the background thread itself has died. A single
+        failed line never makes this False: the engine keeps
+        trying the next line (Phase 27)."""
         return edge_tts is not None and not self._dead
 
     def start(self):
@@ -111,7 +147,9 @@ class EdgeVoice:
         only the newest message is ever spoken. Returns False when
         the voice is off. Every attempt is logged, and a line that is
         dropped because the voice is off is logged once, so a dead
-        voice never fails silently and never floods the log either."""
+        voice never fails silently and never floods the log either.
+        A line whose voice is dead is still attempted: the worker
+        speaks it in the fallback voice instead (Phase 27)."""
         text = (text or "").strip()
         if not text:
             return False
@@ -164,11 +202,89 @@ class EdgeVoice:
                 pass
         self._made_files = []
 
+    def _is_unsupported_voice_error(self, error):
+        """True when the voice service refused this voice itself —
+        the voice is retired or unknown — rather than failing on
+        a network blip. The service answers a bad voice with no
+        audio at all (NoAudioReceived), or closes the connection
+        (1007), so those are the signs. Anything else is treated
+        as transient and retried once."""
+        if type(error).__name__ == "NoAudioReceived":
+            return True
+        lowered = str(error).lower()
+        return ("1007" in lowered
+                or "invalid voice" in lowered
+                or "voice not found" in lowered
+                or "not supported" in lowered)
+
+    def _synthesize_with_recovery(self, text):
+        """Turn one line into an MP3 file, recovering when the
+        voice fails. Returns the file path, or raises after
+        every recovery has been tried.
+
+        A voice the service no longer carries is remembered as
+        dead for the session and never retried: the line is
+        spoken once in the fallback voice instead, so the
+        player still hears it. A one-off failure — a network
+        blip — is retried once with the same voice. The caller
+        is told about every failure through the log, naming the
+        voice that failed, so a dead voice can be replaced
+        instead of silenced."""
+        voice = self.voice
+        if (voice in self._dead_voices and self._fallback_voice
+                and self._fallback_voice != voice):
+            if voice not in self._dead_voice_logged:
+                self._dead_voice_logged.add(voice)
+                logging.info(
+                    "Voice %s is dead, so this line is spoken "
+                    "with %s instead.", voice, self._fallback_voice)
+            self.voice = self._fallback_voice
+            voice = self._fallback_voice
+        try:
+            return asyncio.run(self._synthesize(text))
+        except Exception as error:
+            if self._is_unsupported_voice_error(error):
+                if voice not in self._dead_voices:
+                    self._dead_voices.add(voice)
+                    logging.warning(
+                        "Voice %s is not available from the voice "
+                        "service (%s: %s). It will not be tried again "
+                        "this session.",
+                        voice, type(error).__name__, error)
+                if (self._fallback_voice
+                        and self._fallback_voice != voice):
+                    self.voice = self._fallback_voice
+                    return asyncio.run(self._synthesize(text))
+                raise
+            logging.info(
+                "Voice %s failed once (%s: %s); trying once more.",
+                voice, type(error).__name__, error)
+            return asyncio.run(self._synthesize(text))
+
+    def _notify_failed(self):
+        """Tell the window a line could not be spoken at all, so
+        it can stop waiting for it. Never raises: a dead voice
+        must never take the game down with it."""
+        if self._fail is None:
+            return
+        try:
+            self._fail()
+        except Exception as error:
+            logging.warning(
+                "Voice: the failed-line notice could not be handed "
+                "to the player (%s: %s).",
+                type(error).__name__,
+                error,
+            )
+
     def _worker(self):
         """Make sound files for queued lines, one at a time. A thread
         that dies without a word would leave the game silent with no
         clue, so the whole loop is watched: any unexpected error is
-        logged in plain words and the voice is marked dead."""
+        logged in plain words and the voice is marked dead. A single
+        failed line is not a dead engine (Phase 27): the worker
+        logs which voice failed, tells the window the line will
+        never sound, and carries on to the next line."""
         try:
             while not self._stop.is_set():
                 try:
@@ -183,15 +299,17 @@ class EdgeVoice:
                 except queue.Empty:
                     pass
                 try:
-                    path = asyncio.run(self._synthesize(text))
+                    path = self._synthesize_with_recovery(text)
                 except Exception as error:
                     logging.warning(
-                        "Edge voice is off: the voice service failed "
-                        "(%s: %s). The game keeps going with text only.",
+                        "Edge voice: the voice service failed for "
+                        "voice %s (%s: %s). That line was not "
+                        "spoken. The game keeps going with text only.",
+                        self.voice,
                         type(error).__name__,
                         error,
                     )
-                    self._dead = True
+                    self._notify_failed()
                     continue
                 try:
                     size = os.path.getsize(path)
@@ -213,6 +331,7 @@ class EdgeVoice:
                         type(error).__name__,
                         error,
                     )
+                    self._notify_failed()
         except Exception as error:
             logging.warning(
                 "Voice thread stopped unexpectedly (%s: %s). The game "
@@ -221,6 +340,7 @@ class EdgeVoice:
                 error,
             )
             self._dead = True
+            self._notify_failed()
         finally:
             logging.info("Voice thread stopped.")
 
