@@ -9,6 +9,12 @@ lands in exactly one "Arena of Makers" folder (no nesting), and
 the updater finds the real install — one level down, or in the
 parent — so it offers "Check for updates" instead of "Install",
 and a fresh install always writes its version note.
+
+Also covers the Phase 31 fix (2026-11-19): an update downloads
+the whole game as one zipball instead of one GitHub API call per
+changed file, a failed download leaves the old game and the old
+version note untouched, and the local arena_log.txt is never
+downloaded over.
 """
 
 import json
@@ -145,10 +151,15 @@ def test_install_from_zip():
             # .env is never in the repository, so it is never
             # in a zipball; the local one below must survive.
             "arena_version.json": "should be skipped\n",
+            # The repo's log is never installed over the local
+            # one (Phase 31): the local log holds diagnostics
+            # the repo copy does not have.
+            "arena_log.txt": "repo log\n",
         },
     )
     # A .env already on the computer must survive the install.
     _write(os.path.join(game_dir, ".env"), "SECRET=do-not-overwrite\n")
+    _write(os.path.join(game_dir, "arena_log.txt"), "my local log\n")
     log = []
     ok, message, installed = updater.install_from_zip(
         zip_path, game_dir, log.append
@@ -167,6 +178,10 @@ def test_install_from_zip():
     check("the .env is left alone",
           open(os.path.join(game_dir, ".env"),
                encoding="utf-8").read() == "SECRET=do-not-overwrite\n")
+    check("the local log is left alone, never overwritten",
+          open(os.path.join(game_dir, "arena_log.txt"),
+               encoding="utf-8").read() == "my local log\n"
+          and "arena_log.txt" not in installed)
     check("installed files are reported",
           installed == {"main.py", "sounds/robot_laser.wav"})
     print("Install from zip tests passed.")
@@ -301,6 +316,8 @@ def test_sync_game_updates_updater():
     """End to end, headless: the game's sync replaces the
     old updater file, and the standalone sync leaves it
     alone. The launcher .bat stays protected either way.
+    Phase 31: the update arrives as one zipball, not one
+    API call per file, and the local log is never touched.
     """
     base = tempfile.mkdtemp()
     game_dir = os.path.join(base, "Arena of Makers")
@@ -309,32 +326,40 @@ def test_sync_game_updates_updater():
            "# old updater\n")
     _write(os.path.join(game_dir, "run_arena_of_makers_updater.bat"),
            "old launcher\n")
-    new_updater = b"# new updater\n"
-    contents = {
-        "main.py": b"# game\n",
+    _write(os.path.join(game_dir, "arena_log.txt"), "my local log\n")
+    new_updater = "# new updater\n"
+    zip_path = os.path.join(base, "game.zip")
+    _make_zipball(zip_path, {
+        "main.py": "# game\n",
         "arena_of_makers_updater.py": new_updater,
-    }
+        "arena_log.txt": "repo log\n",
+    })
     tree = [
-        {"path": path, "sha": updater.blob_hash(data)}
-        for path, data in contents.items()
+        {"path": "main.py",
+         "sha": updater.blob_hash(b"# game\n")},
+        {"path": "arena_of_makers_updater.py",
+         "sha": updater.blob_hash(new_updater.encode("utf-8"))},
+        {"path": "arena_log.txt",
+         "sha": updater.blob_hash(b"repo log\n")},
     ]
 
     logs = []
     old_head = updater.get_head_sha
     old_tree = updater.get_tree
-    old_download = updater.download_file
+    old_download = updater.download_zipball
     try:
         updater.get_head_sha = lambda: "newhead"
         updater.get_tree = lambda: tree
 
-        def _fake_download(path, sha, size, dest):
-            with open(dest, "wb") as handle:
-                handle.write(contents[path])
+        def _fake_download(dest):
+            shutil.copyfile(zip_path, dest)
             return True, ""
 
-        updater.download_file = _fake_download
+        updater.download_zipball = _fake_download
 
         # Standalone first: the updater file is untouched.
+        # (Nothing else changed, so there is nothing to
+        # download at all in standalone mode.)
         result = updater.sync_game(game_dir, logs.append)
         check("standalone sync succeeds", result is True)
         check("standalone sync leaves the updater file alone",
@@ -343,7 +368,8 @@ def test_sync_game_updates_updater():
                   encoding="utf-8").read() == "# old updater\n")
 
         # The game's sync: the updater file is refreshed,
-        # the launcher .bat is still left alone.
+        # the launcher .bat is still left alone, and the
+        # local log is never overwritten by the repo's copy.
         result = updater.sync_game(
             game_dir, logs.append, include_updater=True)
         check("game sync succeeds", result is True)
@@ -355,14 +381,79 @@ def test_sync_game_updates_updater():
               open(os.path.join(
                   game_dir, "run_arena_of_makers_updater.bat"),
                   encoding="utf-8").read() == "old launcher\n")
+        check("game sync leaves the local log alone",
+              open(os.path.join(game_dir, "arena_log.txt"),
+                   encoding="utf-8").read() == "my local log\n")
         head, _files = updater.load_state(game_dir)
         check("the version note holds the new commit id",
               head == "newhead")
     finally:
         updater.get_head_sha = old_head
         updater.get_tree = old_tree
-        updater.download_file = old_download
+        updater.download_zipball = old_download
     print("Sync game updates updater tests passed.")
+
+
+def test_sync_game_failed_download_leaves_game_whole():
+    """Phase 31: when the one zipball download fails, no
+    file on disk is touched and the old version note stays,
+    so the next launch simply offers the same update again
+    instead of facing a half-updated game.
+    """
+    base = tempfile.mkdtemp()
+    game_dir = os.path.join(base, "Arena of Makers")
+    _make_game(game_dir, head="oldhead")
+    _write(os.path.join(game_dir, "main.py"), "# old game\n")
+    tree = [
+        {"path": "main.py",
+         "sha": updater.blob_hash(b"# new game\n")},
+    ]
+
+    logs = []
+    old_head = updater.get_head_sha
+    old_tree = updater.get_tree
+    old_download = updater.download_zipball
+    try:
+        updater.get_head_sha = lambda: "newhead"
+        updater.get_tree = lambda: tree
+        updater.download_zipball = lambda dest: (
+            False, "GitHub did not answer the download.")
+        result = updater.sync_game(game_dir, logs.append)
+    finally:
+        updater.get_head_sha = old_head
+        updater.get_tree = old_tree
+        updater.download_zipball = old_download
+    check("a failed download reports failure", result is False)
+    check("the old game file is untouched",
+          open(os.path.join(game_dir, "main.py"),
+               encoding="utf-8").read() == "# old game\n")
+    head, _files = updater.load_state(game_dir)
+    check("the old version note is untouched", head == "oldhead")
+    print("Sync game failed download tests passed.")
+
+
+def test_log_never_synced():
+    """Phase 31: arena_log.txt is never compared, never
+    downloaded and never listed as a synced file, in either
+    mode — the local log is always newer than the repo's.
+    """
+    base = tempfile.mkdtemp()
+    game_dir = os.path.join(base, "Arena of Makers")
+    _make_game(game_dir, head="abc123")
+    _write(os.path.join(game_dir, "arena_log.txt"), "my local log\n")
+    tree = [
+        {"path": "main.py",
+         "sha": updater.local_blob_hash(os.path.join(game_dir, "main.py"))},
+        {"path": "arena_log.txt",
+         "sha": updater.blob_hash(b"a completely different log\n")},
+    ]
+    to_download, _left, synced = updater.plan_sync(tree, game_dir)
+    check("the log is never offered for download",
+          all(e["path"] != "arena_log.txt" for e in to_download)
+          and "arena_log.txt" not in synced)
+    check("nothing else needs downloading either",
+          to_download == [])
+    print("Log never synced tests passed.")
 
 
 if __name__ == "__main__":
@@ -373,4 +464,6 @@ if __name__ == "__main__":
     test_sync_game_uses_found_folder()
     test_updater_file_protection()
     test_sync_game_updates_updater()
+    test_sync_game_failed_download_leaves_game_whole()
+    test_log_never_synced()
     print("\nAll updater tests passed.")

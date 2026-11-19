@@ -8,7 +8,14 @@ How it works
 - You pick an install folder. If the game is not there yet, the updater
   downloads the whole game from GitHub and installs it.
 - If the game is already there, it asks GitHub for the newest version and
-  downloads only the files that changed.
+  downloads the whole game as one zip file, then unpacks it over the
+  game folder (Phase 31). It used to download each changed file with
+  its own GitHub API call; with 78 files in the repo and only 60 free
+  unauthenticated API calls an hour, a big update could hit the limit
+  halfway, stop, and leave a mix of old and new files — and the next
+  launch would offer the same update again and start over. One zip
+  is one download, so the limit cannot stop it halfway, and nothing
+  on disk is touched until the whole download has arrived.
 - Files that are only on your computer, such as saves and settings, are
   never deleted and never overwritten. The updater only ever writes files
   that are in the repository, and it never deletes anything at all. If a
@@ -83,6 +90,27 @@ PROTECTED_FILES = {
     "arena_updater_state.json",
     VERSION_FILE_NAME,
 }
+
+
+# Files a sync never downloads, in either direction, in any mode.
+# arena_log.txt is tracked in the repo so Makenna and Josh (and their
+# assistants) can both see errors in it — push_arena_changes.py sends
+# the local log UP to GitHub on purpose — but the updater must never
+# download GitHub's copy DOWN over the local one. The local log is
+# always newer than the repo copy (it keeps growing while the game
+# runs), so the old per-file sync re-downloaded it on every update
+# and would have wiped the local diagnostics. It is also why a
+# hand-installed copy with no version note was always offered an
+# update: the log alone always differed. The game creates the log
+# itself, so a fresh install does not need the repo's copy either.
+NEVER_SYNC_FILES = {
+    "arena_log.txt",
+}
+
+
+def _is_never_sync(path):
+    """True when a file must never be written by a sync."""
+    return path in NEVER_SYNC_FILES
 
 
 def _is_protected(path, include_updater=False):
@@ -301,6 +329,11 @@ def download_file(path, sha, size, dest):
 
     Files under 1 MB come from the contents API; larger ones come from the
     blob API, because the contents API refuses to return big files.
+
+    Kept for one-off use. sync_game no longer calls it (Phase 31):
+    an update downloads the whole game as one zipball instead, so a
+    big update cannot run out of GitHub's 60 free unauthenticated
+    API calls an hour halfway through and leave a half-updated game.
     """
     if size is not None and size < 1000000:
         status, payload = api_get("/contents/" + urllib.parse.quote(path))
@@ -409,6 +442,10 @@ def plan_sync(tree, game_dir, include_updater=False):
     synced_files = set()
     for entry in tree:
         path = entry["path"]
+        if _is_never_sync(path):
+            # Never compared, never downloaded: the local
+            # arena_log.txt is always newer than the repo's.
+            continue
         if _is_protected(path, include_updater):
             continue
         synced_files.add(path)
@@ -417,6 +454,8 @@ def plan_sync(tree, game_dir, include_updater=False):
             to_download.append(entry)
     left_in_place = []
     for path in sorted(previous_files):
+        if _is_never_sync(path):
+            continue
         if _is_protected(path, include_updater):
             continue
         if path not in synced_files and os.path.exists(os.path.join(game_dir, path)):
@@ -459,6 +498,12 @@ def install_from_zip(zip_path, game_dir, log, include_updater=False):
     installed too (the game's launch update); with False it
     is left alone (the standalone updater's own install,
     which is running then).
+    The download is checked (testzip) and fully extracted to
+    a temporary folder BEFORE anything is copied into the
+    game folder, so a damaged or incomplete download touches
+    nothing. The local arena_log.txt is never written, in
+    either mode: the zip's copy is skipped and the local
+    diagnostics stay in place.
     """
     installed = set()
     try:
@@ -469,6 +514,14 @@ def install_from_zip(zip_path, game_dir, log, include_updater=False):
             top = names[0].split("/")[0]
             if zf.testzip() is not None:
                 return False, "The downloaded game file was damaged.", installed
+            rel_names = {
+                name[len(top) + 1:].replace("/", os.sep)
+                for name in names
+                if name.startswith(top + "/") and not name.endswith("/")
+            }
+            if "main.py" not in rel_names:
+                return False, ("The downloaded game file did not "
+                               "contain the game."), installed
             tmpdir = tempfile.mkdtemp(prefix="arena-makers-install-")
             try:
                 zf.extractall(tmpdir)
@@ -477,8 +530,10 @@ def install_from_zip(zip_path, game_dir, log, include_updater=False):
                     for name in files:
                         s = os.path.join(root, name)
                         rel = os.path.relpath(s, src)
-                        if _is_protected(rel.replace(os.sep, "/"),
-                                         include_updater):
+                        rel_slash = rel.replace(os.sep, "/")
+                        if _is_never_sync(rel_slash):
+                            continue
+                        if _is_protected(rel_slash, include_updater):
                             continue
                         d = os.path.join(game_dir, rel)
                         os.makedirs(os.path.dirname(d), exist_ok=True)
@@ -501,6 +556,20 @@ def sync_game(game_dir, log, include_updater=False):
     updater never goes stale; with False (the standalone
     updater's own sync, and the default) it is left alone,
     because the updater is running then.
+
+    Phase 31: an update downloads the whole game as ONE zipball
+    (download_zipball + install_from_zip, the same path a fresh
+    install already used), instead of one GitHub API call per
+    changed file. That is 3 API calls in total for an update —
+    head, tree, zipball — however many files changed, so the
+    60-calls-an-hour unauthenticated limit cannot stop it
+    halfway. Nothing on disk is touched until the whole zip
+    has downloaded and passed its damage check, and the
+    version note is only saved after the unpack succeeds, so
+    a failed update leaves the old game whole and the old
+    version note in place: the next launch simply offers the
+    same update again and tries once more, instead of
+    re-downloading a half-updated game from scratch.
     """
     # Frozen exe mode: update the bundled exe from GitHub Releases,
     # never by syncing source files over it.
@@ -547,7 +616,8 @@ def sync_game(game_dir, log, include_updater=False):
             files = {
                 e["path"]
                 for e in tree
-                if not _is_protected(e["path"], include_updater)
+                if not _is_never_sync(e["path"])
+                and not _is_protected(e["path"], include_updater)
             }
         else:
             files = installed_files
@@ -576,20 +646,36 @@ def sync_game(game_dir, log, include_updater=False):
             log("%s is no longer in the game, but your copy was left in place." % path)
         log("You already have the newest version. Nothing to download.")
         return True
+    # One download for the whole update, however many files
+    # changed. Nothing on disk is touched until the zip has
+    # fully downloaded: if this fails, the old game and the
+    # old version note are both still in place, and the next
+    # launch simply offers the update again.
     if stored_head == head:
-        log("Some game files were missing or different. Downloading %d files."
-            % len(to_download))
+        log("Some game files were missing or different. "
+            "Downloading the new version as one file.")
     else:
-        log("Downloading %d changed files." % len(to_download))
-    for i, entry in enumerate(to_download, 1):
-        dest = os.path.join(game_dir, entry["path"])
-        ok, message = download_file(
-            entry["path"], entry["sha"], entry.get("size"), dest)
+        log("Downloading the new version as one file "
+            "(%d files changed)." % len(to_download))
+    tmp = os.path.join(tempfile.gettempdir(), "arena-of-makers-update.zip")
+    ok, message = download_zipball(tmp)
+    if not ok:
+        log(message)
+        return False
+    try:
+        ok, message, _installed_files = install_from_zip(
+            tmp, game_dir, log, include_updater
+        )
         if not ok:
             log(message)
             return False
-        if i % 10 == 0 or i == len(to_download):
-            log("Downloaded %d of %d files." % (i, len(to_download)))
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+    if not os.path.exists(os.path.join(game_dir, "main.py")):
+        log("The update did not leave a working game behind. "
+            "Your old files were left in place. Try again.")
+        return False
     for path in left_in_place:
         log("%s is no longer in the game, but your copy was left in place." % path)
     if not save_state(game_dir, head, synced_files):
