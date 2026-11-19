@@ -205,6 +205,10 @@ $$;
 -- Quest credits are keyed to the quest level now (Phase 26),
 -- not the fighter level. Same amounts as before at quest
 -- level 1; they grow infinitely from there, with no cap.
+-- The parameter is renamed (p_level -> p_quest_level), which
+-- create or replace refuses to do, so drop the old one first.
+-- It is private and only called by other server functions.
+drop function if exists arena_private.quest_reward(text, integer);
 create or replace function arena_private.quest_reward(
   p_difficulty text, p_quest_level integer)
 returns integer
