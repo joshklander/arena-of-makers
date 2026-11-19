@@ -11128,3 +11128,308 @@ Traceback (most recent call last):
     )
     ~
 TypeError: %d format: a real number is required, not NoneType
+2026-11-19 09:08:50,431 INFO: Launch: updated to edda52172ce5037be47402c7b57b3dbb2c5be45a.
+2026-11-19 09:09:46,684 INFO: Arena of Makers closed.
+2026-11-19 09:10:14,821 INFO: Arena of Makers started.
+2026-11-19 09:10:14,826 INFO: Online check passed: Supabase URL is a project URL and a publishable key is present in the right shape.
+2026-11-19 09:10:16,407 INFO: Signed in as player code 2169.
+2026-11-19 09:10:16,514 INFO: Voice startup: Python C:\Program Files\Python314\python.exe; edge-tts installed; pygame installed; voice en-US-AriaNeural; volume 40 percent.
+2026-11-19 09:10:16,589 INFO: Voice: engine started, voice en-US-AriaNeural.
+2026-11-19 09:10:19,013 INFO: Sounds: loaded 31 of 31: ambience_cleaning, ambience_gathering, chef_chop, chef_sizzle, loss, music, music_fight, music_hangout, npc_baker_belle_appear, npc_baker_belle_hit, npc_bulkhead_appear, npc_bulkhead_hit, npc_chop_chop_appear, npc_chop_chop_hit, npc_ember_owl_appear, npc_ember_owl_hit, npc_ghost_drone_appear, npc_ghost_drone_hit, npc_grill_gus_appear, npc_grill_gus_hit, npc_mend_o_matic_appear, npc_mend_o_matic_hit, npc_zap_fox_appear, npc_zap_fox_hit, npc_zip_scout_appear, npc_zip_scout_hit, pan_clang, robot_clank, robot_laser, robot_servo, win.
+2026-11-19 09:10:19,020 ERROR: The game hit a problem and had to stop.
+Traceback (most recent call last):
+  File "C:\Users\katpr\Saved Games\arena-of-makers\main.py", line 2897, in main
+    run_game()
+    ~~~~~~~~^^
+  File "C:\Users\katpr\Saved Games\arena-of-makers\main.py", line 2887, in run_game
+    frame = MainFrame(fighter, online_config=config,
+                      player_account=player_account, remembered=remembered)
+  File "C:\Users\katpr\Saved Games\arena-of-makers\main.py", line 571, in __init__
+    self.refresh_all()
+    ~~~~~~~~~~~~~~~~^^
+  File "C:\Users\katpr\Saved Games\arena-of-makers\main.py", line 821, in refresh_all
+    self.refresh_list(tab)
+    ~~~~~~~~~~~~~~~~~^^^^^
+  File "C:\Users\katpr\Saved Games\arena-of-makers\main.py", line 808, in refresh_list
+    items = self.list_items(tab)
+  File "C:\Users\katpr\Saved Games\arena-of-makers\main.py", line 622, in list_items
+    upgrade = game_logic.upgrade_status(fighter)
+  File "C:\Users\katpr\Saved Games\arena-of-makers\game_logic.py", line 1210, in upgrade_status
+    text = "I'm upgrading my %s to level %d, %s left." % (
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~
+        upgrade["name"],
+        ~~~~~~~~~~~~~~~~
+    ...<2 lines>...
+    )
+    ~
+TypeError: %d format: a real number is required, not NoneType
+2026-11-19 09:10:19,158 ERROR: The game hit a problem:
+Traceback (most recent call last):
+  File "C:\Users\katpr\Saved Games\arena-of-makers\main.py", line 2897, in main
+    run_game()
+    ~~~~~~~~^^
+  File "C:\Users\katpr\Saved Games\arena-of-makers\main.py", line 2887, in run_game
+    frame = MainFrame(fighter, online_config=config,
+                      player_account=player_account, remembered=remembered)
+  File "C:\Users\katpr\Saved Games\arena-of-makers\main.py", line 571, in __init__
+    self.refresh_all()
+    ~~~~~~~~~~~~~~~~^^
+  File "C:\Users\katpr\Saved Games\arena-of-makers\main.py", line 821, in refresh_all
+    self.refresh_list(tab)
+    ~~~~~~~~~~~~~~~~~^^^^^
+  File "C:\Users\katpr\Saved Games\arena-of-makers\main.py", line 808, in refresh_list
+    items = self.list_items(tab)
+  File "C:\Users\katpr\Saved Games\arena-of-makers\main.py", line 622, in list_items
+    upgrade = game_logic.upgrade_status(fighter)
+  File "C:\Users\katpr\Saved Games\arena-of-makers\game_logic.py", line 1210, in upgrade_status
+    text = "I'm upgrading my %s to level %d, %s left." % (
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~
+        upgrade["name"],
+        ~~~~~~~~~~~~~~~~
+    ...<2 lines>...
+    )
+    ~
+TypeError: %d format: a real number is required, not NoneType
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\katpr\Saved Games\arena-of-makers\main.py", line 2529, in on_tick
+    self.SetStatusText(game_logic.status_text(self.fighter, now))
+                       ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\katpr\Saved Games\arena-of-makers\game_logic.py", line 1265, in status_text
+    upgrade = upgrade_status(fighter, now)
+  File "C:\Users\katpr\Saved Games\arena-of-makers\game_logic.py", line 1210, in upgrade_status
+    text = "I'm upgrading my %s to level %d, %s left." % (
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~
+        upgrade["name"],
+        ~~~~~~~~~~~~~~~~
+    ...<2 lines>...
+    )
+    ~
+TypeError: %d format: a real number is required, not NoneType
+2026-11-19 09:10:19,509 ERROR: The game hit a problem:
+Traceback (most recent call last):
+  File "C:\Users\katpr\Saved Games\arena-of-makers\main.py", line 2897, in main
+    run_game()
+    ~~~~~~~~^^
+  File "C:\Users\katpr\Saved Games\arena-of-makers\main.py", line 2887, in run_game
+    frame = MainFrame(fighter, online_config=config,
+                      player_account=player_account, remembered=remembered)
+  File "C:\Users\katpr\Saved Games\arena-of-makers\main.py", line 571, in __init__
+    self.refresh_all()
+    ~~~~~~~~~~~~~~~~^^
+  File "C:\Users\katpr\Saved Games\arena-of-makers\main.py", line 821, in refresh_all
+    self.refresh_list(tab)
+    ~~~~~~~~~~~~~~~~~^^^^^
+  File "C:\Users\katpr\Saved Games\arena-of-makers\main.py", line 808, in refresh_list
+    items = self.list_items(tab)
+  File "C:\Users\katpr\Saved Games\arena-of-makers\main.py", line 622, in list_items
+    upgrade = game_logic.upgrade_status(fighter)
+  File "C:\Users\katpr\Saved Games\arena-of-makers\game_logic.py", line 1210, in upgrade_status
+    text = "I'm upgrading my %s to level %d, %s left." % (
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~
+        upgrade["name"],
+        ~~~~~~~~~~~~~~~~
+    ...<2 lines>...
+    )
+    ~
+TypeError: %d format: a real number is required, not NoneType
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\katpr\Saved Games\arena-of-makers\main.py", line 2529, in on_tick
+    self.SetStatusText(game_logic.status_text(self.fighter, now))
+                       ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\katpr\Saved Games\arena-of-makers\game_logic.py", line 1265, in status_text
+    upgrade = upgrade_status(fighter, now)
+  File "C:\Users\katpr\Saved Games\arena-of-makers\game_logic.py", line 1210, in upgrade_status
+    text = "I'm upgrading my %s to level %d, %s left." % (
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~
+        upgrade["name"],
+        ~~~~~~~~~~~~~~~~
+    ...<2 lines>...
+    )
+    ~
+TypeError: %d format: a real number is required, not NoneType
+2026-11-19 09:10:20,516 ERROR: The game hit a problem:
+Traceback (most recent call last):
+  File "C:\Users\katpr\Saved Games\arena-of-makers\main.py", line 2897, in main
+    run_game()
+    ~~~~~~~~^^
+  File "C:\Users\katpr\Saved Games\arena-of-makers\main.py", line 2887, in run_game
+    frame = MainFrame(fighter, online_config=config,
+                      player_account=player_account, remembered=remembered)
+  File "C:\Users\katpr\Saved Games\arena-of-makers\main.py", line 571, in __init__
+    self.refresh_all()
+    ~~~~~~~~~~~~~~~~^^
+  File "C:\Users\katpr\Saved Games\arena-of-makers\main.py", line 821, in refresh_all
+    self.refresh_list(tab)
+    ~~~~~~~~~~~~~~~~~^^^^^
+  File "C:\Users\katpr\Saved Games\arena-of-makers\main.py", line 808, in refresh_list
+    items = self.list_items(tab)
+  File "C:\Users\katpr\Saved Games\arena-of-makers\main.py", line 622, in list_items
+    upgrade = game_logic.upgrade_status(fighter)
+  File "C:\Users\katpr\Saved Games\arena-of-makers\game_logic.py", line 1210, in upgrade_status
+    text = "I'm upgrading my %s to level %d, %s left." % (
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~
+        upgrade["name"],
+        ~~~~~~~~~~~~~~~~
+    ...<2 lines>...
+    )
+    ~
+TypeError: %d format: a real number is required, not NoneType
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\katpr\Saved Games\arena-of-makers\main.py", line 2529, in on_tick
+    self.SetStatusText(game_logic.status_text(self.fighter, now))
+                       ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\katpr\Saved Games\arena-of-makers\game_logic.py", line 1265, in status_text
+    upgrade = upgrade_status(fighter, now)
+  File "C:\Users\katpr\Saved Games\arena-of-makers\game_logic.py", line 1210, in upgrade_status
+    text = "I'm upgrading my %s to level %d, %s left." % (
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~
+        upgrade["name"],
+        ~~~~~~~~~~~~~~~~
+    ...<2 lines>...
+    )
+    ~
+TypeError: %d format: a real number is required, not NoneType
+2026-11-19 09:10:21,507 ERROR: The game hit a problem:
+Traceback (most recent call last):
+  File "C:\Users\katpr\Saved Games\arena-of-makers\main.py", line 2897, in main
+    run_game()
+    ~~~~~~~~^^
+  File "C:\Users\katpr\Saved Games\arena-of-makers\main.py", line 2887, in run_game
+    frame = MainFrame(fighter, online_config=config,
+                      player_account=player_account, remembered=remembered)
+  File "C:\Users\katpr\Saved Games\arena-of-makers\main.py", line 571, in __init__
+    self.refresh_all()
+    ~~~~~~~~~~~~~~~~^^
+  File "C:\Users\katpr\Saved Games\arena-of-makers\main.py", line 821, in refresh_all
+    self.refresh_list(tab)
+    ~~~~~~~~~~~~~~~~~^^^^^
+  File "C:\Users\katpr\Saved Games\arena-of-makers\main.py", line 808, in refresh_list
+    items = self.list_items(tab)
+  File "C:\Users\katpr\Saved Games\arena-of-makers\main.py", line 622, in list_items
+    upgrade = game_logic.upgrade_status(fighter)
+  File "C:\Users\katpr\Saved Games\arena-of-makers\game_logic.py", line 1210, in upgrade_status
+    text = "I'm upgrading my %s to level %d, %s left." % (
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~
+        upgrade["name"],
+        ~~~~~~~~~~~~~~~~
+    ...<2 lines>...
+    )
+    ~
+TypeError: %d format: a real number is required, not NoneType
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\katpr\Saved Games\arena-of-makers\main.py", line 2529, in on_tick
+    self.SetStatusText(game_logic.status_text(self.fighter, now))
+                       ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\katpr\Saved Games\arena-of-makers\game_logic.py", line 1265, in status_text
+    upgrade = upgrade_status(fighter, now)
+  File "C:\Users\katpr\Saved Games\arena-of-makers\game_logic.py", line 1210, in upgrade_status
+    text = "I'm upgrading my %s to level %d, %s left." % (
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~
+        upgrade["name"],
+        ~~~~~~~~~~~~~~~~
+    ...<2 lines>...
+    )
+    ~
+TypeError: %d format: a real number is required, not NoneType
+2026-11-19 09:10:22,511 ERROR: The game hit a problem:
+Traceback (most recent call last):
+  File "C:\Users\katpr\Saved Games\arena-of-makers\main.py", line 2897, in main
+    run_game()
+    ~~~~~~~~^^
+  File "C:\Users\katpr\Saved Games\arena-of-makers\main.py", line 2887, in run_game
+    frame = MainFrame(fighter, online_config=config,
+                      player_account=player_account, remembered=remembered)
+  File "C:\Users\katpr\Saved Games\arena-of-makers\main.py", line 571, in __init__
+    self.refresh_all()
+    ~~~~~~~~~~~~~~~~^^
+  File "C:\Users\katpr\Saved Games\arena-of-makers\main.py", line 821, in refresh_all
+    self.refresh_list(tab)
+    ~~~~~~~~~~~~~~~~~^^^^^
+  File "C:\Users\katpr\Saved Games\arena-of-makers\main.py", line 808, in refresh_list
+    items = self.list_items(tab)
+  File "C:\Users\katpr\Saved Games\arena-of-makers\main.py", line 622, in list_items
+    upgrade = game_logic.upgrade_status(fighter)
+  File "C:\Users\katpr\Saved Games\arena-of-makers\game_logic.py", line 1210, in upgrade_status
+    text = "I'm upgrading my %s to level %d, %s left." % (
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~
+        upgrade["name"],
+        ~~~~~~~~~~~~~~~~
+    ...<2 lines>...
+    )
+    ~
+TypeError: %d format: a real number is required, not NoneType
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\katpr\Saved Games\arena-of-makers\main.py", line 2529, in on_tick
+    self.SetStatusText(game_logic.status_text(self.fighter, now))
+                       ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\katpr\Saved Games\arena-of-makers\game_logic.py", line 1265, in status_text
+    upgrade = upgrade_status(fighter, now)
+  File "C:\Users\katpr\Saved Games\arena-of-makers\game_logic.py", line 1210, in upgrade_status
+    text = "I'm upgrading my %s to level %d, %s left." % (
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~
+        upgrade["name"],
+        ~~~~~~~~~~~~~~~~
+    ...<2 lines>...
+    )
+    ~
+TypeError: %d format: a real number is required, not NoneType
+2026-11-19 09:10:23,518 ERROR: The game hit a problem:
+Traceback (most recent call last):
+  File "C:\Users\katpr\Saved Games\arena-of-makers\main.py", line 2897, in main
+    run_game()
+    ~~~~~~~~^^
+  File "C:\Users\katpr\Saved Games\arena-of-makers\main.py", line 2887, in run_game
+    frame = MainFrame(fighter, online_config=config,
+                      player_account=player_account, remembered=remembered)
+  File "C:\Users\katpr\Saved Games\arena-of-makers\main.py", line 571, in __init__
+    self.refresh_all()
+    ~~~~~~~~~~~~~~~~^^
+  File "C:\Users\katpr\Saved Games\arena-of-makers\main.py", line 821, in refresh_all
+    self.refresh_list(tab)
+    ~~~~~~~~~~~~~~~~~^^^^^
+  File "C:\Users\katpr\Saved Games\arena-of-makers\main.py", line 808, in refresh_list
+    items = self.list_items(tab)
+  File "C:\Users\katpr\Saved Games\arena-of-makers\main.py", line 622, in list_items
+    upgrade = game_logic.upgrade_status(fighter)
+  File "C:\Users\katpr\Saved Games\arena-of-makers\game_logic.py", line 1210, in upgrade_status
+    text = "I'm upgrading my %s to level %d, %s left." % (
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~
+        upgrade["name"],
+        ~~~~~~~~~~~~~~~~
+    ...<2 lines>...
+    )
+    ~
+TypeError: %d format: a real number is required, not NoneType
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\katpr\Saved Games\arena-of-makers\main.py", line 2529, in on_tick
+    self.SetStatusText(game_logic.status_text(self.fighter, now))
+                       ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\katpr\Saved Games\arena-of-makers\game_logic.py", line 1265, in status_text
+    upgrade = upgrade_status(fighter, now)
+  File "C:\Users\katpr\Saved Games\arena-of-makers\game_logic.py", line 1210, in upgrade_status
+    text = "I'm upgrading my %s to level %d, %s left." % (
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~
+        upgrade["name"],
+        ~~~~~~~~~~~~~~~~
+    ...<2 lines>...
+    )
+    ~
+TypeError: %d format: a real number is required, not NoneType
