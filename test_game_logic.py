@@ -254,6 +254,82 @@ def main():
     check("status says the Second Wind level after the first buy",
           "Second Wind level 1" in game_logic.status_text(old))
 
+    # Phase 30 hotfix (Makenna Nov 19, 2026): the Nov 19
+    # Healing crash. The server stored a running upgrade with
+    # a null level (and a null finish) on her fighter, and the
+    # game crashed on every launch and every second in
+    # upgrade_status: "%d format needs a real number, not
+    # NoneType". A broken upgrade record must never crash
+    # anything: it reads as "no upgrade running", and the
+    # next tick clears it instead of looping the error.
+    broken = game_logic.new_fighter("Broken", "robot")
+    broken["credits"] = 1500
+    broken["upgrade"] = {
+        "slot": "healing", "name": "Second Wind",
+        "level": None, "finish": 1000000.0 + 4 * 3600,
+    }
+    broken["upgrade_queue"] = None
+    broken["upgrade_total"] = None
+    check("upgrade_status with a null level is None, not a crash",
+          game_logic.upgrade_status(broken, now=1000000.0) is None)
+    check("a null-level upgrade is not running",
+          game_logic.upgrade_is_running(broken) is False)
+    check("status_text with a null-level upgrade does not crash",
+          "I'm upgrading" not in game_logic.status_text(broken, now=1000000.0)
+          and "Second Wind level 0" in game_logic.status_text(broken, now=1000000.0))
+    line = game_logic.finish_upgrade_if_ready(broken, now=1000000.0 + 1)
+    check("the broken upgrade is cleared on the next tick",
+          broken.get("upgrade") is None
+          and broken.get("upgrade_queue") is None)
+    check("the clearing is said once, in plain words",
+          line is not None and "broken upgrade is cleared" in line)
+    check("a second tick after clearing says nothing",
+          game_logic.finish_upgrade_if_ready(broken, now=1000000.0 + 2) is None)
+
+    broken2 = game_logic.new_fighter("Broken2", "robot")
+    broken2["upgrade"] = {
+        "slot": "healing", "name": "Second Wind",
+        "level": 1, "finish": None,
+    }
+    check("upgrade_status with a null finish is None, not a crash",
+          game_logic.upgrade_status(broken2, now=1000000.0) is None)
+    check("a null-finish upgrade is not running",
+          game_logic.upgrade_is_running(broken2) is False)
+
+    broken3 = game_logic.new_fighter("Broken3", "robot")
+    broken3["upgrade"] = {"slot": "healing"}
+    check("upgrade_status with missing level and finish is None",
+          game_logic.upgrade_status(broken3, now=1000000.0) is None)
+
+    # The same crash class, one tick away: a JSON-null
+    # credits field or repair_until must not crash the
+    # status line or the repair checks either.
+    nulls = game_logic.new_fighter("Nulls", "robot")
+    nulls["credits"] = None
+    nulls["repair_until"] = None
+    check("status_text with null credits and repair does not crash",
+          "0 credits" in game_logic.status_text(nulls, now=1000000.0))
+    check("null repair_until means not repairing",
+          game_logic.is_repairing(nulls, now=1000000.0) is False)
+    check("null repair_until leaves no seconds",
+          game_logic.repair_left_seconds(nulls, now=1000000.0) == 0)
+
+    # Max affordable Healing on a fighter with NO
+    # healing_level key (the Nov 19 case): all 5 levels for
+    # 915 credits, and the buy leaves 585 from 1500.
+    no_key = game_logic.new_fighter("NoKey", "robot")
+    del no_key["healing_level"]
+    no_key["credits"] = 1500
+    plan = game_logic.max_affordable(no_key, "healing")
+    check("max affordable healing without the key is 5 levels",
+          plan["levels"] == [1, 2, 3, 4, 5])
+    check("max affordable healing without the key costs 915",
+          plan["cost"] == 915)
+    error, line = game_logic.start_max_upgrade(no_key, "healing", now=1000000.0)
+    check("max healing without the key starts cleanly", error is None)
+    check("max healing without the key deducts 915",
+          no_key["credits"] == 585)
+
     # Max affordable Healing: 1000 credits from level 0 buys
     # all 5 levels for 915 credits in about 3 hours, never
     # past level 5; at level 5 there is nothing to buy.

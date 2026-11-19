@@ -1972,15 +1972,23 @@ class MainFrame(wx.Frame):
                 self.announce(error)
             self.refresh_all()
             return
-        upgrade = self.fighter["upgrade"]
-        self.announce(
-            "I'm upgrading my %s to level %d. It'll be done in %s."
-            % (
-                upgrade["name"],
-                upgrade["level"],
-                game_logic.format_time(upgrade["finish"] - time.time()),
+        # The upgrade the server just started must be a real
+        # one (Phase 30): a null level or finish here used to
+        # crash this announce, so say it plainly instead.
+        if game_logic.upgrade_is_running(self.fighter):
+            upgrade = self.fighter["upgrade"]
+            self.announce(
+                "I'm upgrading my %s to level %d. It'll be done in %s."
+                % (
+                    upgrade.get("name") or upgrade["slot"],
+                    upgrade["level"],
+                    game_logic.format_time(upgrade["finish"] - time.time()),
+                )
             )
-        )
+        else:
+            self.announce(
+                "That upgrade did not start cleanly. No upgrade is running."
+            )
         self.refresh_all()
 
     def do_spend_stat(self, stat):
@@ -2075,7 +2083,12 @@ class MainFrame(wx.Frame):
         a stale local copy, which the server's answer would
         otherwise only correct after the Yes)."""
         fighter = self.fighter
-        if fighter.get("upgrade"):
+        # A broken upgrade record (Phase 30: null level or
+        # finish) does not block here: it is not a real
+        # running upgrade, and the server is the judge — it
+        # refuses when a real set is running, and the fixed
+        # server clears the broken one.
+        if game_logic.upgrade_is_running(fighter):
             self._announce_upgrade_block()
             return
         plan = game_logic.max_affordable(fighter, slot)
@@ -2533,8 +2546,15 @@ class MainFrame(wx.Frame):
         is done, ask the server: the server's clock decides,
         and it finishes them. Otherwise, check in now and then
         so friends can see this player is online."""
-        upgrade = self.fighter.get("upgrade")
-        upgrade_due = bool(upgrade) and now >= upgrade.get("finish", 0)
+        # A broken upgrade record (Phase 30: null level or
+        # finish from the Nov 19 Healing crash) is not a
+        # running upgrade: comparing now with a null finish
+        # crashed the once-a-second tick, so it must never
+        # count as due here.
+        upgrade_due = (
+            game_logic.upgrade_is_running(self.fighter)
+            and now >= self.fighter["upgrade"]["finish"]
+        )
         repair_due = (
             self.fighter.get("repair_until", 0) > 0
             and not game_logic.is_repairing(self.fighter, now)

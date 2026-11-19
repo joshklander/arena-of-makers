@@ -504,13 +504,15 @@ def is_repairing(fighter, now=None):
     """True while a repair is still running."""
     if now is None:
         now = time.time()
-    return fighter.get("repair_until", 0) > now
+    # A null repair_until (Phase 30: a JSON null from the
+    # server, like the null upgrade level) means no repair.
+    return (fighter.get("repair_until", 0) or 0) > now
 
 
 def repair_left_seconds(fighter, now=None):
     if now is None:
         now = time.time()
-    return max(0, fighter.get("repair_until", 0) - now)
+    return max(0, (fighter.get("repair_until", 0) or 0) - now)
 
 
 def gain_xp(fighter, amount):
@@ -1153,6 +1155,48 @@ def start_max_upgrade(fighter, slot, now=None):
     return None, line
 
 
+def _upgrade_level(upgrade):
+    """The target level of a running upgrade, or None when the
+    stored upgrade is broken: the level is missing, null, or
+    not a whole number. A broken upgrade is never a real
+    running upgrade (Phase 30)."""
+    if not isinstance(upgrade, dict):
+        return None
+    level = upgrade.get("level")
+    if isinstance(level, bool) or not isinstance(level, int):
+        return None
+    return level
+
+
+def _upgrade_finish(upgrade):
+    """The finish time of a running upgrade, or None when it
+    is missing, null, or not a number (Phase 30)."""
+    if not isinstance(upgrade, dict):
+        return None
+    finish = upgrade.get("finish")
+    if isinstance(finish, bool) or not isinstance(finish, (int, float)):
+        return None
+    return finish
+
+
+def upgrade_is_running(fighter):
+    """True only when the fighter has a real running upgrade:
+    an upgrade dict for weapon, armor or healing, with a
+    whole-number level and a numeric finish time. Anything
+    else — missing, null, or the wrong shape — counts as no
+    upgrade running (Phase 30: the Nov 19 Healing crash left
+    an upgrade with a null level on the server, and the game
+    must never treat that as a running upgrade, crash on it,
+    or loop on it every second)."""
+    upgrade = fighter.get("upgrade")
+    if not isinstance(upgrade, dict):
+        return False
+    if upgrade.get("slot") not in ("weapon", "armor", "healing"):
+        return False
+    return (_upgrade_level(upgrade) is not None
+            and _upgrade_finish(upgrade) is not None)
+
+
 def finish_upgrade_if_ready(fighter, now=None):
     """Apply a finished upgrade. Returns its plain-words line, or None.
 
@@ -1164,34 +1208,49 @@ def finish_upgrade_if_ready(fighter, now=None):
     upgrade = fighter.get("upgrade")
     if not upgrade:
         return None
-    if now < upgrade["finish"]:
+    if not upgrade_is_running(fighter):
+        # A broken upgrade record (Phase 30: the Nov 19
+        # Healing crash stored an upgrade with a null level).
+        # It can never finish, so clear it instead of
+        # crashing, storing a null level, or looping every
+        # second. The server migration clears it for good;
+        # this only keeps the game open until then. Said
+        # once: the upgrade is gone after this call, so the
+        # line is not repeated.
+        fighter["upgrade"] = None
+        fighter["upgrade_queue"] = None
+        fighter["upgrade_total"] = 0
+        return "That broken upgrade is cleared. No upgrade is running now."
+    if now < _upgrade_finish(upgrade):
         return None
-    fighter[upgrade["slot"] + "_level"] = upgrade["level"]
-    line = "My %s is now level %d." % (upgrade["name"], upgrade["level"])
-    queue = list(fighter.get("upgrade_queue") or [])
+    fighter[upgrade["slot"] + "_level"] = _upgrade_level(upgrade)
+    line = "My %s is now level %d." % (
+        upgrade.get("name") or upgrade["slot"], _upgrade_level(upgrade))
+    queue = [q for q in (fighter.get("upgrade_queue") or [])
+             if isinstance(q, int) and not isinstance(q, bool)]
     if queue:
         nxt = queue.pop(0)
         fighter["upgrade"] = {
             "slot": upgrade["slot"],
-            "name": upgrade["name"],
+            "name": upgrade.get("name") or upgrade["slot"],
             "level": nxt,
             "finish": now + slot_upgrade_duration_seconds(
                 upgrade["slot"], nxt - 1),
         }
         fighter["upgrade_queue"] = queue
     else:
-        total = fighter.get("upgrade_total", 0)
+        total = fighter.get("upgrade_total", 0) or 0
         fighter["upgrade"] = None
         fighter["upgrade_queue"] = None
         fighter["upgrade_total"] = 0
         if total > 1:
             line += " All %d levels are done." % total
-        if upgrade["slot"] == "healing" and upgrade["level"] >= HEALING_MAX_LEVEL:
+        if upgrade["slot"] == "healing" and _upgrade_level(upgrade) >= HEALING_MAX_LEVEL:
             # Reaching Healing level 5 ends repairs for good:
             # a fighter still under repair when the skill
             # maxes out is back to full health at once, with
             # no wait left.
-            if fighter.get("repair_until", 0) > now:
+            if (fighter.get("repair_until", 0) or 0) > now:
                 fighter["repair_until"] = 0
                 fighter["hp"] = fighter_max_hp(fighter)
                 line += " No more repairs — I'm back to full health."
@@ -1200,19 +1259,26 @@ def finish_upgrade_if_ready(fighter, now=None):
 
 def upgrade_status(fighter, now=None):
     """Plain-words line about the running upgrade, or None. A
-    queued upgrade also says how many levels are still queued."""
+    queued upgrade also says how many levels are still queued.
+
+    A broken upgrade record never crashes here and never
+    shows as running: when the level or finish is missing,
+    null, or the wrong shape (Phase 30: the Nov 19 Healing
+    crash stored an upgrade with a null level), this returns
+    None, so launch and the once-a-second tick carry on."""
     if now is None:
         now = time.time()
-    upgrade = fighter.get("upgrade")
-    if not upgrade:
+    if not upgrade_is_running(fighter):
         return None
-    left = max(0, upgrade["finish"] - now)
+    upgrade = fighter["upgrade"]
+    left = max(0, _upgrade_finish(upgrade) - now)
     text = "I'm upgrading my %s to level %d, %s left." % (
-        upgrade["name"],
-        upgrade["level"],
+        upgrade.get("name") or upgrade["slot"],
+        _upgrade_level(upgrade),
         format_time(left),
     )
-    queued = len(fighter.get("upgrade_queue") or [])
+    queued = len([q for q in (fighter.get("upgrade_queue") or [])
+                  if isinstance(q, int) and not isinstance(q, bool)])
     if queued:
         text += " %d more %s queued." % (
             queued,

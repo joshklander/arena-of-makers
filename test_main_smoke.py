@@ -1736,9 +1736,13 @@ def currency_wording_test():
     # upgrade, stat and quest functions so the player's own
     # lines say "I / me / my" and givers address the player
     # by name. No numbers, costs or times change.
-    newest = open(os.path.join(mig_dir, names[-1]), encoding="utf-8").read()
-    check("newest migration is the first-person narration one",
-          "first_person_narration" in names[-1])
+    # Phase 28's wording lives in its own file now that a
+    # later hotfix is newest: read that file for these checks.
+    newest = open(os.path.join(
+        mig_dir, [n for n in names if "first_person_narration" in n][0]),
+        encoding="utf-8").read()
+    check("the first-person narration migration is present",
+          any("first_person_narration" in n for n in names))
     check("newest migration says I hit in a fight",
           "I hit the Scrap Rat for %s" in newest
           and "I hit the %s for %s" in newest)
@@ -1761,6 +1765,29 @@ def currency_wording_test():
     healing_mig = open(os.path.join(
         mig_dir, [n for n in names if "healing_skill" in n][0]),
         encoding="utf-8").read()
+    # Phase 30 hotfix (Makenna Nov 19, 2026): the Healing
+    # max-upgrade crash. The newest migration re-issues the
+    # upgrade functions with the null-level coalesce, keeps
+    # the first-person wording, and repairs the stored
+    # fighters — including the credits field the broken call
+    # left null, which is never left null again.
+    hotfix = open(os.path.join(mig_dir, names[-1]), encoding="utf-8").read()
+    check("newest migration is the healing null fix",
+          "healing_level_null_fix" in names[-1])
+    check("the null fix re-issues the upgrade functions",
+          "arena_start_upgrade" in hotfix
+          and "arena_max_upgrade" in hotfix
+          and "apply_timers" in hotfix
+          and "fighter_out" in hotfix)
+    check("the null fix coalesces the slot level to 0",
+          "coalesce((f ->> (p_slot || '_level'))::integer, 0)" in hotfix)
+    check("the null fix keeps the first-person upgrade line",
+          "My %s will go up %s %s for %s credits" in hotfix)
+    check("the null fix clears a broken upgrade",
+          "That broken upgrade was cleared" in hotfix)
+    check("the null fix never leaves credits null",
+          "'credits', 0" in hotfix
+          and "phase30_repair" in hotfix)
     check("the healing skill migration redefines the upgrade functions",
           "arena_start_upgrade" in healing_mig
           and "arena_max_upgrade" in healing_mig)
