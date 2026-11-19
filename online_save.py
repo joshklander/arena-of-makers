@@ -195,7 +195,9 @@ def start_quest(config, quest_id, timeout=15):
     quest really took its time. Returns (data, error).
     data has quest (with started_at and finish_at) and the
     fighter. Starting the same quest again after pressing
-    Stop picks up the saved quest, it does not restart it."""
+    Stop picks up the saved quest, it does not restart it:
+    when it was paused, it resumes from the remaining time
+    that was frozen when quests stopped."""
     args = _session_args(config)
     args["p_quest_id"] = quest_id
     data, error = rpc(config, "arena_start_quest", args, timeout)
@@ -218,11 +220,28 @@ def complete_quest(config, quest_id, timeout=15):
     quest is on this player's board, has not been done, and
     its time is up — and it never checks repairs, so a quest
     completes while repairing exactly like a healthy one.
-    Returns (data, error). data has the credits paid, the
-    spoken lines, the giver, reputation and any gift."""
+    A paused quest never completes until it is resumed and
+    its time runs out in the hangout. Returns (data, error).
+    data has the credits paid, the spoken lines, the giver,
+    reputation and any gift."""
     args = _session_args(config)
     args["p_quest_id"] = quest_id
     data, error = rpc(config, "arena_complete_quest", args, timeout)
+    data = data or {}
+    return data, error
+
+
+def pause_quest(config, timeout=15):
+    """Freeze the active quest's remaining time on the
+    server, when quests stop (Stop, leaving the hangout,
+    Escape, closing the game). The quest clock only runs
+    while the player is in the hangout with quests started:
+    pausing saves the remaining seconds, and starting again
+    resumes from them. Repairs and upgrades keep ticking —
+    only the quest clock freezes. Returns (data, error).
+    data has the paused quest and its remaining seconds."""
+    args = _session_args(config)
+    data, error = rpc(config, "arena_pause_quest", args, timeout)
     data = data or {}
     return data, error
 

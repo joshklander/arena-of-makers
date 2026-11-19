@@ -1043,17 +1043,27 @@ def currency_wording_test():
     check("the credits-wording migration replaces apply_timers only",
           "create or replace function arena_private.apply_timers(" in credits_fix
           and "set search_path = ''" in credits_fix)
-    # The newest migration is now the hangout quests one
-    # (Phase 18), which adds arena_get_quests and friends.
-    # It must never say "points" for the currency either,
-    # and it must never check repairs when completing a quest.
+    # The hangout quests migration (Phase 18) adds
+    # arena_get_quests and friends. The newest migration
+    # is now the quest pause one (Phase 22), which adds
+    # arena_pause_quest and redefines start/complete so a
+    # quest clock freezes while the player is away. Neither
+    # may say "points" for the currency, and quest
+    # completion must never check repairs.
+    quests_mig = open(os.path.join(
+        mig_dir, [n for n in names if "add_hangout_quests" in n][0]),
+        encoding="utf-8").read()
+    check("the quests migration adds the quest functions",
+          "arena_get_quests" in quests_mig
+          and "arena_complete_quest" in quests_mig
+          and "arena_join_quest" in quests_mig)
     newest = open(os.path.join(mig_dir, names[-1]), encoding="utf-8").read()
-    check("newest migration is the hangout quests one",
-          "add_hangout_quests" in names[-1])
-    check("newest migration adds the quest functions",
-          "arena_get_quests" in newest
-          and "arena_complete_quest" in newest
-          and "arena_join_quest" in newest)
+    check("newest migration is the quest pause one",
+          "quest_pause_resume" in names[-1])
+    check("newest migration adds the pause function",
+          "arena_pause_quest" in newest
+          and "arena_start_quest" in newest
+          and "arena_complete_quest" in newest)
     check("newest migration never says points for the currency",
           "Your points are now called credits" not in newest)
     check("quest completion never checks repairs",
@@ -1205,6 +1215,226 @@ def narration_test():
 
     frame.on_close(mock.MagicMock())
     print("\nAll turn-by-turn narration tests passed.")
+
+
+def game_action_speech_test():
+    """Makenna's TTS rule (2026-11-18): Edge speaks for
+    in-game actions — an upgrade starting, quests starting,
+    quest progress and finish, auto-fight narration — and
+    stays silent for navigation, where NVDA is the only
+    voice. Tab silence is checked in voice_test and
+    auto-fight narration in narration_test; this checks
+    the other speaking side with the voice on."""
+    import copy
+    import importlib
+    import quests as quests_module
+    import online_save as _online_save
+    import voice_engine
+
+    sys.modules["edge_tts"] = _make_fake_edge_tts()
+    importlib.reload(voice_engine)
+    importlib.reload(main)
+    media = sys.modules["pygame"].mixer.music
+    media.fail_load = False
+
+    def _spoken(frame, text, timeout=8.0):
+        """True once the voice thread logs speaking this text.
+        The log is the reliable record: the previous line's
+        voice file is deleted as soon as the next line plays,
+        so reading the file back is a race. A line queued
+        behind one still speaking only sounds once the
+        one-second timer advances the narration, so advance
+        it here while waiting — in the real game the timer
+        does this on its own."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if ('Voice: speaking "' + text) in LOG_CAPTURE.getvalue():
+                return True
+            _finish_line_and_advance(frame)
+        return ('Voice: speaking "' + text) in LOG_CAPTURE.getvalue()
+
+    def _drain(frame):
+        while frame._narration_queue:
+            _finish_line_and_advance(frame)
+        media.finish()
+
+    # 1. An upgrade starting in the Shop speaks.
+    fighter = game_logic.new_fighter("Rusty", "robot")
+    fighter["credits"] = 1000
+    frame = main.MainFrame(fighter)
+    check("voice is on for game-action speech", frame.voice is not None)
+    check("welcome line speaks first",
+          _wait_spoken(frame, "Welcome to Arena of Makers, Rusty."))
+    _drain(frame)
+    frame.do_upgrade("weapon")
+    check("starting an upgrade speaks",
+          _spoken(frame, "Upgrading Laser Blaster to level 2, "))
+    frame.on_close(mock.MagicMock())
+
+    # 2. Quests starting, progressing and finishing speak.
+    # A small fake server, same rules as quest_test.
+    qfighter = game_logic.new_fighter("Bolt", "robot")
+    qfighter["credits"] = 100
+    qfighter["player_code"] = "4242"
+    server = {"fighter": copy.deepcopy(qfighter),
+              "board": quests_module.starting_board(random.Random(7)),
+              "done": [], "rep": {}, "active": None,
+              "joined": [], "gift_pending": None, "calls": []}
+
+    def _fighter_out():
+        return copy.deepcopy(server["fighter"])
+
+    def _fake_get_quests(config):
+        return {"fighter": _fighter_out(),
+                "quests": copy.deepcopy(server["board"]),
+                "active": copy.deepcopy(server["active"]),
+                "reputation": dict(server["rep"]),
+                "gift_pending": None}, None
+
+    def _fake_start_quest(config, quest_id):
+        quest = next((q for q in server["board"] if q["id"] == quest_id), None)
+        if quest is None:
+            return {}, "That quest is not on your board."
+        if quest.get("coop") and quest_id not in server["joined"]:
+            return {}, "Join the Grand Hangout Fair first, then start it."
+        started = copy.deepcopy(quest)
+        started["started_at"] = time.time()
+        started["finish_at"] = started["started_at"] + started["duration_minutes"] * 60
+        server["active"] = started
+        return {"fighter": _fighter_out(),
+                "quest": copy.deepcopy(started)}, None
+
+    def _fake_join_quest(config, quest_id):
+        if quest_id not in server["joined"]:
+            server["joined"].append(quest_id)
+        return {"fighter": _fighter_out(),
+                "message": "You joined the Grand Hangout Fair."}, None
+
+    def _fake_complete_quest(config, quest_id):
+        quest = next((q for q in server["board"] if q["id"] == quest_id), None)
+        if quest is None:
+            return {}, "That quest is not on your board."
+        active = server["active"]
+        if active is None or active["id"] != quest_id:
+            return {}, "Start that quest in the hangout first."
+        if active.get("paused") and active.get("remaining_seconds", 0) > 0:
+            return {}, "That quest is paused."
+        if active["finish_at"] > time.time():
+            return {}, "That quest is not done yet."
+        giver = quest["giver"]
+        server["rep"][giver] = server["rep"].get(giver, 0) + 1
+        reward = quests_module.quest_reward(
+            quest["difficulty"], server["fighter"]["level"])
+        server["fighter"]["credits"] += reward
+        server["board"] = [q for q in server["board"] if q["id"] != quest_id]
+        server["done"].append(quest_id)
+        server["active"] = None
+        return {"fighter": _fighter_out(),
+                "quest": copy.deepcopy(quest),
+                "quests": copy.deepcopy(server["board"]),
+                "credits": reward,
+                "message": "Quest done! You earned %s credits." % reward,
+                "tier_line": None, "giver": giver,
+                "giver_voice": quest["giver_voice"],
+                "reputation": dict(server["rep"]),
+                "gift_pending": None}, None
+
+    def _fake_new_quest(config):
+        ids = [q["id"] for q in server["board"]]
+        names = [q["name"] for q in server["board"]]
+        quest = quests_module.generate_quest(
+            random.Random(len(ids)), None, ids,
+            coop_allowed=not any(q.get("coop") for q in server["board"]),
+            existing_names=names)
+        server["board"].append(quest)
+        return {"fighter": _fighter_out(),
+                "quest": copy.deepcopy(quest)}, None
+
+    def _fake_pause_quest(config):
+        active = server["active"]
+        if active is None:
+            return {"fighter": _fighter_out(), "quest": None}, None
+        if active.get("paused"):
+            return {"fighter": _fighter_out(),
+                    "quest": copy.deepcopy(active),
+                    "remaining_seconds": active.get("remaining_seconds", 0)}, None
+        remaining = max(0.0, active["finish_at"] - time.time())
+        active["paused"] = True
+        active["remaining_seconds"] = remaining
+        return {"fighter": _fighter_out(),
+                "quest": copy.deepcopy(active),
+                "remaining_seconds": remaining}, None
+
+    _online_save.get_quests = _fake_get_quests
+    _online_save.new_quest = _fake_new_quest
+    _online_save.start_quest = _fake_start_quest
+    _online_save.join_quest = _fake_join_quest
+    _online_save.complete_quest = _fake_complete_quest
+    _online_save.pause_quest = _fake_pause_quest
+    _online_save.refresh_state = lambda config: (_fighter_out(), [], None)
+    _online_save.heartbeat = lambda *args, **kwargs: True
+    _online_save.sign_out = lambda *args, **kwargs: True
+    _online_save.log_action = lambda *args, **kwargs: True
+
+    qframe = main.MainFrame(
+        qfighter,
+        online_config={"url": "https://example.supabase.co",
+                       "key": "sb_publishable_fake", "session": "a" * 64},
+        player_account={"username": "Bolt", "player_code": "4242"},
+    )
+    check("welcome line speaks in the quest game too",
+          _wait_spoken(qframe, "Welcome to Arena of Makers, Bolt."))
+    _drain(qframe)
+    # Navigation in this game too: a tab change speaks nothing.
+    before = len(media.loaded)
+    spoken_before = LOG_CAPTURE.getvalue().count("Voice: speaking")
+    qframe.notebook.SetSelection(0)
+    qframe.on_tab_changed(types.SimpleNamespace(Skip=lambda: None))
+    time.sleep(0.3)
+    check("a tab change speaks nothing, with the voice on",
+          len(media.loaded) == before
+          and qframe._narration_queue == []
+          and LOG_CAPTURE.getvalue().count("Voice: speaking") == spoken_before)
+    # Visit the hangout, then Start with Enter.
+    qframe.notebook.SetSelection(3)
+    qframe.on_tab_changed(types.SimpleNamespace(Skip=lambda: None))
+    qframe.refresh_list("More")
+    more_box = qframe.lists["More"]
+    more_box.SetSelection(
+        qframe.list_items("More").index("Visit the hangout"))
+    qframe.activate_current()
+    _drain(qframe)
+    qframe.activate_current()
+    check("starting quests speaks",
+          # The voice log previews only the first 40 chars,
+          # so match the start of the line, not the whole line.
+          _spoken(qframe, "Quests started. I will keep giving"))
+    _finish_line_and_advance(qframe)
+    giver = qframe._quest_current["giver"]
+    check("the quest giver speaks the new quest",
+          _spoken(qframe, "%s asks: " % giver))
+    # A progress update speaks, in the giver's voice.
+    _drain(qframe)
+    qframe._quest_current["started_at"] = time.time() - 600
+    qframe._quest_current["finish_at"] = time.time() + 600
+    qframe._quest_last_progress_at = time.time() - 301
+    qframe.on_tick(mock.MagicMock())
+    check("a quest progress update speaks",
+          _spoken(qframe, "Your quest is about "))
+    # Finishing a quest speaks.
+    _drain(qframe)
+    qframe._quest_current["finish_at"] = time.time() - 1
+    server["active"]["finish_at"] = time.time() - 1
+    qframe.on_tick(mock.MagicMock())
+    check("a finished quest speaks",
+          _spoken(qframe, "Quest done! You earned "))
+    check("a finished quest announces the reputation gained",
+          _spoken(qframe, "You gained 1 reputation with %s" % giver))
+    # The distance to the next tier is past the voice log's
+    # 40-character preview, so it is checked word-for-word
+    # in quest_test instead of here.
+    qframe.on_close(mock.MagicMock())
+    print("\nAll game-action speech tests passed.")
 
 
 def sounds_test():
@@ -1428,7 +1658,13 @@ def quest_test():
     memory that runs the same rules as the migration:
     board of 5, start records the time, complete checks
     the time and never checks repairs, reputation +1 per
-    finished quest, gifts instant."""
+    finished quest, gifts instant. Phase 22 adds: the quest
+    clock pauses when the player leaves the hangout (Stop,
+    leaving the tab, closing the game) and resumes from the
+    frozen remaining time; the loop skips a stale quest
+    instead of stopping; progress updates mention repairs;
+    completion announces reputation gained and distance to
+    the next tier."""
     import copy
     import quests as quests_module
     import online_save as _online_save
@@ -1489,8 +1725,23 @@ def quest_test():
         quest = next((q for q in server["board"] if q["id"] == quest_id), None)
         if quest is None:
             return {}, "That quest is not on your board."
+        if quest_id in server["done"]:
+            return {}, "You already finished that quest."
         if server["active"] is not None:
             if server["active"]["id"] == quest_id:
+                if server["active"].get("paused"):
+                    # Paused (Phase 22): resume from the frozen
+                    # remaining time, not the old finish time.
+                    remaining = server["active"].get(
+                        "remaining_seconds",
+                        max(0.0, server["active"]["finish_at"] - time.time()))
+                    resumed = copy.deepcopy(server["active"])
+                    resumed["finish_at"] = time.time() + remaining
+                    resumed["paused"] = False
+                    resumed.pop("remaining_seconds", None)
+                    server["active"] = resumed
+                    return {"fighter": _fighter_out(),
+                            "quest": copy.deepcopy(resumed)}, None
                 return {"fighter": _fighter_out(),
                         "quest": copy.deepcopy(server["active"])}, None
             return {}, "You already have a quest going."
@@ -1501,6 +1752,22 @@ def quest_test():
         started["finish_at"] = started["started_at"] + started["duration_minutes"] * 60
         server["active"] = started
         return {"fighter": _fighter_out(), "quest": copy.deepcopy(started)}, None
+
+    def _fake_pause_quest(config):
+        server["calls"].append("pause_quest")
+        active = server["active"]
+        if active is None:
+            return {"fighter": _fighter_out(), "quest": None}, None
+        if active.get("paused"):
+            return {"fighter": _fighter_out(),
+                    "quest": copy.deepcopy(active),
+                    "remaining_seconds": active.get("remaining_seconds", 0)}, None
+        remaining = max(0.0, active["finish_at"] - time.time())
+        active["paused"] = True
+        active["remaining_seconds"] = remaining
+        return {"fighter": _fighter_out(),
+                "quest": copy.deepcopy(active),
+                "remaining_seconds": remaining}, None
 
     def _fake_join_quest(config, quest_id):
         server["calls"].append("join_quest")
@@ -1524,6 +1791,8 @@ def quest_test():
         active = server["active"]
         if active is None or active["id"] != quest_id:
             return {}, "Start that quest in the hangout first."
+        if active.get("paused") and active.get("remaining_seconds", 0) > 0:
+            return {}, "That quest is paused."
         if active["finish_at"] > time.time():
             return {}, "That quest is not done yet."
         # Never check repairs here, exactly like the server.
@@ -1551,7 +1820,6 @@ def quest_test():
                 server["fighter"]["healing_level"] = heal + 1
                 tier_line = "%s says: Fifteen jobs done. Healing is now level %s." % (giver, heal + 1)
         return {"fighter": _fighter_out(), "quest": copy.deepcopy(quest),
-                "quests": copy.deepcopy(server["board"]),
                 "credits": reward,
                 "message": "Quest done! You earned %s credits." % reward,
                 "tier_line": tier_line, "giver": giver,
@@ -1577,6 +1845,7 @@ def quest_test():
     _online_save.start_quest = _fake_start_quest
     _online_save.join_quest = _fake_join_quest
     _online_save.complete_quest = _fake_complete_quest
+    _online_save.pause_quest = _fake_pause_quest
     _online_save.choose_quest_gift = _fake_choose_gift
     _online_save.refresh_state = _fake_state
     _online_save.heartbeat = lambda *args, **kwargs: True
@@ -1640,6 +1909,24 @@ def quest_test():
     check("a progress update is spoken every 5 minutes",
           "percent done" in frame.message_line.GetLabel())
 
+    # The same update, while repairing, says the fighter is
+    # repairing and how long repairs have left — and when
+    # not repairing, it says nothing about repairs at all.
+    fighter["repair_until"] = time.time() + 600
+    server["fighter"]["repair_until"] = fighter["repair_until"]
+    frame._quest_last_progress_at = time.time() - 301
+    frame.on_tick(mock.MagicMock())
+    check("a progress update while repairing says so",
+          "still repairing" in frame.message_line.GetLabel())
+    check("a progress update while repairing says how long is left",
+          "left" in frame.message_line.GetLabel())
+    fighter["repair_until"] = 0
+    server["fighter"]["repair_until"] = 0
+    frame._quest_last_progress_at = time.time() - 301
+    frame.on_tick(mock.MagicMock())
+    check("a progress update while not repairing says nothing about repairs",
+          "repairing" not in frame.message_line.GetLabel())
+
     # Finish the quest: the server pays, the quest leaves
     # the board, reputation grows, and the next quest starts.
     credits_before = fighter["credits"]
@@ -1658,6 +1945,48 @@ def quest_test():
     check("the music stays on across quests",
           frame.sounds.current_music_track == "hangout")
 
+    # The reputation line itself: gain, new total, and how
+    # far to the next tier — or the top tier, when there is
+    # no next tier. (The spoken line is checked with the
+    # voice on in game_action_speech_test; here the words
+    # are checked, because without a voice the next quest's
+    # line overwrites the message line at once.)
+    check("reputation line says the gain, total and distance to Helper",
+          quests_module.reputation_line("Bolt", 1) ==
+          "You gained 1 reputation with Bolt. You have 1 reputation "
+          "with Bolt, 2 more to reach Helper.")
+    check("reputation line says 1 more at the edge of a tier",
+          quests_module.reputation_line("Bolt", 2) ==
+          "You gained 1 reputation with Bolt. You have 2 reputation "
+          "with Bolt, 1 more to reach Helper.")
+    check("reputation line at the top tier says so, with no cap",
+          quests_module.reputation_line("Bolt", 15) ==
+          "You gained 1 reputation with Bolt. You have 15 reputation "
+          "with Bolt. That is the top tier, Trusted Friend, and your "
+          "reputation keeps building with no cap.")
+    check("next tier after Helper is Friend at 8",
+          quests_module.next_tier(3) == (8, "Friend"))
+    check("no next tier at or past Trusted Friend",
+          quests_module.next_tier(15) is None)
+
+    # A stale quest on the board must not kill the loop:
+    # mark the next board quest after the current one as
+    # already finished on the server, then finish the
+    # current quest. The loop must skip the stale one and
+    # start the one after it, without stopping.
+    stale_id = frame._quest_board[1]["id"]
+    server["done"].append(stale_id)
+    frame._quest_current["finish_at"] = time.time() - 1
+    server["active"]["finish_at"] = time.time() - 1
+    frame.on_tick(mock.MagicMock())
+    check("a stale board quest does not stop the loop",
+          frame._quests_active is True)
+    check("the loop skips the stale quest",
+          frame._quest_current is not None
+          and frame._quest_current["id"] != stale_id)
+    check("the stale quest leaves the board",
+          all(q["id"] != stale_id for q in frame._quest_board))
+
     # Find me another quest: one fresh quest, never a repeat.
     board_before = len(frame._quest_board)
     frame.find_another_quest()
@@ -1665,15 +1994,23 @@ def quest_test():
           len(frame._quest_board) == board_before + 1)
 
     # Stop: the loop stops, the music stops, and the quest
-    # stays saved on the server. Start picks it up again.
+    # stays saved on the server, its remaining time frozen.
+    # Time away must not eat the quest: pretend 10 minutes
+    # passed while stopped, so the old finish time is now
+    # in the past, then start again with S.
     saved_id = frame._quest_current["id"]
-    saved_finish = frame._quest_current["finish_at"]
+    remaining_at_stop = frame._quest_current["finish_at"] - time.time()
     frame.stop_quests()
     check("stopping quests stops the loop", frame._quests_active is False)
     check("stopping quests stops the music",
           frame.sounds.current_music_track is None)
     check("stopping quests keeps the quest saved on the server",
           server["active"] is not None and server["active"]["id"] == saved_id)
+    check("stopping quests pauses the quest on the server",
+          server["active"].get("paused") is True)
+    check("stopping quests freezes the remaining time",
+          abs(server["active"]["remaining_seconds"] - remaining_at_stop) < 5)
+    server["active"]["finish_at"] = time.time() - 600
     # Start again with S, the way a player does it: the
     # key handler only runs when a list box has focus, so
     # point the stand-in focus at the More list first.
@@ -1684,8 +2021,37 @@ def quest_test():
           frame._quests_active is True)
     check("starting again picks up the saved quest",
           frame._quest_current["id"] == saved_id)
-    check("starting again does not restart the saved quest",
-          frame._quest_current["finish_at"] == saved_finish)
+    check("starting again resumes it from the frozen remaining time",
+          abs((frame._quest_current["finish_at"] - time.time())
+              - remaining_at_stop) < 5)
+    check("starting again clears the pause",
+          server["active"].get("paused") is not True)
+
+    # Leaving the hangout to fight, then coming back, must
+    # also freeze and resume the quest — not lose its time.
+    remaining_at_leave = frame._quest_current["finish_at"] - time.time()
+    frame.notebook.SetSelection(0)  # Home tab
+    frame.on_tab_changed(types.SimpleNamespace(Skip=lambda: None))
+    check("leaving the hangout stops the quest loop",
+          frame._quests_active is False)
+    check("leaving the hangout pauses the quest on the server",
+          server["active"] is not None
+          and server["active"].get("paused") is True)
+    check("leaving the hangout freezes the remaining time",
+          abs(server["active"]["remaining_seconds"] - remaining_at_leave) < 5)
+    server["active"]["finish_at"] = time.time() - 600
+    frame.notebook.SetSelection(3)  # More tab
+    frame.on_tab_changed(types.SimpleNamespace(Skip=lambda: None))
+    frame.refresh_list("More")
+    more_box.SetSelection(frame.list_items("More").index("Visit the hangout"))
+    frame.activate_current()
+    frame.activate_current()  # Enter on Start quests
+    check("coming back resumes the same quest",
+          frame._quest_current is not None
+          and frame._quest_current["id"] == saved_id)
+    check("coming back does not lose quest time",
+          abs((frame._quest_current["finish_at"] - time.time())
+              - remaining_at_leave) < 5)
 
     # Quests work while repairing: a fighter at 1 health,
     # mid-repair, still starts and finishes quests.
@@ -1756,6 +2122,37 @@ def quest_test():
     check("a chef can start quests too",
           chef_frame._quests_active is True
           and chef_frame._quest_current is not None)
+    # Closing the game with a quest active freezes its
+    # remaining time, and reopening resumes it from there.
+    closer_id = frame._quest_current["id"]
+    remaining_at_close = frame._quest_current["finish_at"] - time.time()
+    frame.on_close(mock.MagicMock())
+    check("closing the game pauses the quest on the server",
+          server["active"] is not None
+          and server["active"].get("paused") is True)
+    check("closing the game freezes the remaining time",
+          abs(server["active"]["remaining_seconds"] - remaining_at_close) < 5)
+    reopened = main.MainFrame(
+        fighter,
+        online_config={"url": "https://example.supabase.co",
+                       "key": "sb_publishable_fake", "session": "a" * 64},
+        player_account={"username": "Bolt", "player_code": "4242"},
+    )
+    reopened.notebook.SetSelection(3)  # More tab
+    reopened.on_tab_changed(types.SimpleNamespace(Skip=lambda: None))
+    reopened.refresh_list("More")
+    reopen_box = reopened.lists["More"]
+    reopen_box.SetSelection(
+        reopened.list_items("More").index("Visit the hangout"))
+    reopened.activate_current()
+    reopened.start_quests()
+    check("reopening resumes the same quest",
+          reopened._quest_current is not None
+          and reopened._quest_current["id"] == closer_id)
+    check("reopening does not lose quest time",
+          abs((reopened._quest_current["finish_at"] - time.time())
+              - remaining_at_close) < 5)
+    reopened.on_close(mock.MagicMock())
     chef_frame.on_close(mock.MagicMock())
     frame.on_close(mock.MagicMock())
     print("\nAll hangout quest tests passed.")
@@ -1767,6 +2164,7 @@ if __name__ == "__main__":
     currency_wording_test()
     voice_test()
     narration_test()
+    game_action_speech_test()
     sounds_test()
     voice_failure_test()
     voice_playback_failure_test()

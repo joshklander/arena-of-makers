@@ -41,6 +41,15 @@ no time, no queue.
 
 Healing: levels 1-5 heal 19%, 38%, 57%, 76%, 95% — never more
 than 95%. The Healing cap is never exceeded.
+
+Quests pause (Phase 22, Makenna 2026-11-18): the quest clock
+only runs while the player is in the hangout with quests
+started. Stopping — Stop button, leaving the hangout, Escape,
+closing the game — freezes the remaining time on the server,
+and starting again resumes from it: the quest is never
+restarted and never shortened by time away. Repairs and
+upgrades still tick down whether the game is open or closed;
+only the quest clock freezes. A paused quest never completes.
 """
 
 import random
@@ -157,6 +166,36 @@ def tier_name(reputation):
         if reputation >= needed:
             name = tier
     return name
+
+
+def next_tier(reputation):
+    """The next reputation tier not yet reached, as
+    (needed, name) — or None when the giver is already at
+    the top tier, Trusted Friend (15+), where reputation
+    keeps building with no cap and no higher tier."""
+    for needed, tier in REPUTATION_TIERS:
+        if reputation < needed:
+            return needed, tier
+    return None
+
+
+def reputation_line(giver, rep_after):
+    """One plain-words line for a finished quest: the +1
+    reputation gained, the new total with that giver, and
+    how far to the next tier — or the top tier, when there
+    is no next tier. Spoken by the giver on completion."""
+    nxt = next_tier(rep_after)
+    if nxt is None:
+        return (
+            "You gained 1 reputation with %s. You have %s reputation "
+            "with %s. That is the top tier, Trusted Friend, and your "
+            "reputation keeps building with no cap."
+            % (giver, rep_after, giver))
+    needed, name = nxt
+    return (
+        "You gained 1 reputation with %s. You have %s reputation "
+        "with %s, %s more to reach %s."
+        % (giver, rep_after, giver, needed - rep_after, name))
 
 
 def reputation_summary(reputation):

@@ -1377,14 +1377,31 @@ class MainFrame(wx.Frame):
         self._begin_next_quest()
         self.refresh_all()
 
+    def _pause_current_quest(self):
+        """Freeze the active quest's remaining time on the
+        server, so its clock stops while the player is away
+        from the hangout. Best effort: when the server cannot
+        be reached, the loop still stops locally, and the
+        quest stays saved with its old finish time. The
+        server never completes a paused quest."""
+        if not self._quest_current or not self.online_config:
+            return
+        data, error = online_save.pause_quest(self.online_config)
+        if error or not data:
+            return
+        if data.get("quest"):
+            self._quest_current = data["quest"]
+
     def stop_quests(self):
         """Press Stop: the quest flow stops cleanly. The quest
-        in progress stays saved on the server — it just will
-        not complete unless you are in the loop. Press Start
-        again and the loop picks it up. The music stops too."""
+        in progress stays saved on the server — its remaining
+        time frozen, not its finish time — and pressing Start
+        again picks it up from exactly where it stopped. The
+        music stops too."""
         if not self._quests_active:
             self.announce("Quests are not running.")
             return
+        self._pause_current_quest()
         self._quests_active = False
         self._quest_current = None
         self._refresh_music()
@@ -1397,22 +1414,37 @@ class MainFrame(wx.Frame):
         """Start the next quest in the loop: the saved one
         first when there is one, otherwise the first quest
         on the board, dealing a fresh one when the board
-        is empty. Quests keep coming, one after another."""
+        is empty. Quests keep coming, one after another.
+        A stale quest — one the server says is already
+        finished, or no longer on the board — is dropped
+        and the next one is tried, instead of stopping the
+        whole loop. The loop only stops on a real failure,
+        like the server being unreachable."""
         if not self._quests_active:
             return
         if self._quest_current:
-            self._begin_quest(self._quest_current)
-            return
-        if not self._quest_board:
-            data, error = online_save.new_quest(self.online_config)
-            if error:
-                self.server_problem(error)
-                self._quests_active = False
-                self._refresh_music()
+            if self._begin_quest(self._quest_current):
                 return
-            self._apply_quest_data(data)
-            if data.get("quest"):
-                self._quest_board.append(data["quest"])
+            if not self._quests_active:
+                return
+            # The saved quest was stale: drop it and try the board.
+            self._quest_current = None
+        while self._quest_board:
+            if self._begin_quest(self._quest_board[0]):
+                return
+            if not self._quests_active:
+                return
+            # Stale: drop it and try the next one on the board.
+            self._quest_board = self._quest_board[1:]
+        data, error = online_save.new_quest(self.online_config)
+        if error:
+            self.server_problem(error)
+            self._quests_active = False
+            self._refresh_music()
+            return
+        self._apply_quest_data(data)
+        if data.get("quest"):
+            self._quest_board.append(data["quest"])
         if not self._quest_board:
             self.announce("There are no quests on the board right now.")
             return
@@ -1423,7 +1455,13 @@ class MainFrame(wx.Frame):
         co-op quest (the Grand Hangout Fair) is joined first,
         so the server knows this player helped. The server
         records when the quest started, so it can check the
-        quest really took its time."""
+        quest really took its time. Returns True when the
+        quest started. A quest the server says is already
+        finished, or is no longer on the board, is stale:
+        False, with no announcement and the loop left
+        running, so the caller can try the next quest
+        instead of stopping everything. Any other failure
+        stops the loop, as before."""
         quest = quest or {}
         if quest.get("coop"):
             _data, error = online_save.join_quest(
@@ -1433,15 +1471,18 @@ class MainFrame(wx.Frame):
                 self._quests_active = False
                 self._refresh_music()
                 self.refresh_all()
-                return
+                return False
         data, error = online_save.start_quest(
             self.online_config, quest["id"])
         if error:
+            if ("already finished" in error
+                    or "not on your board" in error):
+                return False
             self.announce(error)
             self._quests_active = False
             self._refresh_music()
             self.refresh_all()
-            return
+            return False
         if data.get("fighter"):
             self.use_server_fighter(data["fighter"])
         started = data.get("quest") or quest
@@ -1456,6 +1497,7 @@ class MainFrame(wx.Frame):
                    (started.get("duration_minutes") or 15) * 60)),
             voice)
         self.refresh_all()
+        return True
 
     def _complete_current_quest(self):
         """The quest's time is up: ask the server to finish
@@ -1473,13 +1515,33 @@ class MainFrame(wx.Frame):
             # Keep the quest and say so, in plain words.
             self.announce(error)
             return
+        finished_id = quest["id"]
         self._quest_current = None
+        # The server's answer does not include the updated
+        # board, so drop the finished quest from the local
+        # board here. Without this the loop tries to start
+        # the just-finished quest again, the server says it
+        # is already finished, and the loop dies — exactly
+        # what Makenna saw on 2026-11-18. _apply_quest_data
+        # still takes the board when the server does send one.
+        self._quest_board = [q for q in self._quest_board
+                             if q.get("id") != finished_id]
         self._apply_quest_data(data)
         voice = data.get("giver_voice")
         if data.get("message"):
             self.announce_as(data["message"], voice)
         if data.get("tier_line"):
             self.announce_as(data["tier_line"], voice)
+        # Reputation, in the giver's voice: what she gained,
+        # her new total with this giver, and how far to the
+        # next tier — or the top tier, when there is no next
+        # one. The tier-crossing line above still speaks too.
+        giver = data.get("giver") or quest.get("giver")
+        rep = (data.get("reputation") or {}).get(giver) \
+            if giver else None
+        if giver and rep is not None:
+            self.announce_as(
+                quests.reputation_line(giver, int(rep)), voice)
         if data.get("gift_pending"):
             self.announce(
                 "A free gift is waiting. Press 1 for a free weapon "
@@ -1490,19 +1552,28 @@ class MainFrame(wx.Frame):
     def _quest_progress_update(self, now):
         """Every 5 minutes, the giver speaks a progress
         update in their own voice, so the player always
-        knows where the quest stands without asking."""
+        knows where the quest stands without asking. The
+        percent comes from the quest's own duration, so it
+        stays right even after a pause and a resume. When
+        the fighter is repairing, the update says so and
+        how long repairs have left; when not repairing,
+        no repair line — the update stays short."""
         quest = self._quest_current
         if not quest:
             return
         finish = quest.get("finish_at") or 0
-        started = quest.get("started_at") or now
-        total = max(1.0, finish - started)
-        done = max(0.0, min(1.0, (now - started) / total))
-        self.announce_as(
+        total = max(1.0, (quest.get("duration_minutes") or 15) * 60)
+        left = max(0.0, finish - now)
+        done = max(0.0, min(1.0, 1.0 - left / total))
+        line = (
             "Your quest is about %d percent done. About %s left."
-            % (int(done * 100),
-               game_logic.format_time(max(0.0, finish - now))),
-            quest.get("giver_voice"))
+            % (int(done * 100), game_logic.format_time(left)))
+        if game_logic.is_repairing(self.fighter):
+            line += (
+                " Your fighter is still repairing, %s left."
+                % game_logic.format_time(
+                    game_logic.repair_left_seconds(self.fighter)))
+        self.announce_as(line, quest.get("giver_voice"))
         self._quest_last_progress_at = now
 
     def find_another_quest(self):
@@ -1900,9 +1971,11 @@ class MainFrame(wx.Frame):
         if self._last_tab == "More" and tab != "More":
             # Leaving the More tab leaves the hangout, and
             # stops the quest loop cleanly: the quest in
-            # progress stays saved on the server, and Start
-            # picks it up again. The music stops too.
+            # progress stays saved on the server, its
+            # remaining time frozen, and Start picks it up
+            # again from exactly there. The music stops too.
             if self._quests_active:
+                self._pause_current_quest()
                 self._quests_active = False
                 self._quest_current = None
             self._in_hangout = False
@@ -2110,6 +2183,11 @@ class MainFrame(wx.Frame):
             online_save.heartbeat(self.online_config)
 
     def on_close(self, event):
+        # Closing with a quest active freezes its remaining
+        # time on the server first, so no quest time is lost
+        # while the game is closed — then sign out.
+        if self._quests_active and self._quest_current:
+            self._pause_current_quest()
         if self.online_config:
             online_save.sign_out(self.online_config)
         self.timer.Stop()
