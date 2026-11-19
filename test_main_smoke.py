@@ -774,6 +774,38 @@ def voice_test():
     check("the welcome line reaches the player first",
           _wait_spoken(frame, "Welcome to Arena of Makers, Piper."))
     media.finish()
+    # Tab switching is silent (2026-11-18, Makenna): NVDA
+    # already announces the tab and its list, so Edge must
+    # not speak the tab hint over it. Switching through
+    # every tab must speak nothing and queue nothing, while
+    # still showing the hint as text.
+    spoken_before = len(media.loaded)
+    for _tab in (1, 2, 3, 4, 0):
+        frame.notebook.SetSelection(_tab)
+        frame.on_tab_changed(types.SimpleNamespace(Skip=lambda: None))
+    time.sleep(0.5)
+    check("switching tabs speaks nothing",
+          len(media.loaded) == spoken_before)
+    check("switching tabs queues no narration",
+          frame._narration_queue == [])
+    check("switching tabs still shows the tab hint as text",
+          frame.message_line.GetLabel() == main.MainFrame.TAB_HINTS["Home"])
+    # "Go to X" changes tabs through the same handler,
+    # so it must be silent too.
+    frame.notebook.SetSelection(0)
+    frame.refresh_list("Home")
+    home_box = frame.lists["Home"]
+    home_box.SetSelection(frame.list_items("Home").index("Go to Combat"))
+    frame.activate_current()
+    # The fake notebook does not fire the tab-changed event
+    # on its own, so call the handler the way the other
+    # tab tests do — in the real game wx fires it.
+    frame.on_tab_changed(types.SimpleNamespace(Skip=lambda: None))
+    time.sleep(0.3)
+    check("Go to Combat speaks nothing",
+          len(media.loaded) == spoken_before)
+    check("Go to Combat still changes tab",
+          frame.current_tab() == "Combat")
     frame.announce("Hello, fighter.")
     deadline = time.time() + 5
     heard = False
@@ -1563,14 +1595,27 @@ def quest_test():
     more_box = frame.lists["More"]
     more_box.SetSelection(frame.list_items("More").index("Visit the hangout"))
     frame.activate_current()
-    check("visiting the hangout shows Start quests",
-          any(item.startswith("Start quests") for item in frame.list_items("More")))
+    # Visit must rewrite the visible list at once (2026-11-18,
+    # Makenna): the old code never refreshed it, so the player
+    # kept seeing the pre-hangout list with no Start anywhere,
+    # even though list_items() already offered it. Check the
+    # visible ListBox, not just list_items() — that is how
+    # this bug slipped past the old check.
+    visible = [more_box.GetString(i) for i in range(more_box.GetCount())]
+    check("visiting the hangout shows Start quests in the visible list",
+          any(item.startswith("Start quests") for item in visible))
+    check("visiting the hangout lands the selection on Start quests",
+          more_box.GetString(more_box.GetSelection()).startswith("Start quests"))
     check("entering the hangout starts no music yet",
           frame.sounds.current_music_track is None)
+    check("entering the hangout does not promise music before Start",
+          "listen to the music" not in frame.message_line.GetLabel()
+          and "music starts when you press Start" in frame.message_line.GetLabel())
 
-    # Start: the board is dealt, the first quest starts, music plays.
-    frame.start_quests()
-    check("quests start in the hangout", frame._quests_active is True)
+    # Start with Enter on the visible Start item.
+    frame.activate_current()
+    check("Enter on Start quests starts quests",
+          frame._quests_active is True)
     check("starting quests starts the hangout music",
           frame.sounds.current_music_track == "hangout")
     check("the starting board has 5 quests",
@@ -1629,7 +1674,14 @@ def quest_test():
           frame.sounds.current_music_track is None)
     check("stopping quests keeps the quest saved on the server",
           server["active"] is not None and server["active"]["id"] == saved_id)
-    frame.start_quests()
+    # Start again with S, the way a player does it: the
+    # key handler only runs when a list box has focus, so
+    # point the stand-in focus at the More list first.
+    sys.modules["wx"].Window.FindFocus = staticmethod(lambda: more_box)
+    frame.on_key(types.SimpleNamespace(GetKeyCode=lambda: ord("s")))
+    sys.modules["wx"].Window.FindFocus = staticmethod(lambda: None)
+    check("pressing S starts quests again",
+          frame._quests_active is True)
     check("starting again picks up the saved quest",
           frame._quest_current["id"] == saved_id)
     check("starting again does not restart the saved quest",

@@ -1784,10 +1784,23 @@ class MainFrame(wx.Frame):
             # when the player presses Start. Leaving the More
             # tab leaves the hangout (see on_tab_changed).
             self._in_hangout = True
+            # The visible list must be rewritten at once:
+            # list_items("More") only offers Start quests
+            # once _in_hangout is True, and without this
+            # refresh the player keeps seeing the old list
+            # (Visit, look-ups, and so on) with no Start
+            # anywhere — Makenna reported exactly that on
+            # 2026-11-18. Land the selection on Start quests.
+            self.refresh_list("More")
+            _start = [i for i, _item in enumerate(
+                self.list_items("More"))
+                if _item.startswith("Start quests")]
+            if _start:
+                self.lists["More"].SetSelection(_start[0])
             self._refresh_music()
             self.announce(
                 "You are in the hangout. Press Start when you want "
-                "tasks, or just sit and listen to the music.")
+                "tasks. The music starts when you press Start.")
         elif tab == "More" and item.startswith("Start quests"):
             self.start_quests()
         elif tab == "More" and item.startswith("Stop quests"):
@@ -1900,7 +1913,16 @@ class MainFrame(wx.Frame):
         # it belongs to (or keeps the fight track while
         # auto-fighting).
         self._refresh_music()
-        self.announce(self.TAB_HINTS[tab])
+        # Tab switching is silent (2026-11-18, Makenna):
+        # NVDA already announces the tab and its list, so
+        # Edge speaking the tab hint as well talks over it.
+        # Show the hint as text only — no speak, no queued
+        # narration. Edge speaks only for game events
+        # (fight narration, quests, repairs, upgrades).
+        # "Go to X" items, Left/Right tab keys and Escape
+        # to Home all change tabs through here, so they
+        # are all covered by this one change.
+        self.message_line.SetLabel(self.TAB_HINTS[tab])
 
     def on_key(self, event):
         key = event.GetKeyCode()
