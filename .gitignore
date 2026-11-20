@@ -4,3 +4,8 @@ arena_save.json
 arena_account.json
 
 __pycache__/
+
+# Exe build output (build_exe.bat). The exes go in GitHub Releases.
+build/
+dist/
+*.spec
