@@ -2405,6 +2405,7 @@ def launch_update_test():
     old_head = updater.get_head_sha
     old_tree = updater.get_tree
     old_release = updater.get_latest_release
+    old_release_state = updater.release_state
     old_sync = updater.sync_game
     try:
         # Up to date: no question, just play.
@@ -2495,8 +2496,8 @@ def launch_update_test():
         # with no main.py in it, and updates come from Releases.
         exe_dir = os.path.join(base, "Exe Game")
         os.makedirs(exe_dir)
-        updater.get_latest_release = (
-            lambda timeout=60: ("v2", "https://example.invalid/a.exe"))
+        updater.release_state = (
+            lambda timeout=60: ("ok", "v2", "https://example.invalid/a.exe"))
         sys.frozen = True
         try:
             result = main.check_for_update_at_launch(exe_dir)
@@ -2513,17 +2514,36 @@ def launch_update_test():
             check("an exe on the newest release is not offered one",
                   result["available"] is False
                   and result["unreachable"] is False)
-            updater.get_latest_release = lambda timeout=60: (None, None)
+            updater.release_state = (
+                lambda timeout=60: ("unreachable", None, None))
             result = main.check_for_update_at_launch(exe_dir)
             check("an exe that cannot reach GitHub plays on",
                   result["available"] is False
                   and result["unreachable"] is True)
+            # Before the first Release: GitHub says there is none.
+            # Nothing is wrong, so no "could not check" message.
+            updater.release_state = lambda timeout=60: ("none", None, None)
+            result = main.check_for_update_at_launch(exe_dir)
+            check("an exe with no Release yet is not told GitHub failed",
+                  result["available"] is False
+                  and result["unreachable"] is False)
+            shown = []
+            old_box = wx.MessageBox
+            wx.MessageBox = lambda *args, **kwargs: shown.append(args)
+            try:
+                check("an exe with no Release yet plays on",
+                      main.maybe_update_at_launch(exe_dir) is False)
+            finally:
+                wx.MessageBox = old_box
+            check("an exe with no Release yet shows no message",
+                  shown == [])
         finally:
             del sys.frozen
     finally:
         updater.get_head_sha = old_head
         updater.get_tree = old_tree
         updater.get_latest_release = old_release
+        updater.release_state = old_release_state
         updater.sync_game = old_sync
     print("Launch update tests passed.")
 

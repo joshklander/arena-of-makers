@@ -256,15 +256,35 @@ GAME_EXE_NAME = "ArenaOfMakers.exe"
 UPDATER_EXE_NAME = "ArenaOfMakersUpdater.exe"
 
 
-def get_latest_release(timeout=60):
-    """Return (tag, asset download url for the game exe), or (None, None)."""
+def release_state(timeout=60):
+    """Return (state, tag, asset download url for the game exe).
+
+    state is "ok" when GitHub answered with a Release, "none" when
+    GitHub answered that there is no Release yet (404), and
+    "unreachable" when GitHub could not be asked (no network, the
+    free request limit, or any other error). Telling "none" apart
+    lets the exe play on quietly before the first Release is made,
+    instead of saying it could not check for updates."""
     status, payload = api_get("/releases/latest", timeout=timeout)
+    if status == 404:
+        return "none", None, None
     if status != 200 or not isinstance(payload, dict):
-        return None, None
+        return "unreachable", None, None
     for asset in payload.get("assets", []):
         if asset.get("name") == GAME_EXE_NAME:
-            return payload.get("tag_name"), asset.get("browser_download_url")
-    return payload.get("tag_name"), None
+            return ("ok", payload.get("tag_name"),
+                    asset.get("browser_download_url"))
+    return "ok", payload.get("tag_name"), None
+
+
+def get_latest_release(timeout=60):
+    """Return (tag, asset download url for the game exe), or (None, None).
+
+    Kept as it was for older copies of the game, which call it.
+    New code uses release_state, which also says when there is
+    no Release yet."""
+    _state, tag, url = release_state(timeout=timeout)
+    return tag, url
 
 
 def local_exe_version_file(game_dir):
@@ -279,7 +299,10 @@ def update_exe_from_release(game_dir, log):
     """
     game_dir = os.path.abspath(game_dir)
     game_exe = os.path.join(game_dir, GAME_EXE_NAME)
-    tag, download_url = get_latest_release()
+    state, tag, download_url = release_state()
+    if state == "none":
+        log("There is no exe release on GitHub yet. Nothing to download.")
+        return False
     if tag is None:
         log("Could not reach GitHub to check for updates. Try again later.")
         return False

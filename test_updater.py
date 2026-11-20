@@ -456,6 +456,46 @@ def test_log_never_synced():
     print("Log never synced tests passed.")
 
 
+def test_release_state():
+    """No Release yet (GitHub says 404) is told apart from GitHub
+    being unreachable, and get_latest_release keeps its old shape
+    for older copies of the game."""
+    old_api = updater.api_get
+    try:
+        updater.api_get = lambda path, timeout=60: (404, {"message": "Not Found"})
+        check("a 404 means there is no Release yet",
+              updater.release_state() == ("none", None, None))
+        check("the old function still says nothing for no Release",
+              updater.get_latest_release() == (None, None))
+        updater.api_get = lambda path, timeout=60: (0, {"message": "offline"})
+        check("no network means GitHub is unreachable",
+              updater.release_state()[0] == "unreachable")
+        updater.api_get = lambda path, timeout=60: (403, {"message": "limit"})
+        check("the request limit means GitHub is unreachable",
+              updater.release_state()[0] == "unreachable")
+        updater.api_get = lambda path, timeout=60: (200, {
+            "tag_name": "v1.0.0",
+            "assets": [{"name": "ArenaOfMakers.exe",
+                        "browser_download_url": "https://example.invalid/g.exe"}]})
+        check("a Release gives its tag and the game exe",
+              updater.release_state()
+              == ("ok", "v1.0.0", "https://example.invalid/g.exe"))
+        check("the old function gives the same tag and exe",
+              updater.get_latest_release()
+              == ("v1.0.0", "https://example.invalid/g.exe"))
+        updater.api_get = lambda path, timeout=60: (404, {"message": "Not Found"})
+        lines = []
+        folder = tempfile.mkdtemp()
+        check("the exe updater does nothing when there is no Release",
+              updater.update_exe_from_release(folder, lines.append) is False)
+        check("and says so plainly, not that GitHub failed",
+              lines and "no exe release" in lines[-1]
+              and "Could not reach" not in lines[-1])
+    finally:
+        updater.api_get = old_api
+    print("Release state tests passed.")
+
+
 if __name__ == "__main__":
     test_folder_normalisation()
     test_find_installed_folder()
@@ -466,4 +506,5 @@ if __name__ == "__main__":
     test_sync_game_updates_updater()
     test_sync_game_failed_download_leaves_game_whole()
     test_log_never_synced()
+    test_release_state()
     print("\nAll updater tests passed.")

@@ -9,25 +9,28 @@ REM
 REM Your .env file is NOT bundled in and is NOT touched.
 REM Put your own .env file next to the exes when you run them,
 REM in the same folder as the exes. There is no local save file.
+REM
+REM pip and PyInstaller are run through python (python -m ...), so
+REM this works even when their commands are not on PATH.
 
 cd /d "%~dp0"
 
 echo Installing what the game needs. This can take a few minutes the first time.
 python -m pip install --upgrade pip
 if errorlevel 1 goto :error
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 if errorlevel 1 goto :error
-pip install pyinstaller
+python -m pip install pyinstaller
 if errorlevel 1 goto :error
 
 echo.
 echo Building the game exe. This takes a few minutes.
-pyinstaller --noconfirm --clean --onefile --windowed --name ArenaOfMakers --add-data "sounds;sounds" --hidden-import keyring.backends.Windows main.py
+python -m PyInstaller --noconfirm --clean --onefile --windowed --name ArenaOfMakers --add-data "sounds;sounds" --hidden-import keyring.backends.Windows main.py
 if errorlevel 1 goto :error
 
 echo.
 echo Building the updater exe.
-pyinstaller --noconfirm --clean --onefile --windowed --name ArenaOfMakersUpdater arena_of_makers_updater.py
+python -m PyInstaller --noconfirm --clean --onefile --windowed --name ArenaOfMakersUpdater arena_of_makers_updater.py
 if errorlevel 1 goto :error
 
 echo.

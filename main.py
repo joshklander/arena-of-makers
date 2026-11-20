@@ -2664,9 +2664,16 @@ def check_for_update_at_launch(game_dir):
         stored_head = None
     try:
         if getattr(sys, "frozen", False):
-            tag, _url = arena_of_makers_updater.get_latest_release(
+            state, tag, _url = arena_of_makers_updater.release_state(
                 timeout=UPDATE_CHECK_TIMEOUT_SECONDS
             )
+            if state == "none":
+                # GitHub answered: no Release has been made yet.
+                # Nothing to offer, and nothing is wrong, so play
+                # on without a message.
+                return {"available": False, "unreachable": False,
+                        "folder": folder, "remote": None,
+                        "reason": "no-release-yet"}
             if tag is None:
                 return {"available": False, "unreachable": True,
                         "folder": folder, "remote": None,
