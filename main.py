@@ -2664,6 +2664,21 @@ def check_for_update_at_launch(game_dir):
         stored_head = None
     try:
         if getattr(sys, "frozen", False):
+            # The last update's swap left the exe that was running
+            # then as ArenaOfMakers.old.exe. It has closed now, so
+            # it can go.
+            arena_of_makers_updater.remove_old_exe(folder)
+            # The exe knows its own version (baked in by
+            # build_exe.py). With no version note yet, write one
+            # quietly, so a fresh copy is not offered the Release
+            # it already is, and the standalone updater agrees.
+            if not stored_head:
+                baked = arena_of_makers_updater.installed_exe_version(folder)
+                if baked:
+                    arena_of_makers_updater.save_state(
+                        folder, baked,
+                        {arena_of_makers_updater.GAME_EXE_NAME})
+                    stored_head = baked
             state, tag, _url = arena_of_makers_updater.release_state(
                 timeout=UPDATE_CHECK_TIMEOUT_SECONDS
             )
@@ -2679,8 +2694,9 @@ def check_for_update_at_launch(game_dir):
                         "folder": folder, "remote": None,
                         "reason": "github-unreachable"}
             if not stored_head:
-                # No version note: offer the release, and the
-                # update itself writes the note.
+                # No version note and no baked version (an exe
+                # built before versions were baked in): offer the
+                # release, and the update itself writes the note.
                 return {"available": True, "unreachable": False,
                         "folder": folder, "remote": tag,
                         "reason": "no-version-note"}

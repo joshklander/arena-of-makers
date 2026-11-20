@@ -2,7 +2,7 @@
 REM Arena of Makers - build both Windows exes on this computer.
 REM Double-click this file. No commands to type.
 REM
-REM It installs what the game needs, then builds:
+REM It installs what the game needs, then runs build_exe.py, which builds:
 REM   dist\ArenaOfMakers.exe         - the game, everything bundled in
 REM   dist\ArenaOfMakersUpdater.exe  - the updater, checks GitHub Releases
 REM
@@ -24,20 +24,10 @@ python -m pip install pyinstaller
 if errorlevel 1 goto :error
 
 echo.
-echo Building the game exe. This takes a few minutes.
-python -m PyInstaller --noconfirm --clean --onefile --windowed --name ArenaOfMakers --add-data "sounds;sounds" --hidden-import keyring.backends.Windows main.py
+echo Building both exes. It asks for the version, like v1.0.1,
+echo the same tag you will give the GitHub Release. This takes a few minutes.
+python build_exe.py %1
 if errorlevel 1 goto :error
-
-echo.
-echo Building the updater exe.
-python -m PyInstaller --noconfirm --clean --onefile --windowed --name ArenaOfMakersUpdater arena_of_makers_updater.py
-if errorlevel 1 goto :error
-
-echo.
-echo Done. Your exes are in the dist folder:
-echo   dist\ArenaOfMakers.exe
-echo   dist\ArenaOfMakersUpdater.exe
-echo Put both exes in one folder, add your .env file next to them, and double-click ArenaOfMakers.exe to play.
 pause
 exit /b 0
 

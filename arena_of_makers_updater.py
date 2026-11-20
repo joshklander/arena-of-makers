@@ -254,6 +254,20 @@ def get_tree(timeout=60):
 RELEASES_URL = API_BASE + "/releases/latest"
 GAME_EXE_NAME = "ArenaOfMakers.exe"
 UPDATER_EXE_NAME = "ArenaOfMakersUpdater.exe"
+# The swap during an update (see _swap_in_new_exe): the download
+# lands as NEW_EXE_NAME, and the running exe is renamed to
+# OLD_EXE_NAME, which the next launch deletes.
+NEW_EXE_NAME = "ArenaOfMakers.new.exe"
+OLD_EXE_NAME = "ArenaOfMakers.old.exe"
+
+# The Release tag this exe was built as. build_exe.py writes a
+# small build_version.py just for the build, so it is inside the
+# exe; it is never in the repository, so from source this is None.
+try:
+    import build_version as _build_version
+    BUILD_VERSION = getattr(_build_version, "VERSION", None)
+except ImportError:
+    BUILD_VERSION = None
 
 
 def release_state(timeout=60):
@@ -291,14 +305,80 @@ def local_exe_version_file(game_dir):
     return os.path.join(game_dir, "arena_version.json")
 
 
+def remove_old_exe(game_dir):
+    """Delete ArenaOfMakers.old.exe, left by the last update's swap.
+
+    It is the exe that was running during that update. Once that
+    copy of the game has closed, Windows lets it be deleted. Any
+    failure (it is still running) is ignored: the next launch tries
+    again. Returns True when no old exe is left."""
+    old_exe = os.path.join(os.path.abspath(game_dir), OLD_EXE_NAME)
+    if not os.path.exists(old_exe):
+        return True
+    try:
+        os.remove(old_exe)
+        return True
+    except OSError:
+        return False
+
+
+def installed_exe_version(game_dir):
+    """The Release tag of the exe in game_dir, or None if unknown.
+
+    The version note wins, because a successful update writes it
+    after swapping in the new exe, so it describes the exe on disk.
+    Without a note, the version baked into this exe at build time
+    is used (see build_exe.py), but only when running as the exe."""
+    stored_head, _files = load_state(game_dir)
+    if stored_head:
+        return stored_head
+    if getattr(sys, "frozen", False) and BUILD_VERSION:
+        return BUILD_VERSION
+    return None
+
+
+def _swap_in_new_exe(new_exe, game_exe):
+    """Put new_exe where game_exe is. Returns True on success.
+
+    Windows will not overwrite an exe that is running, but it does
+    let a running exe be renamed. So when the plain replace is
+    refused, the running exe is renamed to ArenaOfMakers.old.exe
+    (it keeps running) and the new one is moved into its place.
+    If that fails too, the old exe is put back, so the game is
+    never left without an exe."""
+    try:
+        os.replace(new_exe, game_exe)
+        return True
+    except OSError:
+        pass
+    old_exe = os.path.join(os.path.dirname(game_exe), OLD_EXE_NAME)
+    try:
+        os.replace(game_exe, old_exe)
+    except OSError:
+        return False
+    try:
+        os.replace(new_exe, game_exe)
+        return True
+    except OSError:
+        try:
+            os.replace(old_exe, game_exe)
+        except OSError:
+            pass
+        return False
+
+
 def update_exe_from_release(game_dir, log):
     """Download the newest game exe from GitHub Releases and swap it in.
 
     Returns True when the game exe now matches the latest release.
     Never touches .env or arena_log.txt. There is no local save file.
+    Works while the game is running: the running exe is renamed
+    aside and the new one takes its name (see _swap_in_new_exe).
+    The new version starts the next time the game is opened.
     """
     game_dir = os.path.abspath(game_dir)
     game_exe = os.path.join(game_dir, GAME_EXE_NAME)
+    remove_old_exe(game_dir)
     state, tag, download_url = release_state()
     if state == "none":
         log("There is no exe release on GitHub yet. Nothing to download.")
@@ -311,30 +391,28 @@ def update_exe_from_release(game_dir, log):
         return False
     # Remember which release we already have, in the same version file
     # the source updater uses, so a later check is quick.
-    stored_head, _files = load_state(game_dir)
-    if stored_head == tag and os.path.exists(game_exe):
+    if installed_exe_version(game_dir) == tag and os.path.exists(game_exe):
         log("You already have the newest version (%s). Nothing to download." % tag)
         return True
     log("A newer version is on GitHub (%s). Downloading the new game." % tag)
-    tmp = os.path.join(tempfile.gettempdir(), GAME_EXE_NAME)
+    # Download next to the game, so the swap is a rename in one
+    # folder (a move from the temp folder fails across drives).
+    os.makedirs(game_dir, exist_ok=True)
+    new_exe = os.path.join(game_dir, NEW_EXE_NAME)
     req = urllib.request.Request(download_url, method="GET")
     req.add_header("User-Agent", "ArenaOfMakersUpdater")
     try:
         with urllib.request.urlopen(req, timeout=300) as resp:
-            with open(tmp, "wb") as f:
+            with open(new_exe, "wb") as f:
                 shutil.copyfileobj(resp, f)
     except Exception as e:
+        try:
+            os.remove(new_exe)
+        except OSError:
+            pass
         log("Could not download the new game: %s" % e)
         return False
-    # Windows will not replace a running exe. Try the swap; if it
-    # fails, say so plainly instead of deleting anything.
-    try:
-        os.makedirs(game_dir, exist_ok=True)
-        if os.path.exists(game_exe):
-            os.replace(tmp, game_exe)
-        else:
-            shutil.move(tmp, game_exe)
-    except OSError:
+    if not _swap_in_new_exe(new_exe, game_exe):
         log("Close Arena of Makers first, then press Check for updates again. "
             "The new version is downloaded and ready to install.")
         return False

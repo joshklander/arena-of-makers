@@ -2537,6 +2537,37 @@ def launch_update_test():
                 wx.MessageBox = old_box
             check("an exe with no Release yet shows no message",
                   shown == [])
+
+            # A fresh exe with the version baked in (build_exe.py)
+            # and no note: it knows it is that Release, writes the
+            # note quietly, and is not offered the same Release.
+            fresh = os.path.join(base, "Fresh Exe")
+            os.makedirs(fresh)
+            with open(os.path.join(fresh, updater.OLD_EXE_NAME),
+                      "w", encoding="utf-8") as handle:
+                handle.write("old exe from the last swap")
+            old_baked = updater.BUILD_VERSION
+            updater.BUILD_VERSION = "v2"
+            updater.release_state = (
+                lambda timeout=60: ("ok", "v2", "https://example.invalid/a.exe"))
+            try:
+                result = main.check_for_update_at_launch(fresh)
+                check("a fresh exe on the newest release is not offered it",
+                      result["available"] is False)
+                check("a fresh exe writes its version note quietly",
+                      updater.load_state(fresh)[0] == "v2")
+                check("launch deletes the old exe from the last swap",
+                      not os.path.exists(
+                          os.path.join(fresh, updater.OLD_EXE_NAME)))
+                updater.release_state = (
+                    lambda timeout=60: ("ok", "v3",
+                                        "https://example.invalid/a.exe"))
+                result = main.check_for_update_at_launch(fresh)
+                check("a fresh exe is offered a newer release",
+                      result["available"] is True
+                      and result["remote"] == "v3")
+            finally:
+                updater.BUILD_VERSION = old_baked
         finally:
             del sys.frozen
     finally:
@@ -3381,12 +3412,20 @@ def quest_test():
                                         fighter_name="Bolt")
           == "You gained 2 reputation with me, Bolt — thank you! "
              "You have 2 reputation with me now, 1 more to reach Helper.")
-    # Renown at 0 points: no bonus, no announcement.
+    # Renown at 0 points: no bonus, no announcement. Since Phase
+    # 26b the quest level alone still gives a 1% chance, so the
+    # roll is pinned above it here; otherwise this check failed
+    # about one run in a hundred.
     _set_quest_state(stats={"charm": 0, "renown": 0, "insight": 0})
     quest = frame._quest_current
     server["rep"][quest["giver"]] = 0
     spoken_lines.clear()
-    _finish_current_quest()
+    _real_roll = random.random
+    random.random = lambda: 0.99
+    try:
+        _finish_current_quest()
+    finally:
+        random.random = _real_roll
     check("renown at 0 points earns no bonus reputation",
           frame._quest_rep.get(quest["giver"]) == 1)
     check("no bonus reputation is announced without renown",

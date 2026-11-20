@@ -496,6 +496,145 @@ def test_release_state():
     print("Release state tests passed.")
 
 
+class _FakeDownload:
+    def __init__(self, data):
+        self._data = data
+        self._done = False
+
+    def read(self, size=-1):
+        if self._done:
+            return b""
+        self._done = True
+        return self._data
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def _windows_like_replace(locked):
+    """os.replace with Windows' rule for a running exe, which Josh's
+    computer showed on 2026-11-19: a running exe cannot be
+    overwritten, but it can be renamed, and it keeps running under
+    its new name. locked holds the paths of running exes."""
+    real = os.replace
+
+    def fake(src, dst):
+        if dst in locked and os.path.exists(dst):
+            raise PermissionError("running exe cannot be overwritten")
+        real(src, dst)
+        if src in locked:
+            locked.discard(src)
+            locked.add(dst)
+    return real, fake
+
+
+def test_exe_update_swap():
+    """The exe update works while the game is running: the running
+    exe is renamed aside, the new one takes its name, and the next
+    launch deletes the old one."""
+    folder = tempfile.mkdtemp()
+    game_exe = os.path.join(folder, updater.GAME_EXE_NAME)
+    old_exe = os.path.join(folder, updater.OLD_EXE_NAME)
+    new_exe = os.path.join(folder, updater.NEW_EXE_NAME)
+    _write(game_exe, "old game")
+    old_state = updater.release_state
+    old_urlopen = updater.urllib.request.urlopen
+    locked = {game_exe}
+    real_replace, fake_replace = _windows_like_replace(locked)
+    try:
+        updater.release_state = lambda timeout=60: (
+            "ok", "v2", "https://example.invalid/ArenaOfMakers.exe")
+        updater.urllib.request.urlopen = (
+            lambda req, timeout=300: _FakeDownload(b"new game"))
+        os.replace = fake_replace
+        lines = []
+        check("the exe update finishes while the game is running",
+              updater.update_exe_from_release(folder, lines.append) is True)
+        with open(game_exe, encoding="utf-8") as handle:
+            check("the new exe has the game's name", handle.read() == "new game")
+        check("the running exe was renamed aside, not lost",
+              os.path.exists(old_exe) and old_exe in locked)
+        check("no download file is left behind", not os.path.exists(new_exe))
+        check("the version note names the new release",
+              updater.load_state(folder)[0] == "v2")
+        check("it says the update finished", "Update finished" in lines[-1])
+
+        # The old copy closes; the next launch deletes it.
+        locked.discard(old_exe)
+        check("the old exe is deleted once it has closed",
+              updater.remove_old_exe(folder) is True
+              and not os.path.exists(old_exe))
+        check("with no old exe, there is nothing to delete",
+              updater.remove_old_exe(folder) is True)
+
+        # When even the rename is refused, the game keeps its exe
+        # and the download waits, with the plain "close it first".
+        _write(game_exe, "old game")
+        updater.save_state(folder, "v1", {updater.GAME_EXE_NAME})
+
+        def refuse_all(src, dst):
+            raise PermissionError("refused")
+        os.replace = refuse_all
+        lines = []
+        check("a refused swap reports failure",
+              updater.update_exe_from_release(folder, lines.append) is False)
+        os.replace = real_replace
+        with open(game_exe, encoding="utf-8") as handle:
+            check("a refused swap leaves the old exe in place",
+                  handle.read() == "old game")
+        check("a refused swap says to close the game first",
+              "Close Arena of Makers first" in lines[-1])
+        check("a refused swap keeps the old version note",
+              updater.load_state(folder)[0] == "v1")
+    finally:
+        os.replace = real_replace
+        updater.release_state = old_state
+        updater.urllib.request.urlopen = old_urlopen
+    print("Exe update swap tests passed.")
+
+
+def test_exe_version():
+    """The exe knows which Release it is: the version note first,
+    then the version baked in at build time, only in the exe."""
+    folder = tempfile.mkdtemp()
+    old_baked = updater.BUILD_VERSION
+    old_state = updater.release_state
+    old_urlopen = updater.urllib.request.urlopen
+    downloads = []
+    try:
+        updater.BUILD_VERSION = "v2"
+        check("from source the baked version is not used",
+              updater.installed_exe_version(folder) is None)
+        sys.frozen = True
+        try:
+            check("in the exe with no note, the baked version is used",
+                  updater.installed_exe_version(folder) == "v2")
+            updater.save_state(folder, "v3", {updater.GAME_EXE_NAME})
+            check("the version note wins over the baked version",
+                  updater.installed_exe_version(folder) == "v3")
+            os.remove(updater.version_path(folder))
+            _write(os.path.join(folder, updater.GAME_EXE_NAME), "game v2")
+            updater.release_state = lambda timeout=60: (
+                "ok", "v2", "https://example.invalid/ArenaOfMakers.exe")
+            updater.urllib.request.urlopen = (
+                lambda req, timeout=300: downloads.append(1)
+                or _FakeDownload(b"x"))
+            lines = []
+            check("an exe already on the newest release needs nothing",
+                  updater.update_exe_from_release(folder, lines.append) is True)
+            check("and downloads nothing", downloads == [])
+        finally:
+            del sys.frozen
+    finally:
+        updater.BUILD_VERSION = old_baked
+        updater.release_state = old_state
+        updater.urllib.request.urlopen = old_urlopen
+    print("Exe version tests passed.")
+
+
 if __name__ == "__main__":
     test_folder_normalisation()
     test_find_installed_folder()
@@ -507,4 +646,6 @@ if __name__ == "__main__":
     test_sync_game_failed_download_leaves_game_whole()
     test_log_never_synced()
     test_release_state()
+    test_exe_update_swap()
+    test_exe_version()
     print("\nAll updater tests passed.")
