@@ -160,7 +160,7 @@ def log_uncaught(exc_type, exc_value, exc_tb):
 
 
 class CreateFighterDialog(wx.Dialog):
-    """First launch: pick robot or chef, pick a voice, name the fighter."""
+    """First launch: pick robot, chef or witch, pick a voice, name the fighter."""
 
     def __init__(self, parent):
         super().__init__(parent, title="Create your fighter")
@@ -177,7 +177,7 @@ class CreateFighterDialog(wx.Dialog):
 
         hint = wx.StaticText(
             self,
-            label="Welcome to Arena of Makers. Pick your fighter, then give them a name.",
+            label="Welcome to Arena of Makers. Pick your fighter, then give them a name. A male witch is called a warlock.",
         )
         hint.Wrap(420)
         sizer.Add(hint, 0, wx.ALL, 10)
@@ -185,7 +185,7 @@ class CreateFighterDialog(wx.Dialog):
         self.kind_box = wx.RadioBox(
             self,
             label="Fighter type",
-            choices=["Robot fighter", "Chef fighter"],
+            choices=["Robot fighter", "Chef fighter", "Witch fighter"],
             majorDimension=1,
             style=wx.RA_SPECIFY_COLS,
         )
@@ -215,7 +215,8 @@ class CreateFighterDialog(wx.Dialog):
 
     def get_result(self):
         """Return (kind, name, gender), or None when the name is empty."""
-        kind = "robot" if self.kind_box.GetSelection() == 0 else "chef"
+        selection = self.kind_box.GetSelection()
+        kind = ("robot", "chef", "witch")[selection] if 0 <= selection < 3 else "robot"
         gender = "male" if self.gender_box.GetSelection() == 0 else "female"
         name = self.name_ctrl.GetValue().strip()
         if not name:
@@ -228,7 +229,7 @@ class CreateAccountDialog(wx.Dialog):
     a username, a player code and a password, or make a new
     account in the same dialog. A new account also picks a
     gender (which picks the voice) and whether they are a
-    robot or a chef fighter; a returning player's choices
+    robot, chef or witch fighter; a returning player's choices
     come from the server instead. The username is also the
     fighter's name.
 
@@ -269,11 +270,18 @@ class CreateAccountDialog(wx.Dialog):
         self.kind_box = wx.RadioBox(
             self,
             label="Fighter type",
-            choices=["Robot fighter", "Chef fighter"],
+            choices=["Robot fighter", "Chef fighter", "Witch fighter"],
             majorDimension=1,
             style=wx.RA_SPECIFY_COLS,
         )
         sizer.Add(self.kind_box, 0, wx.ALL | wx.EXPAND, 10)
+        sizer.Add(
+            wx.StaticText(
+                self,
+                label="A male witch is called a warlock.",
+            ),
+            0, wx.ALL, 10,
+        )
 
         sizer.Add(wx.StaticText(self, label="Player code (4 digits):"), 0, wx.LEFT | wx.RIGHT, 10)
         self.code_ctrl = wx.TextCtrl(self)
@@ -325,7 +333,8 @@ class CreateAccountDialog(wx.Dialog):
         code = account.clean_player_code(self.code_ctrl.GetValue())
         if account.validate_player_code(code):
             return None
-        kind = "robot" if self.kind_box.GetSelection() == 0 else "chef"
+        selection = self.kind_box.GetSelection()
+        kind = ("robot", "chef", "witch")[selection] if 0 <= selection < 3 else "robot"
         gender = "male" if self.gender_box.GetSelection() == 0 else "female"
         return name, gender, kind, code, password
 
@@ -1278,7 +1287,7 @@ class MainFrame(wx.Frame):
                 "Player %s is %s, a level %d %s. %d wins, %d losses. "
                 "Their player code is %s."
                 % (found["player_code"], found["username"],
-                   fighter.get("level", 1), fighter.get("kind", ""),
+                   fighter.get("level", 1), game_logic.kind_word(fighter.get("kind", ""), fighter.get("gender", "female")),
                    fighter.get("wins", 0), fighter.get("losses", 0),
                    found["player_code"])
             )
@@ -1305,7 +1314,7 @@ class MainFrame(wx.Frame):
         lines = [
             "%s, code %s, level %s %s"
             % (row.get("username"), row.get("player_code"),
-               row.get("level") or 1, row.get("kind") or "")
+               row.get("level") or 1, game_logic.kind_word(row.get("kind") or ""))
             for row in players
         ]
         count = len(players)
@@ -1344,7 +1353,7 @@ class MainFrame(wx.Frame):
             return
         self.announce(
             "Fighting %s, level %d %s."
-            % (found["username"], fighter.get("level", 1), fighter.get("kind", ""))
+            % (found["username"], fighter.get("level", 1), game_logic.kind_word(fighter.get("kind", ""), fighter.get("gender", "female")))
         )
         self.do_fight(opponent_code=found["player_code"])
 

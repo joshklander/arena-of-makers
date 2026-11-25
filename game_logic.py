@@ -235,22 +235,41 @@ def format_time(seconds):
     return "about %d hours" % int(round(hours))
 
 
+def kind_word(kind, gender="female"):
+    """The word the game shows and speaks for a fighter's kind.
+
+    The stored kind stays 'witch' for everyone. A male witch is
+    called a warlock, a female witch is called a witch (Makenna,
+    Nov 25, 2026). Robot and chef are the same word either way.
+    An unknown kind falls back to the stored word, never a crash.
+    """
+    if kind == "witch":
+        return "warlock" if gender == "male" else "witch"
+    return kind or "robot"
+
+
 def new_fighter(name, kind, gender="male"):
-    """Create a level 1 fighter. kind is 'robot' or 'chef',
-    gender is 'male' or 'female' (it picks the voice)."""
+    """Create a level 1 fighter. kind is 'robot', 'chef' or
+    'witch', gender is 'male' or 'female' (it picks the voice).
+    A male witch is called a warlock, a female witch is called
+    a witch; the stored kind stays 'witch' either way."""
     name = (name or "").strip()
     if not name:
         raise ValueError("Give your fighter a name first.")
-    if kind not in ("robot", "chef"):
-        raise ValueError("Pick robot or chef for your fighter.")
+    if kind not in ("robot", "chef", "witch"):
+        raise ValueError("Pick robot, chef or witch for your fighter.")
     if gender not in ("male", "female"):
         raise ValueError("Pick male or female for your fighter.")
     if kind == "robot":
         weapon_name = "Laser Blaster"
         armor_name = "Scrap Plating"
-    else:
+    elif kind == "chef":
         weapon_name = "Trusty Spatula"
         armor_name = "Chef Apron"
+    else:
+        # Witch (Phase 35): a wand and a robe.
+        weapon_name = "Spellbound Wand"
+        armor_name = "Mystic Robe"
     return {
         "name": name,
         "kind": kind,
@@ -400,7 +419,18 @@ def xp_to_next_level(level):
 def weapon_damage(fighter):
     """Damage per hit. Climbs forever with weapon level and fighter level,
     plus 2 per Strength point."""
-    base = 12 if fighter["kind"] == "robot" else 10
+    # Base damage is explicit per kind — robot 12, chef 10,
+    # witch 11 (Phase 35). Never a silent else: an unknown kind
+    # is an error, not a chef in disguise.
+    kind = fighter.get("kind", "robot")
+    if kind == "robot":
+        base = 12
+    elif kind == "chef":
+        base = 10
+    elif kind == "witch":
+        base = 11
+    else:
+        raise ValueError("Unknown fighter kind: %s" % kind)
     return (
         base
         + 5 * (fighter["weapon_level"] - 1)
@@ -1297,7 +1327,8 @@ def status_text(fighter, now=None):
         % (
             fighter["name"],
             fighter["level"],
-            fighter["kind"],
+            kind_word(fighter.get("kind", "robot"),
+                      fighter.get("gender", "female")),
             fighter["hp"],
             fighter_max_hp(fighter),
             credits_of(fighter),

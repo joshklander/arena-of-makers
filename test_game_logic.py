@@ -3,7 +3,7 @@
 Runs with plain Python, no display and no wxPython needed:
     python test_game_logic.py
 
-Covers: fighter creation (robot and chef), one fight, XP and level-ups,
+Covers: fighter creation (robot, chef and witch), one fight, XP and level-ups,
 endless upgrade costs, the 2 to 4 hour timer cap, repairs, and a
 save/load roundtrip.
 """
@@ -37,6 +37,50 @@ def main():
     check("chef fighter created", chef["kind"] == "chef")
     check("chef starts with Trusty Spatula", chef["weapon_name"] == "Trusty Spatula")
     check("chef starts with Chef Apron", chef["armor_name"] == "Chef Apron")
+
+    # Witch (Phase 35): a third kind, same rules, base damage 11.
+    witch = game_logic.new_fighter("Ember", "witch", "female")
+    check("witch fighter created", witch["kind"] == "witch")
+    check("witch starts with Spellbound Wand", witch["weapon_name"] == "Spellbound Wand")
+    check("witch starts with Mystic Robe", witch["armor_name"] == "Mystic Robe")
+    check("witch hits for 11 at level 1", game_logic.weapon_damage(witch) == 11)
+    check("robot still hits for 12 at level 1", game_logic.weapon_damage(robot) == 12)
+    check("chef still hits for 10 at level 1", game_logic.weapon_damage(chef) == 10)
+
+    warlock = game_logic.new_fighter("Rowan", "witch", "male")
+    check("male witch is called a warlock",
+          game_logic.kind_word("witch", "male") == "warlock")
+    check("female witch is called a witch",
+          game_logic.kind_word("witch", "female") == "witch")
+    check("robot word is robot either way",
+          game_logic.kind_word("robot", "male") == "robot")
+    check("status text calls a female witch a witch",
+          "witch" in game_logic.status_text(witch))
+    check("status text calls a male witch a warlock",
+          "warlock" in game_logic.status_text(warlock))
+
+    try:
+        game_logic.new_fighter("Bolt", "wizard")
+        check("unknown kind is rejected for a witch too", False)
+    except ValueError:
+        check("unknown kind is rejected for a witch too", True)
+
+    try:
+        game_logic.weapon_damage(
+            {"kind": "wizard", "weapon_level": 1, "level": 1,
+             "stats": {"strength": 0}})
+        check("unknown kind never silently hits like a chef", False)
+    except ValueError:
+        check("unknown kind never silently hits like a chef", True)
+
+    # An old fighter carries no witch fields at all, and must
+    # still load and fight exactly as before (compatibility rule).
+    old = dict(robot)
+    old.pop("healing_level", None)
+    check("old fighter with no witch fields still hits for 12",
+          game_logic.weapon_damage(old) == 12)
+    check("old fighter status still names a robot",
+          "robot" in game_logic.status_text(old))
 
     try:
         game_logic.new_fighter("  ", "robot")
