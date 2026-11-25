@@ -24,6 +24,7 @@ Design rules from the design note, kept here in code:
   target's max health (server fairness guard, mirrored here).
 """
 
+import copy
 import json
 import math
 import os
@@ -300,6 +301,11 @@ def new_fighter(name, kind, gender="male"):
         # How many respecs (full stat resets) this fighter
         # has used: the first is free, later ones cost credits.
         "respecs_used": 0,
+        # How many times this fighter has switched kind
+        # (Phase 36): the first switch is free, then the price
+        # doubles every switch. Tracked server-side; the client
+        # only shows it, never decides it.
+        "kind_switches": 0,
         # Epoch seconds when the current repair finishes, or 0.
         "repair_until": 0,
         # Current timed upgrade, or None: {"slot": "weapon"|"armor",
@@ -332,6 +338,107 @@ def new_fighter(name, kind, gender="male"):
         "quest_points": 0,
         "quest_stats": {"charm": 0, "renown": 0, "insight": 0},
     }
+
+
+# Fighter switching (Phase 36, Makenna Nov 25, 2026): the first
+# switch is free; after that the first paid switch is 100 credits
+# and the price doubles every switch after that, forever, with no
+# cap. 100 credits and doubling are a PROPOSAL for the price and
+# the growth — Makenna can tune them. The switch count is tracked
+# server-side, so the price cannot be cheated down; this is only
+# the display price. Credits STAY with the player on a switch
+# (Makenna, Nov 25, 2026), minus the switch cost.
+SWITCH_FIRST_PAID_CREDITS = 100
+
+
+def switch_cost(switches):
+    """Credits to change fighter, for a player who has already
+    switched this many times. The first switch (0 so far) is
+    free; the first paid switch is 100 credits, then 200, 400,
+    800, doubling every time, with no cap (Makenna, Nov 25,
+    2026)."""
+    switches = int(switches or 0)
+    if switches <= 0:
+        return 0
+    return SWITCH_FIRST_PAID_CREDITS * (2 ** (switches - 1))
+
+
+def switched_fighter(fighter, new_kind):
+    """Return a copy of the fighter switched to new_kind, with
+    the Nov 25, 2026 reset rules applied. The server is the
+    judge — this is the offline mirror the tests use, exactly
+    like start_upgrade mirrors the server; the client never
+    changes kind or credits itself. Returns (new_fighter, error).
+
+    What resets: combat level and combat stats (level 1, 0 XP,
+    all five stats 0, no banked stat points, full health 100),
+    quest level and quest stats (quest level 1, 0 quest XP, 0
+    quest points, Charm/Renown/Insight 0, reputation with every
+    giver 0, no board, no active quest, no finished-quest
+    history, no free gift waiting), weapon and armor upgrades
+    (both back to level 1, the fresh weapon and armor for the
+    new kind, with no upgrades bought), and any upgrade or
+    repair running now (the new fighter starts at full health).
+    What stays: Healing (Second Wind) at its current level,
+    credits minus the switch cost, wins and losses, name,
+    gender and voice. Weapon and armor start at level 1, not
+    level 0: level 1 is the fresh weapon with no upgrades, the
+    same as a brand-new fighter; level 0 is not a state the
+    game ever has (weapon damage would go negative).
+    """
+    fighter = copy.deepcopy(fighter or {})
+    kind = fighter.get("kind", "robot")
+    if new_kind not in ("robot", "chef", "witch"):
+        return None, "Pick robot, chef or witch for your fighter."
+    if new_kind == kind:
+        return None, "You are already a %s." % kind_word(
+            kind, fighter.get("gender", "male"))
+    switches = int(fighter.get("kind_switches") or 0)
+    cost = switch_cost(switches)
+    credits = credits_of(fighter)
+    if cost > credits:
+        return None, (
+            "Changing fighter costs %d credits and I have %d credits."
+            % (cost, credits)
+        )
+    if new_kind == "robot":
+        weapon_name = "Laser Blaster"
+        armor_name = "Scrap Plating"
+    elif new_kind == "chef":
+        weapon_name = "Trusty Spatula"
+        armor_name = "Chef Apron"
+    else:
+        # Witch (Phase 35): a wand and a robe.
+        weapon_name = "Spellbound Wand"
+        armor_name = "Mystic Robe"
+    fighter["kind"] = new_kind
+    fighter["weapon_name"] = weapon_name
+    fighter["weapon_level"] = 1
+    fighter["armor_name"] = armor_name
+    fighter["armor_level"] = 1
+    fighter["level"] = 1
+    fighter["xp"] = 0
+    fighter["stats"] = {name: 0 for name in STAT_NAMES}
+    fighter["stat_points"] = 0
+    fighter["hp"] = 100
+    fighter["max_hp"] = 100
+    fighter["quest_level"] = 1
+    fighter["quest_xp"] = 0
+    fighter["quest_points"] = 0
+    fighter["quest_stats"] = {"charm": 0, "renown": 0, "insight": 0}
+    fighter["quests_rep"] = {}
+    fighter["quests_board"] = []
+    fighter["quests_done"] = []
+    fighter["quests_joined"] = []
+    fighter["quests_active"] = None
+    fighter["quests_gift_pending"] = None
+    fighter["upgrade"] = None
+    fighter["upgrade_queue"] = None
+    fighter["upgrade_total"] = 0
+    fighter["repair_until"] = 0
+    fighter["credits"] = credits - cost
+    fighter["kind_switches"] = switches + 1
+    return fighter, None
 
 
 def stats_of(fighter):
@@ -1081,19 +1188,38 @@ def start_upgrade(fighter, slot, now=None):
     return None
 
 
+def _queue_level_seconds(slot, level, time_scale=1):
+    """Seconds one queued level waits: its raw duration, shrunk
+    by the queue's time scale (Phase 37) so a long queue still
+    finishes inside 4 hours. Scale 1 means the raw wait; a
+    smaller scale means each level comes faster, so the whole
+    queue fits. A missing or zero scale means 1 (old queues
+    carry no scale at all)."""
+    if not time_scale:
+        time_scale = 1
+    return slot_upgrade_duration_seconds(slot, level) * time_scale
+
+
 def max_affordable(fighter, slot):
     """Work out a max-affordable upgrade queue for one slot, without
     spending anything. Returns a dict with the target levels, the
     total cost, the total wait in seconds, the credits left after,
     and the next level's cost (for the "you cannot afford it" line).
 
-    A queue buys the most levels you can afford BY CREDITS AND BY
-    TIME: it stops adding levels as soon as the next level would
-    cost more credits than are left, or would push the total wait
-    past 4 hours. "levels" is empty when even one level is out of
-    reach. Healing also stops at level 5 — it never buys past
-    the cap — and reports "maxed" so the game can say plainly
-    that the skill is already at its best."""
+    A queue buys the most levels you can afford BY CREDITS ONLY
+    (Phase 37, Makenna Nov 25, 2026): it stops adding levels as
+    soon as the next level would cost more credits than are left.
+    The 4-hour cap no longer stops the count — it caps the WAIT
+    instead. "seconds" is the wait after shrinking: the raw total
+    ("raw_seconds") when it fits in 4 hours, 4 hours when it does
+    not, and "time_scale" is the shrink factor (1 when nothing
+    shrinks, smaller when the queue is long). Each level then
+    finishes one after another inside those 4 hours, so a long
+    queue's levels come faster than the usual one-level wait.
+    "levels" is empty when even one level is out of reach.
+    Healing also stops at level 5 — it never buys past the cap —
+    and reports "maxed" so the game can say plainly that the
+    skill is already at its best."""
     # A fighter made before Phase 18 has no healing_level
     # key at all: missing means level 0 (Phase 25b hotfix).
     level = fighter.get(slot + "_level", 0) or 0
@@ -1101,7 +1227,7 @@ def max_affordable(fighter, slot):
     credits = credits_of(fighter)
     levels = []
     total_cost = 0
-    total_seconds = 0
+    raw_seconds = 0
     while True:
         if slot == "healing" and level >= HEALING_MAX_LEVEL:
             break
@@ -1109,23 +1235,29 @@ def max_affordable(fighter, slot):
         seconds = slot_upgrade_duration_seconds(slot, level)
         if total_cost + cost > credits:
             break
-        if total_seconds + seconds > MAX_TIMER_SECONDS:
-            break
         levels.append(level + 1)
         total_cost += cost
-        total_seconds += seconds
+        raw_seconds += seconds
         level += 1
     # "maxed" means the skill is already at its best before
     # this queue starts — not that the queue happens to reach
     # level 5. (level above is the loop variable, so it ends
     # at 5 whenever the queue buys all five levels.)
     maxed = slot == "healing" and start_level >= HEALING_MAX_LEVEL
+    if raw_seconds > MAX_TIMER_SECONDS:
+        time_scale = MAX_TIMER_SECONDS / raw_seconds
+        total_seconds = MAX_TIMER_SECONDS
+    else:
+        time_scale = 1
+        total_seconds = raw_seconds
     return {
         "slot": slot,
         "name": HEALING_NAME if slot == "healing" else fighter[slot + "_name"],
         "levels": levels,
         "cost": total_cost,
         "seconds": total_seconds,
+        "raw_seconds": raw_seconds,
+        "time_scale": time_scale,
         "credits_left": credits - total_cost,
         "next_cost": None if maxed else slot_upgrade_cost(slot, level),
         "credits": credits,
@@ -1135,11 +1267,13 @@ def max_affordable(fighter, slot):
 
 def start_max_upgrade(fighter, slot, now=None):
     """Start a max-affordable queue: buy as many levels as the
-    credits and the 4-hour cap allow, deduct the full cost up
-    front, and run the levels one after another. Returns
-    (error, line): the line is the plain-words confirm summary
-    the game speaks after the player has said yes. Once started
-    the queue runs to the end — there is no cancelling."""
+    credits allow, deduct the full cost up front, and run the
+    levels one after another. The wait is capped at 4 hours no
+    matter how many levels: a long queue's levels come faster
+    than the usual one-level wait, so they all fit (Phase 37).
+    Returns (error, line): the line is the plain-words confirm
+    summary the game speaks after the player has said yes. Once
+    started the queue runs to the end — there is no cancelling."""
     if now is None:
         now = time.time()
     if slot not in ("weapon", "armor", "healing"):
@@ -1164,7 +1298,13 @@ def start_max_upgrade(fighter, slot, now=None):
         "slot": slot,
         "name": plan["name"],
         "level": first,
-        "finish": now + slot_upgrade_duration_seconds(slot, first - 1),
+        "finish": now + _queue_level_seconds(
+            slot, first - 1, plan["time_scale"]),
+        # The queue's time scale (Phase 37): 1 when the raw
+        # wait fits in 4 hours, smaller when the queue was
+        # shrunk to fit. Carried forward at every level so the
+        # whole queue keeps its schedule.
+        "time_scale": plan["time_scale"],
     }
     fighter["upgrade_queue"] = plan["levels"][1:]
     fighter["upgrade_total"] = len(plan["levels"])
@@ -1228,11 +1368,19 @@ def upgrade_is_running(fighter):
 
 
 def finish_upgrade_if_ready(fighter, now=None):
-    """Apply a finished upgrade. Returns its plain-words line, or None.
+    """Apply finished upgrades. Returns its plain-words line, or None.
 
-    When a max-affordable queue is running, the next level starts
-    at once, so the queue runs one level after another until every
-    level is done. The last level's line says the whole queue is done."""
+    When a max-affordable queue is running, finished levels are
+    applied one after another in this one call, until the level
+    now running is not finished yet or the queue is empty — so a
+    queue whose levels all finished while the game was closed is
+    caught up at once, instead of one level per tick (Phase 37).
+    Each next level starts where the last one was due, not at
+    "now", so the queue keeps its own schedule: a level's finish
+    is the last level's finish plus that level's wait, shrunk by
+    the queue's time scale. The line names the last level that
+    finished in this pass, and says the whole queue is done when
+    it is."""
     if now is None:
         now = time.time()
     upgrade = fighter.get("upgrade")
@@ -1253,38 +1401,58 @@ def finish_upgrade_if_ready(fighter, now=None):
         return "That broken upgrade is cleared. No upgrade is running now."
     if now < _upgrade_finish(upgrade):
         return None
-    fighter[upgrade["slot"] + "_level"] = _upgrade_level(upgrade)
-    line = "My %s is now level %d." % (
-        upgrade.get("name") or upgrade["slot"], _upgrade_level(upgrade))
-    queue = [q for q in (fighter.get("upgrade_queue") or [])
-             if isinstance(q, int) and not isinstance(q, bool)]
-    if queue:
-        nxt = queue.pop(0)
-        fighter["upgrade"] = {
-            "slot": upgrade["slot"],
-            "name": upgrade.get("name") or upgrade["slot"],
-            "level": nxt,
-            "finish": now + slot_upgrade_duration_seconds(
-                upgrade["slot"], nxt - 1),
-        }
-        fighter["upgrade_queue"] = queue
-    else:
-        total = fighter.get("upgrade_total", 0) or 0
-        fighter["upgrade"] = None
-        fighter["upgrade_queue"] = None
-        fighter["upgrade_total"] = 0
-        if total > 1:
-            line += " All %d levels are done." % total
-        if upgrade["slot"] == "healing" and _upgrade_level(upgrade) >= HEALING_MAX_LEVEL:
-            # Reaching Healing level 5 ends repairs for good:
-            # a fighter still under repair when the skill
-            # maxes out is back to full health at once, with
-            # no wait left.
-            if (fighter.get("repair_until", 0) or 0) > now:
-                fighter["repair_until"] = 0
-                fighter["hp"] = fighter_max_hp(fighter)
-                line += " No more repairs — I'm back to full health."
-    return line
+    slot = upgrade["slot"]
+    name = upgrade.get("name") or slot
+    time_scale = upgrade.get("time_scale") or 1
+    last_level = None
+    while True:
+        current = fighter.get("upgrade")
+        if not current or not upgrade_is_running(fighter):
+            break
+        if now < _upgrade_finish(current):
+            break
+        last_level = _upgrade_level(current)
+        fighter[slot + "_level"] = last_level
+        queue = [q for q in (fighter.get("upgrade_queue") or [])
+                 if isinstance(q, int) and not isinstance(q, bool)]
+        if queue:
+            nxt = queue.pop(0)
+            fighter["upgrade"] = {
+                "slot": slot,
+                "name": name,
+                "level": nxt,
+                # The next level starts where this one was due,
+                # not at "now" (Phase 37): the queue keeps its
+                # own schedule, so a long queue caught up late
+                # still finishes on time.
+                "finish": _upgrade_finish(current) + _queue_level_seconds(
+                    slot, nxt - 1, time_scale),
+                "time_scale": time_scale,
+            }
+            fighter["upgrade_queue"] = queue
+        else:
+            total = fighter.get("upgrade_total", 0) or 0
+            fighter["upgrade"] = None
+            fighter["upgrade_queue"] = None
+            fighter["upgrade_total"] = 0
+            line = "My %s is now level %d." % (name, last_level)
+            if total > 1:
+                line += " All %d levels are done." % total
+            if slot == "healing" and last_level >= HEALING_MAX_LEVEL:
+                # Reaching Healing level 5 ends repairs for good:
+                # a fighter still under repair when the skill
+                # maxes out is back to full health at once, with
+                # no wait left.
+                if (fighter.get("repair_until", 0) or 0) > now:
+                    fighter["repair_until"] = 0
+                    fighter["hp"] = fighter_max_hp(fighter)
+                    line += " No more repairs — I'm back to full health."
+            return line
+    # The queue is still running: say the last level that
+    # finished in this pass, if any did.
+    if last_level is None:
+        return None
+    return "My %s is now level %d." % (name, last_level)
 
 
 def upgrade_status(fighter, now=None):

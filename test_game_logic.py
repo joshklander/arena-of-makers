@@ -82,6 +82,125 @@ def main():
     check("old fighter status still names a robot",
           "robot" in game_logic.status_text(old))
 
+    # Fighter switching (Phase 36, Makenna Nov 25, 2026): first
+    # switch free, then 100 credits doubling every switch, no cap.
+    check("first switch is free", game_logic.switch_cost(0) == 0)
+    check("second switch costs 100", game_logic.switch_cost(1) == 100)
+    check("third switch costs 200", game_logic.switch_cost(2) == 200)
+    check("fourth switch costs 400", game_logic.switch_cost(3) == 400)
+    check("sixth switch costs 1600", game_logic.switch_cost(5) == 1600)
+    check("a missing switch count means free",
+          game_logic.switch_cost(None) == 0)
+
+    # A levelled robot switching to witch: the reset rules.
+    switcher = game_logic.new_fighter("Bolt", "robot")
+    switcher["level"] = 5
+    switcher["xp"] = 120
+    switcher["stats"] = {"strength": 4, "defense": 2, "health": 1,
+                         "speed": 1, "luck": 0}
+    switcher["stat_points"] = 2
+    switcher["weapon_level"] = 3
+    switcher["armor_level"] = 2
+    switcher["healing_level"] = 2
+    switcher["credits"] = 500
+    switcher["wins"] = 7
+    switcher["losses"] = 3
+    switcher["quest_level"] = 3
+    switcher["quest_xp"] = 40
+    switcher["quest_points"] = 2
+    switcher["quest_stats"] = {"charm": 2, "renown": 1, "insight": 0}
+    switcher["quests_rep"] = {"Bolt": 5, "Marge": 3}
+    switcher["quests_board"] = [{"id": "q1"}]
+    switcher["quests_done"] = ["q0"]
+    switcher["quests_active"] = {"id": "q2"}
+    switched, error = game_logic.switched_fighter(switcher, "witch")
+    check("first switch has no error", error is None)
+    check("switch changes the kind", switched["kind"] == "witch")
+    check("switch renames the weapon",
+          switched["weapon_name"] == "Spellbound Wand")
+    check("switch renames the armor",
+          switched["armor_name"] == "Mystic Robe")
+    check("weapon upgrades reset to level 1",
+          switched["weapon_level"] == 1)
+    check("armor upgrades reset to level 1",
+          switched["armor_level"] == 1)
+    check("combat level resets to 1", switched["level"] == 1)
+    check("combat experience resets to 0", switched["xp"] == 0)
+    check("combat stats reset to 0",
+          switched["stats"] == {"strength": 0, "defense": 0, "health": 0,
+                                "speed": 0, "luck": 0})
+    check("banked stat points reset to 0", switched["stat_points"] == 0)
+    check("health resets to full 100",
+          switched["hp"] == 100 and switched["max_hp"] == 100)
+    check("quest level resets to 1", switched["quest_level"] == 1)
+    check("quest experience resets to 0", switched["quest_xp"] == 0)
+    check("quest points reset to 0", switched["quest_points"] == 0)
+    check("quest stats reset to 0",
+          switched["quest_stats"] == {"charm": 0, "renown": 0,
+                                      "insight": 0})
+    check("reputation with every giver resets to empty",
+          switched["quests_rep"] == {})
+    check("quest board and history reset to empty",
+          switched["quests_board"] == [] and switched["quests_done"] == []
+          and switched["quests_active"] is None)
+    check("Healing stays at its level",
+          switched["healing_level"] == 2)
+    check("first switch is free, credits stay",
+          switched["credits"] == 500)
+    check("wins and losses stay",
+          switched["wins"] == 7 and switched["losses"] == 3)
+    check("switch count goes up by 1",
+          switched["kind_switches"] == 1)
+    check("the original fighter is untouched",
+          switcher["kind"] == "robot" and switcher["level"] == 5)
+    check("a switched witch hits for 11",
+          game_logic.weapon_damage(switched) == 11)
+
+    # The second switch costs 100: a witch with 150 credits
+    # switching to chef pays it and keeps the rest.
+    switched["credits"] = 150
+    back, error = game_logic.switched_fighter(switched, "chef")
+    check("second switch has no error", error is None)
+    check("second switch costs 100 credits", back["credits"] == 50)
+    check("second switch renames to chef gear",
+          back["weapon_name"] == "Trusty Spatula"
+          and back["armor_name"] == "Chef Apron")
+    check("Healing still stays after the second switch",
+          back["healing_level"] == 2)
+
+    # Cannot afford it: nothing changes, and the error says so.
+    poor = game_logic.new_fighter("Poor", "robot")
+    poor["kind_switches"] = 1
+    poor["credits"] = 50
+    broke, error = game_logic.switched_fighter(poor, "chef")
+    check("a switch you cannot afford is refused",
+          broke is None and error is not None
+          and "100 credits" in error and "50 credits" in error)
+    check("a refused switch leaves the fighter alone",
+          poor["kind"] == "robot" and poor["credits"] == 50)
+
+    # Same kind and unknown kind are refused.
+    same, error = game_logic.switched_fighter(switcher, "robot")
+    check("switching to the same kind is refused",
+          same is None and error is not None)
+    weird, error = game_logic.switched_fighter(switcher, "wizard")
+    check("switching to an unknown kind is refused",
+          weird is None and error is not None)
+
+    # An old fighter with no switch count and no quest fields
+    # switches fine: missing means 0, never a crash.
+    old_switcher = game_logic.new_fighter("Old", "chef")
+    old_switcher.pop("kind_switches", None)
+    old_switcher.pop("quest_level", None)
+    old_switcher.pop("quest_stats", None)
+    old_switcher["credits"] = 0
+    old_switched, error = game_logic.switched_fighter(
+        old_switcher, "witch")
+    check("an old fighter switches for free",
+          error is None and old_switched["kind"] == "witch")
+    check("an old fighter's Healing still stays at 0",
+          old_switched["healing_level"] == 0)
+
     try:
         game_logic.new_fighter("  ", "robot")
         check("empty name is rejected", False)
@@ -536,17 +655,28 @@ def main():
     check("2 levels from level 5 cost 317 credits", plan5["cost"] == 317)
     check("2 levels from level 5 leave 183 credits", plan5["credits_left"] == 183)
     # The queue runs to the end with no cancelling, and the
-    # total never passes 4 hours. At weapon level 40 with
-    # plenty of credits, the 4-hour cap (not the credits)
-    # stops the queue at 5 levels.
+    # total wait never passes 4 hours. At weapon level 40 with
+    # plenty of credits, the count is decided by CREDITS ONLY
+    # (Phase 37): 8 levels for 9,077,666,704 credits, leaving
+    # 922,333,296. The raw wait would be 20,880 seconds, so the
+    # queue is shrunk to 4 hours exactly, and each level comes
+    # faster than the usual one-level wait.
     queue_fighter = game_logic.new_fighter("Queuer", "robot")
     queue_fighter["credits"] = 10 ** 10
     queue_fighter["weapon_level"] = 40
     plan_huge = game_logic.max_affordable(queue_fighter, "weapon")
+    check("a rich queue buys 8 levels at weapon 40",
+          len(plan_huge["levels"]) == 8)
+    check("8 levels at weapon 40 cost 9077666704 credits",
+          plan_huge["cost"] == 9077666704)
+    check("8 levels at weapon 40 leave 922333296 credits",
+          plan_huge["credits_left"] == 922333296)
     check("max affordable never passes 4 hours total",
-          plan_huge["seconds"] <= game_logic.MAX_TIMER_SECONDS)
-    check("the 4-hour cap stops a rich queue at 5 levels",
-          len(plan_huge["levels"]) == 5 and plan_huge["seconds"] == 12600)
+          plan_huge["seconds"] == game_logic.MAX_TIMER_SECONDS)
+    check("the raw wait is longer than 4 hours",
+          plan_huge["raw_seconds"] == 20880)
+    check("a shrunk queue carries a scale below 1",
+          0 < plan_huge["time_scale"] < 1)
     # A queue actually runs: 500 credits from level 1 buys 5
     # levels, and each level finishes in turn until the last
     # one says all 5 levels are done.
@@ -612,22 +742,21 @@ def main():
 
     # Big numbers: with infinite progression a player can spend a
     # million credits (or far more) on one weapon, and the queue
-    # must still respect the 4-hour cap. The cap binds on TIME,
-    # not on credits: at level 1 a million credits buys 21 levels
-    # for 249,344 credits, 750,656 left, in 13,860 seconds
-    # (231 minutes) — under the 14,400-second cap — and the queue
-    # drains to weapon level 22. Ten million and a billion credits
-    # buy the same 21 levels: the extra credits stay unspent
-    # because the next level would push the wait past 4 hours.
-    # At weapon level 50 with 10 trillion credits, 4 levels for
-    # 86,344,578,154 credits in 12,360 seconds. At weapon level
-    # 200 with 1e38 credits, only 1 level fits: 12,000 seconds.
+    # must still respect the 4-hour wait cap. The cap binds on the
+    # WAIT, not on the count (Phase 37): the count is decided by
+    # credits only, and the waits shrink so the whole queue fits
+    # in 4 hours. At level 1 a million credits buys 24 levels (not
+    # the old 21 — the extra levels used to be cut off by the wait),
+    # ten million buys 30, a billion buys 41. At weapon level 50
+    # with 10 trillion credits, 15 levels; at weapon level 200 with
+    # 1e38 credits, 7 levels. Every one of these queues takes
+    # exactly 4 hours, with each level coming faster than usual.
     for weapon_level, credits, want_levels in (
-        (1, 1_000_000, 21),
-        (1, 10_000_000, 21),
-        (1, 1_000_000_000, 21),
-        (50, 10_000_000_000_000, 4),
-        (200, 10 ** 38, 1),
+        (1, 1_000_000, 24),
+        (1, 10_000_000, 30),
+        (1, 1_000_000_000, 41),
+        (50, 10_000_000_000_000, 15),
+        (200, 10 ** 38, 7),
     ):
         big = game_logic.new_fighter("Big", "robot")
         big["weapon_level"] = weapon_level
@@ -635,10 +764,15 @@ def main():
         plan = game_logic.max_affordable(big, "weapon")
         check("big numbers: %d levels at weapon %d" % (want_levels, weapon_level),
               len(plan["levels"]) == want_levels)
-        check("big numbers: wait respects 4-hour cap at weapon %d" % weapon_level,
-              plan["seconds"] <= game_logic.MAX_TIMER_SECONDS)
+        check("big numbers: wait is exactly 4 hours at weapon %d" % weapon_level,
+              plan["seconds"] == game_logic.MAX_TIMER_SECONDS)
+        check("big numbers: the queue is shrunk at weapon %d" % weapon_level,
+              0 < plan["time_scale"] < 1)
         err, line = game_logic.start_max_upgrade(big, "weapon", now=1000000.0)
         check("big numbers: queue starts at weapon %d" % weapon_level, err is None)
+        check("big numbers: the stored queue carries the scale at weapon %d"
+              % weapon_level,
+              big["upgrade"].get("time_scale") == plan["time_scale"])
         now = 1000000.0
         while big.get("upgrade"):
             now = big["upgrade"]["finish"] + 1
@@ -647,6 +781,36 @@ def main():
               not big.get("upgrade") and not big.get("upgrade_queue"))
         check("big numbers: final level %d at weapon %d" % (weapon_level + want_levels, weapon_level),
               big["weapon_level"] == weapon_level + want_levels)
+
+    # A long queue caught up late drains in ONE call: start 8
+    # levels at weapon 40, jump past the 4-hour finish, and all
+    # 8 land at once, with one line saying all levels are done.
+    # (Before Phase 37 this took one call per level.)
+    catcher = game_logic.new_fighter("Catcher", "robot")
+    catcher["credits"] = 10 ** 10
+    catcher["weapon_level"] = 40
+    error, line = game_logic.start_max_upgrade(
+        catcher, "weapon", now=1000000.0)
+    check("catch-up queue starts", error is None)
+    check("catch-up queue is shrunk to 4 hours",
+          catcher["upgrade"]["finish"] <= 1000000.0
+          + game_logic.MAX_TIMER_SECONDS)
+    line = game_logic.finish_upgrade_if_ready(
+        catcher, now=1000000.0 + game_logic.MAX_TIMER_SECONDS + 1)
+    check("one late call drains the whole queue",
+          catcher["weapon_level"] == 48
+          and catcher.get("upgrade") is None)
+    check("one late call says all levels are done",
+          line is not None and "All 8 levels are done." in line)
+    # A short queue is not shrunk at all: 500 credits from level 1
+    # takes the raw 15 minutes, scale 1, one level at a time.
+    short = game_logic.new_fighter("Short", "robot")
+    short["credits"] = 500
+    plan_short = game_logic.max_affordable(short, "weapon")
+    check("a short queue is not shrunk",
+          plan_short["time_scale"] == 1
+          and plan_short["seconds"] == 900
+          and plan_short["raw_seconds"] == 900)
 
     # Status text is one plain summary.
     text = game_logic.status_text(saved)

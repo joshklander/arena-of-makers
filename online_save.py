@@ -187,6 +187,24 @@ def respec_stats(config, timeout=15):
             data.get("messages") or [], error)
 
 
+def switch_kind(config, kind, timeout=15):
+    """Change fighter, on the server. The game sends only the
+    session token plus the new kind (robot, chef, or witch).
+    Returns (fighter, message, messages, error). The server
+    decides the price from the player's switch count — the first
+    switch is free, then 100 credits doubling every switch, no
+    cap — applies the reset rules (combat and quest levels and
+    stats, reputation, weapon/armor upgrades all start over;
+    Healing stays; credits stay apart from the cost), and deducts
+    the credits. The client never changes kind or credits itself."""
+    args = _session_args(config)
+    args["p_kind"] = kind
+    data, error = rpc(config, "arena_switch_kind", args, timeout)
+    data = data or {}
+    return (data.get("fighter"), data.get("message"),
+            data.get("messages") or [], error)
+
+
 def max_upgrade(config, slot, timeout=15):
     """Start a max-affordable upgrade queue on the server: as
     many levels as the credits and the 4-hour cap allow, with

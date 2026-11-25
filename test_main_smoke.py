@@ -392,6 +392,24 @@ def main_test():
         error, message = game_logic.respec_stats(server["fighter"])
         return copy.deepcopy(server["fighter"]), message, [], error
 
+    def _fake_switch_kind(config, kind):
+        server["calls"].append("switch_kind")
+        new_fighter, error = game_logic.switched_fighter(
+            server["fighter"], kind)
+        if error:
+            return copy.deepcopy(server["fighter"]), None, [], error
+        server["fighter"] = new_fighter
+        word = game_logic.kind_word(
+            kind, server["fighter"].get("gender", "male"))
+        message = (
+            "You are now a %s. Your weapon is the %s and your armor is the %s. "
+            "Your Healing stayed at level %s, and your combat and quest levels "
+            "started over at level 1. Your next switch costs %s credits."
+            % (word, new_fighter["weapon_name"], new_fighter["armor_name"],
+               new_fighter.get("healing_level", 0),
+               game_logic.switch_cost(new_fighter.get("kind_switches", 0))))
+        return copy.deepcopy(server["fighter"]), message, [], None
+
     def _fake_max_upgrade(config, slot):
         server["calls"].append("max_upgrade")
         error, message = game_logic.start_max_upgrade(server["fighter"], slot)
@@ -419,6 +437,7 @@ def main_test():
     _online_save.start_upgrade = _fake_upgrade
     _online_save.spend_stat = _fake_spend_stat
     _online_save.respec_stats = _fake_respec
+    _online_save.switch_kind = _fake_switch_kind
     _online_save.max_upgrade = _fake_max_upgrade
     _online_save.refresh_state = _fake_state
     _online_save.set_voice = _fake_voice
@@ -578,6 +597,7 @@ def main_test():
               ("Strength", "Defense", "Health", "Speed", "Luck")) == 5)
     check("home list says credits nowhere on stat lines",
           all("points" not in item or "stat point" in item
+              or "quest point" in item
               for item in home_items))
 
     # Enter on a stat line spends one banked point on the
@@ -1040,6 +1060,85 @@ def main_test():
     check("keep me signed in turns off", frame.remembered is False)
     check("turning it off removes the token here", store == {})
     check("turning it off tells the server", forgotten == ["e" * 64])
+
+    # Fighter switching (Phase 36): the Settings tab offers the
+    # other two kinds, the first switch is free, and switching
+    # resets levels and upgrades while Healing stays.
+    for f in (fighter, server["fighter"]):
+        f["level"] = 3
+        f["xp"] = 40
+        f["stats"] = {"strength": 3, "defense": 1, "health": 0,
+                         "speed": 0, "luck": 0}
+        f["stat_points"] = 1
+        f["weapon_level"] = 3
+        f["armor_level"] = 2
+        f["healing_level"] = 2
+        f["credits"] = 500
+        f["wins"] = 4
+        f["losses"] = 1
+        f["quest_level"] = 2
+        f["quest_points"] = 1
+        f["quest_stats"] = {"charm": 1, "renown": 0, "insight": 0}
+        f["quests_rep"] = {"Bolt": 4}
+        f["kind_switches"] = 0
+    frame.refresh_list("Settings")
+    settings_items = frame.list_items("Settings")
+    check("settings offers changing to chef",
+          any(item.startswith("Change fighter to chef:")
+              for item in settings_items))
+    check("settings offers changing to warlock for a male fighter",
+          any(item.startswith("Change fighter to warlock:")
+              for item in settings_items))
+    check("the first switch is free on the settings lines",
+          any("first switch is free" in item for item in settings_items))
+    # Say no first: nothing changes and the server is not called.
+    sys.modules["wx"].Dialog.modal_result = sys.modules["wx"].ID_NO
+    settings_box.SetSelection(
+        [i for i, item in enumerate(settings_items)
+         if item.startswith("Change fighter to warlock:")][0])
+    frame.activate_current()
+    check("saying no to a switch changes nothing",
+          fighter["kind"] == "robot" and fighter["credits"] == 500
+          and "switch_kind" not in server["calls"])
+    # Say yes: the fighter becomes a warlock, free, with the
+    # reset rules applied and Healing kept.
+    sys.modules["wx"].Dialog.modal_result = sys.modules["wx"].ID_YES
+    frame.activate_current()
+    sys.modules["wx"].Dialog.modal_result = 1  # back to ID_OK
+    check("the switch went to the server",
+          "switch_kind" in server["calls"])
+    check("the fighter is a witch after switching",
+          fighter["kind"] == "witch")
+    check("the switched weapon is the Spellbound Wand",
+          fighter["weapon_name"] == "Spellbound Wand")
+    check("the switched armor is the Mystic Robe",
+          fighter["armor_name"] == "Mystic Robe")
+    check("weapon and armor upgrades reset to level 1",
+          fighter["weapon_level"] == 1 and fighter["armor_level"] == 1)
+    check("combat level resets to 1 on switch", fighter["level"] == 1)
+    check("quest level resets to 1 on switch",
+          fighter["quest_level"] == 1)
+    check("Healing stays at level 2 on switch",
+          fighter["healing_level"] == 2)
+    check("the first switch is free",
+          fighter["credits"] == 500)
+    check("wins and losses stay on switch",
+          fighter["wins"] == 4 and fighter["losses"] == 1)
+    check("the switch count is 1 after the first switch",
+          fighter["kind_switches"] == 1)
+    check("the switch is announced with the new kind",
+          "warlock" in frame.message_line.GetLabel())
+    # The Settings lines now offer the other two kinds, and the
+    # next switch costs 100 credits.
+    frame.refresh_list("Settings")
+    settings_items = frame.list_items("Settings")
+    check("after switching, the settings offer chef and robot",
+          any(item.startswith("Change fighter to chef:")
+              for item in settings_items)
+          and any(item.startswith("Change fighter to robot:")
+              for item in settings_items))
+    check("the second switch costs 100 credits",
+          any("costs 100 credits" in item for item in settings_items))
 
     check("still no local save file at the end",
           not os.path.exists(os.path.join(
@@ -1537,6 +1636,7 @@ def currency_wording_test():
     def _bare_points(line):
         """True when a line says "point(s)" about anything but stats."""
         cleaned = re.sub(r"stat points?", "", line, flags=re.IGNORECASE)
+        cleaned = re.sub(r"quest points?", "", cleaned, flags=re.IGNORECASE)
         cleaned = re.sub(r"one (more )?point", "", cleaned, flags=re.IGNORECASE)
         return "point" in cleaned.lower()
 
@@ -3470,6 +3570,38 @@ def quest_test():
           quests_module.quest_stats_of(fighter)["renown"] == 0)
     check("spending with no quest points says so",
           "no quest points to spend" in frame.message_line.GetLabel())
+
+    # Quest points on the Home tab (Phase 36 fix, Makenna
+    # 2026-11-25): the banked points and the three quest stat
+    # lines live here too, not only in the hangout, and Enter on
+    # one spends a point, just like in the hangout.
+    _set_quest_state(points=2)
+    fighter["quest_points"] = 2
+    fighter["quest_stats"] = {"charm": 0, "renown": 0, "insight": 0}
+    frame.notebook.SetSelection(0)  # Home tab
+    frame.refresh_list("Home")
+    home_box = frame.lists["Home"]
+    check("the Home tab shows the banked quest points",
+          "I have 2 quest points to spend. Press Enter on a "
+          "quest stat to spend one point."
+          in frame.list_items("Home"))
+    check("the Home tab shows the three quest stat lines",
+          any(item.startswith("Charm,") for item in frame.list_items("Home"))
+          and any(item.startswith("Renown,")
+                  for item in frame.list_items("Home"))
+          and any(item.startswith("Insight,")
+                  for item in frame.list_items("Home")))
+    home_box.SetSelection(frame.list_items("Home").index(
+        next(item for item in frame.list_items("Home")
+             if item.startswith("Renown,"))))
+    frame.activate_current()
+    check("spending a quest point on the Home tab raises renown by 1",
+          quests_module.quest_stats_of(fighter)["renown"] == 1)
+    check("spending a quest point on the Home tab uses up the point",
+          fighter.get("quest_points") == 1)
+    check("the Home tab shows the spent point",
+          any(item.startswith("Renown, 1.")
+              for item in frame.list_items("Home")))
 
     # Quest growth (Phase 26): credits follow the quest
     # level, not the fighter level; the automatic bonus

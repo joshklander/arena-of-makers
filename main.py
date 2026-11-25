@@ -609,6 +609,23 @@ class MainFrame(wx.Frame):
             # Quest level (Phase 23), next to the fighter level:
             # one line, always shown, even at quest level 1.
             items.append(quests.quest_level_line(fighter))
+            # Quest points (Phase 36 fix, Makenna 2026-11-25):
+            # banked quest points and the three quest stats live
+            # here too, not only in the hangout, so they can be
+            # spent where combat points are spent. Same Enter
+            # pattern as the hangout lines: arrow to the line,
+            # Enter spends one banked point there.
+            qpoints = quests.quest_points_of(fighter)
+            if qpoints > 0:
+                items.append(
+                    "I have %d quest %s to spend. Press Enter on a "
+                    "quest stat to spend one point."
+                    % (qpoints, "point" if qpoints == 1 else "points")
+                )
+            else:
+                items.append("I have no quest points to spend right now.")
+            for qstat in quests.QUEST_STAT_NAMES:
+                items.append(quests.quest_stat_line(fighter, qstat))
             for stat in game_logic.STAT_NAMES:
                 items.append(game_logic.stat_line(fighter, stat))
             if sum(game_logic.stats_of(fighter).values()) > 0:
@@ -799,7 +816,7 @@ class MainFrame(wx.Frame):
             gender = self.fighter.get("gender", "male")
             voice_name = "Male" if gender == "male" else "Female"
             voice_state = "" if self.voice is not None else " (voice off)"
-            return [
+            lines = [
                 "Voice: %s%s (press Enter to change)" % (voice_name, voice_state),
                 "Sound effects: %s" % sound,
                 "Background music: %s" % music,
@@ -811,6 +828,30 @@ class MainFrame(wx.Frame):
                     else "not available"
                 ),
             ]
+            # Change fighter (Phase 36, Makenna Nov 25, 2026):
+            # one line for each kind this fighter is not, so the
+            # player picks the kind on the line itself. The first
+            # switch is free; after that the price doubles every
+            # switch, with no cap. The cost shown is the display
+            # price — the server decides the real one.
+            current_kind = self.fighter.get("kind", "robot")
+            switches = self.fighter.get("kind_switches", 0) or 0
+            cost = game_logic.switch_cost(switches)
+            for kind in ("robot", "chef", "witch"):
+                if kind == current_kind:
+                    continue
+                word = game_logic.kind_word(kind, gender)
+                if cost <= 0:
+                    lines.append(
+                        "Change fighter to %s: first switch is free "
+                        "(press Enter)" % word
+                    )
+                else:
+                    lines.append(
+                        "Change fighter to %s: costs %d credits "
+                        "(press Enter)" % (word, cost)
+                    )
+            return lines
         return []
 
     def refresh_list(self, tab):
@@ -2041,6 +2082,82 @@ class MainFrame(wx.Frame):
         self.announce(message)
         self.refresh_all()
 
+    def do_switch_fighter(self, kind):
+        """Change fighter to a new kind. The first switch is free;
+        after that it costs credits, doubling every switch, with
+        no cap. The game asks first and says exactly what resets
+        and what stays, because a switch cannot be undone: combat
+        level and stats, quest level and quest stats, reputation
+        with every giver, and weapon/armor upgrades all start
+        over, while Healing stays and credits stay apart from
+        the switch cost. Online, the server decides. Switching
+        is allowed while repairing or upgrading: the new fighter
+        starts at full health, so a repair ends, and a running
+        upgrade ends with the old weapon and armor."""
+        fighter = self.fighter
+        current = fighter.get("kind", "robot")
+        gender = fighter.get("gender", "male")
+        if kind == current:
+            self.announce(
+                "I am already a %s."
+                % game_logic.kind_word(current, gender))
+            return
+        if kind not in ("robot", "chef", "witch"):
+            self.announce("Pick robot, chef or witch for your fighter.")
+            return
+        if not self.online_config:
+            self.announce(
+                "Changing fighter needs the server, and I am not "
+                "signed in right now.")
+            return
+        switches = fighter.get("kind_switches", 0) or 0
+        cost = game_logic.switch_cost(switches)
+        credits = game_logic.credits_of(fighter)
+        healing = fighter.get("healing_level", 0) or 0
+        word = game_logic.kind_word(kind, gender)
+        if cost > credits:
+            self.announce(
+                "Changing fighter costs %d credits and I have %d credits."
+                % (cost, credits))
+            return
+        if cost <= 0:
+            cost_line = "This first switch is free."
+        else:
+            cost_line = (
+                "This switch costs %d credits and I have %d credits."
+                % (cost, credits))
+        extra = ""
+        if game_logic.upgrade_is_running(fighter):
+            extra = (" My upgrade that is running now ends.")
+        if game_logic.is_repairing(fighter):
+            extra += " My repair ends and I start at full health."
+        question = (
+            "Change fighter to %s? %s "
+            "What changes: my combat level and stats go back to "
+            "level 1, my quest level and quest stats go back to "
+            "level 1, my reputation with every quest giver goes "
+            "back to zero, and my weapon and armor start over at "
+            "level 1 with no upgrades.%s "
+            "What stays: my Healing skill stays at level %d, my "
+            "credits stay apart from the cost of the switch, and "
+            "my wins and losses stay. Do you want to do it?"
+            % (word, cost_line, extra, healing)
+        )
+        if not self._confirm(question):
+            self.announce(
+                "I stay a %s." % game_logic.kind_word(current, gender))
+            return
+        server_fighter, message, _messages, error = online_save.switch_kind(
+            self.online_config, kind
+        )
+        self.use_server_fighter(server_fighter)
+        if error:
+            self.announce(error)
+            self.refresh_all()
+            return
+        self.announce(message)
+        self.refresh_all()
+
     def do_respec(self):
         """Reset all 5 stats, refunding every spent point. The
         first respec is free; later ones cost 100 credits. A
@@ -2084,9 +2201,12 @@ class MainFrame(wx.Frame):
 
     def do_max_upgrade(self, slot):
         """Start a max-affordable queue: as many levels as the
-        credits and the 4-hour cap allow. The game says the
-        whole deal in plain words and asks first, because once
-        started the queue runs to the end with no cancelling.
+        credits allow. The wait is capped at 4 hours no matter
+        how many levels (Phase 37): a long queue's levels come
+        faster than the usual one-level wait, so they all fit.
+        The game says the whole deal in plain words and asks
+        first, because once started the queue runs to the end
+        with no cancelling.
         One upgrade set at a time: if a set is already running
         the player is told so — with the time left — before
         any question is asked, so they never confirm a queue
@@ -2116,6 +2236,13 @@ class MainFrame(wx.Frame):
             )
             return
         count = len(plan["levels"])
+        if plan.get("time_scale", 1) < 1:
+            # The queue was shrunk to fit in 4 hours (Phase 37):
+            # say so plainly, so the player hears the wait is a
+            # cap, not the raw total.
+            wait_words = "%s at most" % game_logic.format_time(plan["seconds"])
+        else:
+            wait_words = game_logic.format_time(plan["seconds"])
         question = (
             "My %s can go up %d %s for %d credits, leaving %d. "
             "It will take %s, one level after another. Do you want "
@@ -2126,7 +2253,7 @@ class MainFrame(wx.Frame):
                 "level" if count == 1 else "levels",
                 plan["cost"],
                 plan["credits_left"],
-                game_logic.format_time(plan["seconds"]),
+                wait_words,
             )
         )
         if not self._confirm(question):
@@ -2163,18 +2290,35 @@ class MainFrame(wx.Frame):
         elif item.startswith("Go to "):
             self.notebook.SetSelection(self.TAB_NAMES.index(item[6:]))
         elif tab == "Home" and item.startswith("I have "):
-            points = fighter.get("stat_points", 0)
-            if points > 0:
-                self.announce(
-                    "I have %d stat %s to spend. Move with the arrow "
-                    "keys to a stat and press Enter to spend one point."
-                    % (points, "point" if points == 1 else "points")
-                )
+            if "quest" in item:
+                # Quest points live on the Home tab too (Phase 36
+                # fix): the line says how many are banked, and
+                # Enter on a quest stat spends one.
+                qpoints = quests.quest_points_of(fighter)
+                if qpoints > 0:
+                    self.announce(
+                        "I have %d quest %s to spend. Move with the arrow "
+                        "keys to a quest stat and press Enter to spend one point."
+                        % (qpoints, "point" if qpoints == 1 else "points")
+                    )
+                else:
+                    self.announce(
+                        "I have no quest points to spend right now. I get "
+                        "1 quest point every time I go up a quest level."
+                    )
             else:
-                self.announce(
-                    "I have no stat points to spend right now. I get "
-                    "2 stat points every time I level up."
-                )
+                points = fighter.get("stat_points", 0)
+                if points > 0:
+                    self.announce(
+                        "I have %d stat %s to spend. Move with the arrow "
+                        "keys to a stat and press Enter to spend one point."
+                        % (points, "point" if points == 1 else "points")
+                    )
+                else:
+                    self.announce(
+                        "I have no stat points to spend right now. I get "
+                        "2 stat points every time I level up."
+                    )
         elif tab == "Home" and item.startswith("Strength,"):
             self.do_spend_stat("strength")
         elif tab == "Home" and item.startswith("Defense,"):
@@ -2185,6 +2329,12 @@ class MainFrame(wx.Frame):
             self.do_spend_stat("speed")
         elif tab == "Home" and item.startswith("Luck,"):
             self.do_spend_stat("luck")
+        elif tab == "Home" and item.startswith("Charm,"):
+            self.do_spend_quest_stat("charm")
+        elif tab == "Home" and item.startswith("Renown,"):
+            self.do_spend_quest_stat("renown")
+        elif tab == "Home" and item.startswith("Insight,"):
+            self.do_spend_quest_stat("insight")
         elif tab == "Home" and item.startswith("Quest level "):
             self.announce(item)
         elif tab == "Home" and item.startswith("Reset all my stats"):
@@ -2355,6 +2505,12 @@ class MainFrame(wx.Frame):
             self.sounds.set_volume(self.volume)
             self.announce("Volume %d percent." % self.volume)
             self.refresh_all()
+        elif tab == "Settings" and item.startswith("Change fighter to "):
+            word = item[len("Change fighter to "):].split(":")[0].strip()
+            kind = {"warlock": "witch", "witch": "witch",
+                    "robot": "robot", "chef": "chef"}.get(word)
+            if kind:
+                self.do_switch_fighter(kind)
 
     # -- events --------------------------------------------------------
 
