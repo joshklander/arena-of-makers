@@ -168,21 +168,175 @@ NPCS = {
         "appear_sound": "npc_ember_owl_appear",
         "hit_sound": "npc_ember_owl_hit",
     },
+    # The 12 magical creatures (Phase 39, Makenna Nov 25, 2026):
+    # one per element, plus a rival witch and a rival warlock.
+    # Each has an element, so the witch's spells hit them with
+    # Pokemon-style affinities (see spells.py) — the 9 Phase 24
+    # creatures above have no element, so affinities stay
+    # neutral against them. "magic_sound" is the sound for the
+    # round the special fires: an elemental's magic IS its own
+    # element's spell sound (Makenna, Nov 25, 2026 — "your hit
+    # sounds like your spell, their hit sounds like their
+    # spell"), so it is "spell:<element>"; the Rival Witch's
+    # is "random_spell" (a random spell_<element>.ogg each
+    # cast); the Rival Warlock's curse is his own sound. The
+    # rivals pay a little more (reward 1.3) because fighting
+    # another witch or warlock is the hardest fight in the pool.
+    "ember_sprite": {
+        "name": "Ember Sprite", "kind": "magical", "element": "fire",
+        "hp_mult": 0.9, "dmg_mult": 1.25, "reward_mult": 1.2,
+        "ability": "flare", "ability_every": 3,
+        "ability_line": "Ember Sprite bursts into flame!",
+        "profile": {"speed": 3, "strength": 3, "health": 2,
+                    "defense": 1, "luck": 1},
+        "appear_sound": "npc_ember_sprite_appear",
+        "hit_sound": "npc_ember_sprite_hit",
+        "magic_sound": "spell:fire",
+    },
+    "tide_wisp": {
+        "name": "Tide Wisp", "kind": "magical", "element": "water",
+        "hp_mult": 1.1, "dmg_mult": 1.0, "reward_mult": 1.2,
+        "ability": "sugar_trap", "ability_every": 4,
+        "ability_line": "Tide Wisp soaks me! My next hit is weak!",
+        "profile": {"speed": 2, "strength": 2, "health": 3,
+                    "defense": 2, "luck": 1},
+        "appear_sound": "npc_tide_wisp_appear",
+        "hit_sound": "npc_tide_wisp_hit",
+        "magic_sound": "spell:water",
+    },
+    "frost_faerie": {
+        "name": "Frost Faerie", "kind": "magical", "element": "ice",
+        "hp_mult": 0.8, "dmg_mult": 1.2, "reward_mult": 1.2,
+        "ability": "shock", "ability_every": 3,
+        "ability_line": "Frost Faerie freezes the air! "
+                        "A freezing shock!",
+        "profile": {"speed": 4, "strength": 3, "health": 1,
+                    "defense": 0, "luck": 2},
+        "appear_sound": "npc_frost_faerie_appear",
+        "hit_sound": "npc_frost_faerie_hit",
+        "magic_sound": "spell:ice",
+    },
+    "gale_sylph": {
+        "name": "Gale Sylph", "kind": "magical", "element": "wind",
+        "hp_mult": 0.8, "dmg_mult": 1.2, "reward_mult": 1.2,
+        "ability": "dodge", "ability_every": 5,
+        "ability_line": "Gale Sylph swoops aside! My hit misses!",
+        "profile": {"speed": 4, "strength": 3, "health": 1,
+                    "defense": 0, "luck": 2},
+        "appear_sound": "npc_gale_sylph_appear",
+        "hit_sound": "npc_gale_sylph_hit",
+        "magic_sound": "spell:wind",
+    },
+    "bog_toad": {
+        "name": "Bog Toad", "kind": "magical", "element": "poison",
+        "hp_mult": 1.3, "dmg_mult": 0.95, "reward_mult": 1.1,
+        "ability": "shock", "ability_every": 3,
+        "ability_line": "Bog Toad bursts with poison!",
+        "profile": {"speed": 1, "strength": 2, "health": 4,
+                    "defense": 2, "luck": 1},
+        "appear_sound": "npc_bog_toad_appear",
+        "hit_sound": "npc_bog_toad_hit",
+        "magic_sound": "spell:poison",
+    },
+    "dawn_moth": {
+        "name": "Dawn Moth", "kind": "magical", "element": "light",
+        "hp_mult": 0.75, "dmg_mult": 1.3, "reward_mult": 1.2,
+        "ability": "double_hit", "ability_every": 4,
+        "ability_line": "Dawn Moth flutters in twice!",
+        "profile": {"speed": 4, "strength": 3, "health": 1,
+                    "defense": 1, "luck": 1},
+        "appear_sound": "npc_dawn_moth_appear",
+        "hit_sound": "npc_dawn_moth_hit",
+        "magic_sound": "spell:light",
+    },
+    "shade_stalker": {
+        "name": "Shade Stalker", "kind": "magical", "element": "shadow",
+        "hp_mult": 0.8, "dmg_mult": 1.2, "reward_mult": 1.2,
+        "ability": "vanish", "ability_every": 3,
+        "ability_line": "Shade Stalker melts into shadow! "
+                        "My hit misses!",
+        "profile": {"speed": 4, "strength": 3, "health": 1,
+                    "defense": 0, "luck": 2},
+        "appear_sound": "npc_shade_stalker_appear",
+        "hit_sound": "npc_shade_stalker_hit",
+        "magic_sound": "spell:shadow",
+    },
+    "void_imp": {
+        "name": "Void Imp", "kind": "magical", "element": "dark",
+        "hp_mult": 0.9, "dmg_mult": 1.25, "reward_mult": 1.2,
+        "ability": "flare", "ability_every": 3,
+        "ability_line": "Void Imp bursts with void energy!",
+        "profile": {"speed": 3, "strength": 3, "health": 2,
+                    "defense": 1, "luck": 1},
+        "appear_sound": "npc_void_imp_appear",
+        "hit_sound": "npc_void_imp_hit",
+        "magic_sound": "spell:dark",
+    },
+    "pebble_golem": {
+        "name": "Pebble Golem", "kind": "magical", "element": "earth",
+        "hp_mult": 1.8, "dmg_mult": 0.7, "reward_mult": 1.1,
+        "ability": "shield", "ability_every": 4,
+        "ability_line": "Pebble Golem raises a stone shield! "
+                        "My hit bounces off!",
+        "profile": {"speed": 1, "strength": 1, "health": 4,
+                    "defense": 3, "luck": 1},
+        "appear_sound": "npc_pebble_golem_appear",
+        "hit_sound": "npc_pebble_golem_hit",
+        "magic_sound": "spell:earth",
+    },
+    "storm_roc": {
+        "name": "Storm Roc", "kind": "magical", "element": "lightning",
+        "hp_mult": 0.9, "dmg_mult": 1.25, "reward_mult": 1.2,
+        "ability": "shock", "ability_every": 3,
+        "ability_line": "Storm Roc crackles with storm! A shock!",
+        "profile": {"speed": 4, "strength": 3, "health": 1,
+                    "defense": 0, "luck": 2},
+        "appear_sound": "npc_storm_roc_appear",
+        "hit_sound": "npc_storm_roc_hit",
+        "magic_sound": "spell:lightning",
+    },
+    "rival_witch": {
+        "name": "Rival Witch", "kind": "witch", "element": "witch",
+        "hp_mult": 1.0, "dmg_mult": 1.1, "reward_mult": 1.3,
+        "ability": "random_spell", "ability_every": 4,
+        "ability_line": "The Rival Witch casts a spell!",
+        "profile": {"speed": 2, "strength": 3, "health": 2,
+                    "defense": 2, "luck": 1},
+        "appear_sound": "npc_rival_witch_appear",
+        "hit_sound": "npc_rival_witch_hit",
+        "magic_sound": "random_spell",
+    },
+    "rival_warlock": {
+        "name": "Rival Warlock", "kind": "witch", "element": "witch",
+        "hp_mult": 1.0, "dmg_mult": 1.1, "reward_mult": 1.3,
+        "ability": "sugar_trap", "ability_every": 4,
+        "ability_line": "The Rival Warlock curses me! "
+                        "My next hit is weak!",
+        "profile": {"speed": 2, "strength": 3, "health": 2,
+                    "defense": 2, "luck": 1},
+        "appear_sound": "npc_rival_warlock_appear",
+        "hit_sound": "npc_rival_warlock_hit",
+        "magic_sound": "npc_rival_warlock_magic",
+    },
 }
 
 # The random fight pool: Scrap Rat stays in as the starter,
-# and the 9 NPCs join it. Every opponent is always at the
-# fighter's own level, so matchmaking stays fair.
+# and the 21 NPCs join it (9 Phase 24 + 12 magical, Phase 39).
+# Every opponent is always at the fighter's own level, so
+# matchmaking stays fair.
 NPC_ORDER = [
     "zip_scout", "bulkhead", "mend_o_matic", "ghost_drone",
     "chop_chop", "grill_gus", "baker_belle", "zap_fox", "ember_owl",
+    "ember_sprite", "tide_wisp", "frost_faerie", "gale_sylph",
+    "bog_toad", "dawn_moth", "shade_stalker", "void_imp",
+    "pebble_golem", "storm_roc", "rival_witch", "rival_warlock",
 ]
 NPC_POOL = ["scrap_rat"] + NPC_ORDER
 
 
 def random_npc_id(rng=None):
     """Pick one creature at random from the fight pool:
-    Scrap Rat or one of the 9 NPCs, all equally likely."""
+    Scrap Rat or one of the 21 NPCs, all equally likely."""
     if rng is None:
         rng = random.Random()
     return rng.choice(NPC_POOL)
@@ -847,6 +1001,13 @@ def creature_for_level(level, npc_id="scrap_rat"):
             "npc_id": npc_id,
             "name": npc["name"],
             "kind": npc["kind"],
+            # The creature's element (Phase 39): None for the
+            # Scrap Rat and the 9 Phase 24 creatures, so the
+            # witch's spell affinities stay neutral against
+            # them; one of the ten elements — or "witch" for
+            # the rivals, which is also neutral — for the 12
+            # magical creatures.
+            "element": npc.get("element"),
             "level": level,
             "hp": hp,
             "max_hp": hp,
@@ -859,6 +1020,12 @@ def creature_for_level(level, npc_id="scrap_rat"):
             "ability_every": npc["ability_every"],
             "ability_line": npc["ability_line"],
             "reward_mult": npc["reward_mult"],
+            # The sound for the round the special fires
+            # (Phase 39): "spell:<element>" for an elemental,
+            # "random_spell" for the Rival Witch, the warlock's
+            # own file for him, None for the 9 Phase 24
+            # creatures (their specials keep no magic sound).
+            "magic_sound": npc.get("magic_sound"),
         }
     stats = distribute_points(
         STAT_POINTS_PER_LEVEL * (level - 1),
@@ -897,7 +1064,7 @@ def fight(fighter, rng=None, now=None, npc_id="scrap_rat"):
     what happened, what was won or lost, and what to say next.
 
     npc_id picks the opponent: "scrap_rat" (the starter) or one of
-    the 9 NPCs in NPCS. An unknown id falls back to Scrap Rat.
+    the 21 NPCs in NPCS. An unknown id falls back to Scrap Rat.
     Stats apply here, with the server's rules mirrored: the faster
     side hits first every round (a tie goes to the fighter), a
     faster side may dodge, Luck may crit for x1.5, and no single
@@ -905,7 +1072,12 @@ def fight(fighter, rng=None, now=None, npc_id="scrap_rat"):
     An NPC's special ability fires every few rounds (see NPCS):
     a double hit, a shield/vanish/dodge that blocks the fighter's
     hit, a self-repair, a 1.5x flare/shock, or a sugar trap that
-    makes the fighter's next hit deal half damage."""
+    makes the fighter's next hit deal half damage. A witch's
+    spell hit is multiplied by its affinity against the
+    creature's element (Phase 39, see spells.py), and the
+    result carries "creature_magic": line index -> sound key
+    for the rounds the creature's special fired, so the window
+    plays the magic sound for exactly those lines."""
     if rng is None:
         rng = random.Random()
     if now is None:
@@ -948,23 +1120,66 @@ def fight(fighter, rng=None, now=None, npc_id="scrap_rat"):
     def fighter_hit():
         """One fighter hit: damage, maybe a crit, the creature's
         soak, then the fairness guard. Returns (damage, crit).
-        A witch with learned spells casts one at random (see
-        spells.py): the spell's level adds damage, and the
-        cast line is spoken before the hit line. A witch with
-        nothing learned yet hits with the wand only, no cast
+        A witch with learned spells casts the best one she has
+        against this creature (Phase 39, see
+        spells.pick_best_spell): the spell's level adds damage,
+        and its affinity against the creature's element
+        multiplies the whole hit — double for strong, half for
+        weak, never a spell that does no damage. A witch with
+        nothing learned yet, or nothing that does any damage
+        against this creature, hits with the wand only, no cast
         line, no bonus."""
         spell = None
-        bonus = 0
         if fighter.get("kind") == "witch":
-            spell = spells.pick_spell(fighter, rng)
-            if spell is not None:
-                bonus = spells.spell_damage_bonus(spell[3])
-        hit = weapon_damage(fighter) + bonus + rng.randint(0, 3)
+            spell = spells.pick_best_spell(
+                fighter, creature.get("element"))
+        if spell is not None:
+            # The spell's level bonus and its affinity against
+            # the creature's element both apply, through the one
+            # shared formula (spells.spell_hit_damage) the tests
+            # pin and the server mirrors.
+            hit = spells.spell_hit_damage(
+                weapon_damage(fighter) + rng.randint(0, 3),
+                spell[3], spell[0], creature.get("element"))
+        else:
+            hit = weapon_damage(fighter) + rng.randint(0, 3)
         crit = rng.random() * 100 < fighter_crit
         if crit:
             hit = int(round(hit * 1.5))
         hit = max(1, hit - creature_soak)
         return _guarded_hit(hit, creature_max), crit, spell
+
+    # The creature's magic, line index -> sound key (Phase 39):
+    # the rounds the creature's special fired, so the window
+    # plays the magic sound for exactly those lines instead of
+    # the regular hit sound. A flare, shock or random_spell
+    # marks the hit line that follows the ability line; every
+    # other special marks the ability line itself, since that
+    # is the magic that round (a trap, a double hit, a block,
+    # a repair). Phase 24 creatures have no magic sound, so
+    # they never mark a line.
+    creature_magic = {}
+
+    def _creature_magic_key():
+        """The sound key for this creature's special, or None.
+        An elemental's magic is its own element's spell sound;
+        the Rival Witch's is a random spell sound each cast;
+        the Rival Warlock's curse is his own file."""
+        raw = creature.get("magic_sound")
+        if not raw:
+            return None
+        if raw == "random_spell":
+            return "spell_" + rng.choice(spells.ELEMENTS)
+        if raw.startswith("spell:"):
+            return "spell_" + raw[len("spell:"):]
+        return raw
+
+    def _mark_magic_ability_line():
+        """Mark the ability line about to be spoken as magic,
+        when this creature has a magic sound at all."""
+        key = _creature_magic_key()
+        if key is not None:
+            creature_magic[len(lines)] = key
 
     def creature_hit(power=1.0):
         """One creature hit: damage, maybe a crit, the fighter's
@@ -1058,23 +1273,37 @@ def fight(fighter, rng=None, now=None, npc_id="scrap_rat"):
                 if ability_round and ability in ("shield", "vanish", "dodge"):
                     # The fighter's hit is blocked outright
                     # this round: a shield, a vanish, a dodge.
+                    # The block IS the magic that round, so the
+                    # ability line carries the magic sound.
+                    _mark_magic_ability_line()
                     lines.append(
                         "Round %d: %s" % (round_no, creature["ability_line"])
                     )
                     continue
                 one_fighter_hit()
             else:
-                if ability_round and ability in ("flare", "shock"):
-                    # A burst of flame / a shock: this round's
-                    # hit deals half as much again, before the
-                    # fighter's armor soaks some of it.
+                if ability_round and ability in ("flare", "shock", "random_spell"):
+                    # A burst of flame / a shock / a random
+                    # elemental spell (Rival Witch, Phase 39):
+                    # this round's hit deals half as much
+                    # again, before the fighter's armor soaks
+                    # some of it. The hit IS the magic, so the
+                    # magic sound goes on the hit line that
+                    # follows — not on the ability line.
                     lines.append(
                         "Round %d: %s" % (round_no, creature["ability_line"])
                     )
-                    one_creature_hit(power=1.5)
+                    if one_creature_hit(power=1.5):
+                        key = _creature_magic_key()
+                        if key is not None:
+                            creature_magic[len(lines) - 1] = key
                 elif ability_round and ability == "sugar_trap":
                     # A sticky trap: the fighter's NEXT hit
-                    # deals only half damage.
+                    # deals only half damage. The trap is the
+                    # magic that round, so the ability line
+                    # carries the magic sound; the hit after it
+                    # is an ordinary hit.
+                    _mark_magic_ability_line()
                     lines.append(
                         "Round %d: %s" % (round_no, creature["ability_line"])
                     )
@@ -1082,7 +1311,11 @@ def fight(fighter, rng=None, now=None, npc_id="scrap_rat"):
                     one_creature_hit()
                 elif ability_round and ability == "double_hit":
                     # Two quick hits in one round, each for
-                    # the creature's normal damage.
+                    # the creature's normal damage. The double
+                    # hit is the magic: the ability line
+                    # carries the magic sound, the two hits
+                    # after it sound like ordinary hits.
+                    _mark_magic_ability_line()
                     lines.append(
                         "Round %d: %s" % (round_no, creature["ability_line"])
                     )
@@ -1094,8 +1327,10 @@ def fight(fighter, rng=None, now=None, npc_id="scrap_rat"):
         if creature_hp > 0 and ability_round and ability == "self_repair":
             # The repair bot patches itself up mid-fight, for
             # 15% of its max health, if it is still standing.
+            # The repair is the magic that round.
             healed = max(1, int(round(0.15 * creature_max)))
             creature_hp = min(creature_max, creature_hp + healed)
+            _mark_magic_ability_line()
             lines.append(
                 "Round %d: %s" % (round_no, creature["ability_line"])
             )
@@ -1134,6 +1369,7 @@ def fight(fighter, rng=None, now=None, npc_id="scrap_rat"):
         return {
             "won": True,
             "lines": lines,
+            "creature_magic": creature_magic,
             "xp": xp,
             "credits": credits,
             "levels_gained": levels,
@@ -1175,6 +1411,7 @@ def fight(fighter, rng=None, now=None, npc_id="scrap_rat"):
     return {
         "won": False,
         "lines": lines,
+        "creature_magic": creature_magic,
         "xp": 0,
         "credits": -lost,
         "levels_gained": 0,
@@ -1554,7 +1791,8 @@ def study_start(fighter, element, tier, now=None):
     time, and no cancelling once started — like upgrades. A
     paused study blocks a different spell: finish the one you
     started first. Learning an already-learned spell upgrades
-    it one level. The cost is charged up front."""
+    it one level. Learning costs no credits at all — it is
+    time-based only, not credit-based (Makenna, Nov 25, 2026)."""
     if now is None:
         now = time.time()
     if fighter.get("kind") != "witch":
@@ -1571,7 +1809,8 @@ def study_start(fighter, element, tier, now=None):
                 and study.get("tier") == tier
                 and study.get("paused")):
             # Resume the same paused spell: same remaining time,
-            # no second charge (the quest resume pattern).
+            # nothing charged — learning is free (the quest
+            # resume pattern).
             remaining = max(0.0, study.get("remaining_seconds") or 0)
             study["finish_at"] = now + remaining
             study["paused"] = False
@@ -1581,14 +1820,8 @@ def study_start(fighter, element, tier, now=None):
             "I am already learning %s. Finish it first, in the study."
             % (study.get("name") or "a spell"))
     level = spells.spell_level(fighter, element, tier)
-    cost = spells.spell_cost(tier)
-    if credits_of(fighter) < cost:
-        return (
-            "Learning %s costs %d credits and I have %d credits."
-            % (spells.spell_name(element, tier), cost,
-               credits_of(fighter))
-        )
-    fighter["credits"] = credits_of(fighter) - cost
+    # No credit charge: learning spells is time-based only
+    # (Makenna, Nov 25, 2026) — credits are never touched here.
     fighter.pop("points", None)
     fighter["study"] = {
         "element": element,

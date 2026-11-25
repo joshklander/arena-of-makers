@@ -608,21 +608,18 @@ and hit sounds (royalty-free, licence checked, audio via the GitHub
 website only). Added Nov 25: each new creature ALSO has its own different
 magical attack sound, distinct from the others.
 
-## Spell study — BUILT as Phase 38 (2026-11-25, authored and text-verified; tests NOT run and NOT pushed yet)
+## Spell study — future idea (Makenna, Nov 25, 2026 — NOT building now)
 
 A study where witches and warlocks go to upgrade their spells. The wand
 upgrade helps, but on top of it there are timers where you go into the
 study to learn spells.
 
-**Built in Phase 38 (proposals for Makenna to tune, not decided by her):**
-costs are common 25, uncommon 50, rare 100, epic 200, legendary 400
-credits; times are 15, 30, 60, 120, 240 minutes (legendary = the 4-hour
-cap); learning all 50 spells once is 7,750 credits and about 77.5 hours
-of study. Level 1 is flavour only (cast line + sound, no extra damage);
-each level above 1 adds +2 damage. The tier below in the same element
-must be learned first. Spell learning is witch-only — study quests are
-open to everyone. One spell at a time, no cancel once started; a paused
-study blocks starting a different spell.
+DECIDED Nov 25, 2026: learning spells costs NO credits at all —
+it is time-based only, not credit-based. Not decided: which spells
+it teaches, how long the timers are, whether the study is
+witch-only or open to every fighter, and whether study timers use
+the same 4-hour cap as upgrades and quests (the standing rule says
+timers cap at 4 hours — confirm when this is built).
 
 DECIDED Nov 25, 2026: at first a witch attacks only with her wand, no
 spells — the wand is basically like a melee weapon — until she goes to the
@@ -650,20 +647,10 @@ PROPOSALS, not decided — Makenna can rename any of them.
 | Earth | Pebble Toss | Stone Grip | Rockslide | Mountain Roar | Titan's Awakening |
 | Lightning | Static Zap | Spark Chain | Thunder Crack | Storm Surge | Tempest Crown |
 
-**Built in Phase 38:** the 10 cast lines are in `spells.py` (one short
-first-person line per element, from §5 of this draft); the 10 spell
-sounds are Kenney CC0 (`spell_<element>.ogg`); the wand sound is
-`wand_swish.ogg` (Kenney CC0); the study music is "Spellbound" by Kevin
-MacLeod (CC-BY 4.0, credit required); the three ambience loops are Eric
-Matyas (attribution required in the game). All 15 files are prepared in
-`phase38-witch-study/sounds/` and still need the browser upload to
-GitHub. The four new givers (Hazel/Ava, Rowan/Roger, Wren/Ana,
-Bram/Steffan) and six new quest templates are in `quests.py`; the
-server side is migration `20261125230000_witch_study.sql`. The Study
-tab is the sixth tab (Home, Combat, Shop, More, Study, Settings), with
-one line per element and S to start/stop study quests. **Not in this
-phase:** magical fight creatures (Phase 39 candidate — design in
-`MAGICAL_CREATURES_DESIGN.md`, 12 creatures, 35 new Kenney CC0 sounds).
+DECIDED Nov 25, 2026: learning a spell costs no credits — it is
+time-based only. Not decided: how long each tier's timer is
+(within the 4-hour max), whether the study is witch-only or open to
+every fighter, and whether higher tiers need lower tiers learned first.
 
 DECIDED Nov 25, 2026: study learning acts like quests, not like repairs
 and upgrades — a spell is only learned while you are in the study. Leave
@@ -689,8 +676,129 @@ are done if you need repairs. CORRECTION Nov 25: the periodic status
 updates are TTS in the PLAYER'S voice, not the givers' voices; sound
 effects are only for the quest ambience and the study music track. (A
 giver's own quest lines stay in that giver's voice, as in the hangout.)
+
+SPELL TRAINER RULE — DECIDED Nov 25, 2026 (Makenna, voice call): when
+you learn a spell, it is TAUGHT to you by another warlock or witch — a
+trainer — and the teaching lines speak in the TRAINER'S voice, not the
+player's voice. DECIDED the same day: the trainer update goes in WITH
+the Phase 38 push (not after), so Makenna can test it right away, and
+the trainer talks to her DIRECTLY, like the hangout quest givers do —
+addressing her by name (Katprincess), with personality and rotating
+lines, because that gives it more personality. BUILT in Phase 38
+(spells.py, main.py — client-side only, no server change, no new
+migration): the trainers are the four study givers, by the same
+families the ambience uses — Hazel (Ava) teaches fire, water and
+poison; Rowan (Roger) teaches wind, lightning and earth; Wren (Ana)
+teaches ice, light, shadow and dark; Bram (Steffan), the old warlock,
+teaches spell upgrades, any element, level 2 and up. All four voices
+verified alive on Microsoft's live Edge list Nov 25, 2026 (Phase 27
+lesson: never assume a voice is alive). Each trainer has three
+rotating opening lines (start, and resume of a paused spell) and
+three rotating completion lines, plus three Bram upgrade lines
+naming the new level; every line is under 25 words for Alexa's
+8-second limit, and the same spell always gets the same line
+(picked from the spell's name, like a quest variant). The cast line
+in a fight stays first-person in the player's voice (it is the
+player casting), and the 5-minute study status update stays in the
+player's voice; only the teaching is the trainer's. If a trainer
+or voice is ever missing, the game falls back to the player's
+voice alone, never a crash. Makenna can reassign trainers when
+she tests them — only the mapping in spells.py changes.
 Study audio, Nov 25: when a spell finishes learning it plays that
 spell's actual sound effect. Study quests start about every 10 to 15
 minutes. Audio layers over the study music bed: if you are not on a quest
 you hear the ambience loop of the spell you are learning; if a quest has
 started you hear the quest ambience instead, still over the music.
+
+AUTO-STUDY RULE — DECIDED Nov 25, 2026 (Makenna, voice call, after
+testing Phase 38): the player does NOT choose which spell to learn.
+The Study tab has one button, "Enter study". Pressing it starts the
+study: the study music plays, spell learning starts automatically, and
+study quests trigger automatically. Spells are learned ONE AT A TIME —
+never two at once — picked at RANDOM from all the spells not yet learned,
+across all ten elements, so you do not learn all of one element first;
+within one element the tiers still go in order (common before uncommon
+and so on). When one spell finishes, the next random one starts on its
+own, as long as the player is still in the study. Leaving the study
+still pauses the learning clock, as before. To build as Phase 39
+(authored Nov 25, 2026; tests and push need Makenna's yes).
+Phase 38b is CANCELLED — Makenna decided Nov 25, 2026 that the
+auto-study, the no-credit fix, the battle-spell matchups and the
+12 magical creatures all go together in Phase 39, because then
+it is easier to test everything. Do not frame anything as 38b
+any more.
+
+BUILT as part of Phase 39 (authored Nov 25, 2026, NOT tested or pushed yet):
+the auto-pick itself is client-side only, using the existing
+arena_study_start, which already refuses a second spell while
+one is learning (the no-credit part of Phase 39 DOES add a new
+migration, 20261125233000_study_free_learning.sql — see the
+NO-CREDIT RULE below). spells.py
+gains next_study_candidates (one next spell per element) and
+pick_next_study_spell (random among the first learnings while
+any are left; random among the upgrade candidates once all 50
+are learned). The Study tab has one button, "Enter study"
+(main.py enter_study): it starts the music, starts learning the
+picked spell, and starts study quests on their own. The first
+spell asks Yes/No once, naming the time (no cost — learning is
+free) and that the study will keep teaching on its own while
+the player stays here; saying no stops the whole enter. When a
+spell finishes, _auto_start_next_study picks the next one on its
+own, with no second question. Leaving the tab still pauses the
+learning clock. A robot or chef pressing Enter study gets quests,
+not spells. Trainers, cast lines, the 5-minute update, music and
+ambience layering, the 4-hour cap, and times are all unchanged
+from Phase 38.
+
+NO-CREDIT RULE — DECIDED Nov 25, 2026 (Makenna, voice call):
+learning spells costs NO credits at all. It is time-based only,
+not credit-based. The credit cost was only ever a builder
+proposal (common 25 credits … legendary 400) and is removed
+entirely — client and server. New migration
+20261125233000_study_free_learning.sql re-issues
+arena_study_start with no credit charge or check and drops
+arena_private.spell_cost; spells.spell_cost and SPELL_COSTS are
+gone; game_logic.study_start no longer touches credits; the
+Enter-study question names only the time; auto-start after a
+spell finishes has no credit check, so being broke never blocks
+learning. Times stay as proposed: common 15 minutes, uncommon
+30, rare 60, epic 2 hours, legendary 4 hours (the cap); learning
+all 50 spells once takes about 77.5 hours of study.
+
+BATTLE SPELLS — DECIDED Nov 25, 2026 (Makenna, voice call),
+BUILT as part of Phase 39 (authored Nov 25, 2026, NOT tested or
+pushed yet): creatures use spells in battle too, and the game
+picks YOUR best spell against that enemy automatically — "your
+hit sounds like your spell and their hit sounds like their
+spell", so you can hear whose magic is whose. The matchup chart
+is Pokemon-style: our elements map fire→Fire, water→Water,
+ice→Ice, wind→Flying, poison→Poison, light→Fairy, shadow→Ghost,
+dark→Dark, earth→Ground, lightning→Electric; a strong spell does
+double damage (2x), a weak one does half (0.5x), neutral is normal
+(1x). Two pairs do NO damage at all (0x): lightning does no
+damage to an earth creature, and earth does no damage to a wind
+creature — the Pokemon immunities (Electric has no effect on
+Ground; Ground has no effect on Flying). The chart lives only in
+spells.py (STRONG_AGAINST / WEAK_AGAINST / NO_EFFECT_AGAINST plus
+spell_multiplier) — no other file hard-codes it. The ranked
+auto-pick: best = most damage (the spell's level bonus times the
+affinity); if the best is not learned yet it picks the second best,
+and so on down the ranking; it NEVER picks a spell that does 0
+damage against that enemy; if no learned spell does any damage, or
+no spell is learned yet, the witch fights with her wand — the wand
+is hardly used once many spells are known. The affinity multiplies
+the whole spell hit (client spells.spell_hit_damage, server
+arena_fight / arena_fight_npc — the server decides online damage,
+so the multiplier lives there too, in migration
+20261125234000_battle_spell_affinities.sql, which also drops the old
+random spell_pick). Creatures use the SAME spells the player uses
+(same names, cast lines and sounds). The witch herself has no
+element, so a creature's spell hits her at normal damage; the 9
+Phase 24 creatures have no element, so affinities are neutral
+against them. CHART CORRECTION (builder, Nov 25, 2026 — needs
+Makenna's confirmation): the draft listed Lightning in BOTH Wind's
+strong and weak lists, and Wind in BOTH Lightning's strong and weak
+lists — a multiplier cannot be both 2x and half. Resolved
+Pokemon-correct: wind vs lightning is half, lightning vs wind is
+2x, and the "scatters the storm" thematic link is dropped. Makenna
+can change any link in the chart.

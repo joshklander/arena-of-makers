@@ -319,8 +319,9 @@ def study_start(config, element, tier, timeout=15):
     time. Returns (data, error). data has study (with
     finish_at), the spell's name and level, and the fighter.
     Only a witch or warlock can learn spells; a tier needs
-    the tier below it learned first; one spell at a time, and
-    the cost is charged up front."""
+    the tier below it learned first; one spell at a time.
+    Learning costs no credits — it is time-based only
+    (Makenna, Nov 25, 2026)."""
     args = _session_args(config)
     args["p_element"] = element
     args["p_tier"] = tier

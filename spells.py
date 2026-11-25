@@ -9,6 +9,27 @@ is only backup if a spell does not work. Every spell starts at level
 1, and after all spells of all elements are learned a spell can keep
 being upgraded, one level at a time, to do more damage, forever.
 
+In a fight the game picks the best learned spell against the
+enemy on its own (Phase 39, Makenna Nov 25, 2026): Pokemon-style
+affinities — strong is double damage, weak is half, and two pairs
+do no damage at all (lightning against earth, earth against
+wind). The pick is a ranked fallback by most damage (spell level
+times the affinity), never a spell that does nothing, and the wand
+only when no learned spell does any damage. The chart lives in
+MAGICAL_CREATURES_DESIGN.md; the table itself is
+STRONG_AGAINST / WEAK_AGAINST / NO_EFFECT_AGAINST below, and no
+other file hard-codes it. The 12 magical creatures
+(Phase 39) each cast their own element's spell, the same spell
+the player learns — see creature_spell.
+
+She never picks which spell to learn (Phase 38b, Makenna Nov 25,
+2026): the study has one button, "Enter study", and the study picks
+the next spell at random from all the spells not yet learned, across
+all ten elements — never all of one element first. Within one
+element the tiers still go in order, common before uncommon and so
+on. When one spell finishes, the next random one starts on its own
+while the player is still in the study. One spell at a time, always.
+
 Learning acts like quests, NOT like repairs or upgrades: the clock
 only ticks while the player is in the study. Leave the study and the
 clock pauses, coming back resumes with the same time left — like
@@ -31,12 +52,11 @@ a missing "study" means nothing being learned. Never a direct
 read that crashes — that is Makenna's standing compatibility rule
 (Nov 18, 2026, the lesson of the Phase 25b and Phase 30 crashes).
 
-Costs and times below are a PROPOSAL for Makenna to tune: each
-tier costs twice the last and takes twice as long. Learning a
-spell costs its tier price; upgrading a learned spell one level
-costs the same tier price again and takes the same tier time.
-A tier can only be started once the tier below it in the same
-element is learned (level 1 or more) — common has no prerequisite.
+Times below are a PROPOSAL for Makenna to tune: each tier takes
+twice as long. Learning a spell costs NO credits at all — it is
+time-based only, not credit-based (Makenna, Nov 25, 2026). A tier
+can only be started once the tier below it in the same element is
+learned (level 1 or more) — common has no prerequisite.
 """
 
 import random
@@ -95,12 +115,6 @@ CAST_LINES = {
     "lightning": "I call the lightning, and the sky cracks open!",
 }
 
-# Learning cost in credits, by tier — PROPOSAL for Makenna to
-# tune. Each tier costs twice the last, starting at the same 25
-# credits a weapon level starts at.
-SPELL_COSTS = {"common": 25, "uncommon": 50, "rare": 100,
-               "epic": 200, "legendary": 400}
-
 # Learning time in minutes, by tier — PROPOSAL for Makenna to
 # tune. Each tier takes twice as long; legendary is the 4-hour
 # cap, never more, like every other timer in the game.
@@ -109,6 +123,81 @@ SPELL_MINUTES = {"common": 15, "uncommon": 30, "rare": 60,
 
 # The 4-hour cap, in seconds, like every other timer.
 STUDY_MAX_SECONDS = 4 * 3600
+
+# Elemental affinities (Phase 39, Makenna Nov 25, 2026): Pokemon-style
+# matchups. Our ten elements map to Pokemon types — fire→Fire,
+# water→Water, ice→Ice, wind→Flying, poison→Poison, light→Fairy,
+# shadow→Ghost, dark→Dark, earth→Ground, lightning→Electric — and
+# the chart below keeps Pokemon's links wherever they exist in our
+# set (researched Nov 25, 2026 from Pokemon's Scarlet/Violet and Go
+# charts). Where Pokemon has no link (Flying's targets are
+# Grass/Fighting/Bug, Fairy's are Fighting/Dragon — none of which
+# we have), a thematic link fills the gap, marked ~ in the design
+# doc. Strong is 2x damage, weak is half, neutral is normal.
+#
+# One correction to the first draft of the chart (Maren, Nov 25,
+# 2026): the draft listed Lightning in BOTH Wind's strong list and
+# Wind's weak list, and Wind in BOTH Lightning's strong and weak
+# lists — a multiplier cannot be both 2x and half at once. Pokemon
+# is unambiguous here — Electric is super effective against Flying
+# and Flying is not very effective against Electric — so the
+# Pokemon reading wins: wind is WEAK against lightning (half),
+# lightning is STRONG against wind (2x), and the "scatters the
+# storm" thematic link is dropped. Makenna can still change any
+# link; the chart lives in MAGICAL_CREATURES_DESIGN.md.
+STRONG_AGAINST = {
+    "fire": ("ice", "light"),
+    "water": ("fire", "earth"),
+    "ice": ("earth", "wind"),
+    "wind": ("poison",),
+    "poison": ("light", "water"),
+    "light": ("dark",),
+    "shadow": ("shadow", "ice"),
+    "dark": ("shadow", "lightning"),
+    "earth": ("fire", "lightning", "poison"),
+    "lightning": ("water", "wind"),
+}
+
+WEAK_AGAINST = {
+    "fire": ("water", "earth"),
+    "water": ("lightning", "poison"),
+    "ice": ("fire", "shadow"),
+    "wind": ("ice", "lightning"),
+    "poison": ("earth", "wind"),
+    "light": ("poison", "fire"),
+    "shadow": ("dark", "shadow"),
+    "dark": ("light",),
+    "earth": ("water", "ice"),
+    "lightning": ("dark",),
+}
+
+# No effect (0x): the two Pokemon immunities in our set —
+# Electric has no effect on Ground, Ground has no effect on
+# Flying. Checked FIRST in spell_multiplier, so they win over
+# the strong/weak lists (earth is strong against lightning, but
+# lightning does zero to earth, not half).
+NO_EFFECT_AGAINST = {
+    "lightning": ("earth",),
+    "earth": ("wind",),
+}
+
+
+def spell_multiplier(element, enemy_element):
+    """Damage multiplier for a spell of one element hitting an
+    enemy of another: 2 for strong, 0.5 for weak, 0 for no
+    effect, 1 for everything else. An unknown element — or no
+    element at all, like the Scrap Rat and the 9 Phase 24
+    creatures — is neutral (1), never a crash (compatibility
+    rule)."""
+    element = element or ""
+    enemy_element = enemy_element or ""
+    if enemy_element in NO_EFFECT_AGAINST.get(element, ()):
+        return 0
+    if enemy_element in STRONG_AGAINST.get(element, ()):
+        return 2
+    if enemy_element in WEAK_AGAINST.get(element, ()):
+        return 0.5
+    return 1
 
 # A learned spell adds damage in a fight: +2 for every level
 # above 1. A level 1 spell is flavour only — it speaks its
@@ -351,12 +440,6 @@ def spell_name(element, tier):
         return None
 
 
-def spell_cost(tier):
-    """Credits to learn — or to upgrade one level of — a spell
-    of this tier. None for an unknown tier."""
-    return SPELL_COSTS.get(tier)
-
-
 def spell_minutes(tier):
     """Minutes to learn — or to upgrade one level of — a spell
     of this tier. None for an unknown tier."""
@@ -437,16 +520,68 @@ def spell_damage_bonus(level):
     return SPELL_DAMAGE_PER_LEVEL * max(0, int(level or 0) - 1)
 
 
-def pick_spell(fighter, rng=None):
-    """Pick one learned spell at random for a fight hit — every
-    learned spell has the same chance, whatever its level. None
-    when nothing is learned yet: the witch fights wand-only.
-    Returns (element, tier, name, level)."""
-    learned = learned_spells(fighter)
-    if not learned:
+def spell_hit_damage(base_hit, level, element, enemy_element):
+    """The damage of a hit cast with this spell: the base hit
+    (weapon damage plus the fight's own dice) plus the spell's
+    level bonus, times the affinity against the enemy's element
+    — double for strong, half for weak. The server mirrors this
+    exact formula in arena_fight / arena_fight_npc, so online
+    and offline fights agree. A 0x spell never reaches here:
+    pick_best_spell never picks one."""
+    mult = spell_multiplier(element, enemy_element)
+    return int(round(
+        (base_hit + spell_damage_bonus(level)) * mult))
+
+
+def pick_best_spell(fighter, enemy_element=None):
+    """Pick the best learned spell for a fight hit against an
+    enemy of this element (Phase 39, Makenna Nov 25, 2026): a
+    ranked fallback, not a random pick. Best means the most
+    damage it would do — the spell's level times its affinity
+    against that enemy — so a 2x spell at a lower level can
+    still lose to a high-level neutral one. If the best spell
+    is not learned yet, the second best is picked, and so on
+    down the ranking. A spell that does no damage against this
+    enemy (0x) is never picked. Ties go to the stronger
+    affinity, then the higher level, then the earlier element
+    in ELEMENTS order, so the pick is always the same for the
+    same spells — no dice, no surprise. Returns (element,
+    tier, name, level), or None when nothing is learned yet or
+    nothing learned does any damage: the witch fights
+    wand-only then. Once she knows a lot of spells, the wand
+    is hardly ever used."""
+    best = None
+    best_key = None
+    for index, (element, tier, name, level) in enumerate(
+            learned_spells(fighter)):
+        mult = spell_multiplier(element, enemy_element)
+        if mult <= 0:
+            continue
+        key = (level * mult, mult, level, -index)
+        if best_key is None or key > best_key:
+            best = (element, tier, name, level)
+            best_key = key
+    return best
+
+
+def creature_spell(element, tier="common"):
+    """The spell a creature of this element casts (Phase 39):
+    its own element's spell — the same name, cast line and
+    sound as the spell the player learns, so a fire creature
+    sounds like fire. Returns (element, tier, name), or None
+    for an unknown element. The tier is common for now: the
+    cast lines and sounds are per element, not per tier, so
+    the tier changes nothing the player hears — the rule for
+    which tier a creature casts at as it levels up is still
+    open for Makenna (see MAGICAL_CREATURES_DESIGN.md). The
+    witch herself has no element, so a creature's spell hits
+    her at normal damage — affinities are spell against
+    creature-element, never against the player."""
+    if element not in ELEMENTS:
         return None
-    rng = rng or random
-    return rng.choice(learned)
+    if tier not in TIERS:
+        tier = "common"
+    return (element, tier, spell_name(element, tier))
 
 
 def tier_index(tier):
@@ -479,6 +614,47 @@ def next_spell_for_element(fighter, element):
         if best is None or level < best[2]:
             best = (tier, spell_name(element, tier), level, True)
     return best
+
+
+def next_study_candidates(fighter):
+    """One next spell per element: the lowest tier not yet
+    learned there, or — when all five tiers of that element
+    are learned — the lowest-level learned spell, to upgrade
+    one level. Ten candidates, one per element, in element
+    order. The study picks from these at random (see
+    pick_next_study_spell), so no element is ever finished
+    before the others are started."""
+    out = []
+    for element in ELEMENTS:
+        nxt = next_spell_for_element(fighter, element)
+        if nxt is not None:
+            out.append((element,) + nxt)
+    return out
+
+
+def pick_next_study_spell(fighter, rng=None):
+    """The next spell the study teaches, picked at random
+    (Phase 38b, Makenna Nov 25, 2026): the player never
+    chooses. While any element still has a spell not yet
+    learned, the pick is at random among those first
+    learnings — so all 50 spells are learned in a random
+    order, never all of one element first. Once all 50 are
+    learned, the pick is at random among the ten upgrade
+    candidates, and learning goes on forever, one level at
+    a time. Within one element the tiers still go in order:
+    the candidate for an element is always its lowest
+    unlearned tier, never a higher one. Returns (element,
+    tier, name, level_now, is_upgrade), or None when there
+    is nothing to learn — which never happens for a witch,
+    since upgrades never run out. Pass a seeded rng in
+    tests, so the pick is deterministic there."""
+    candidates = next_study_candidates(fighter)
+    if not candidates:
+        return None
+    learnings = [c for c in candidates if not c[4]]
+    pool = learnings if learnings else candidates
+    rng = rng or random
+    return rng.choice(pool)
 
 
 def can_learn(fighter, element, tier):
@@ -563,43 +739,6 @@ def study_is_learning(fighter):
     if not study:
         return False
     return not study.get("paused")
-
-
-def study_spell_line(fighter, element, now=None):
-    """One Study-tab line for one element: the next spell to
-    learn or upgrade there, with its cost and time, and
-    "(press Enter)" when it can be started — or, when this
-    element's spell is the one being learned now, how long is
-    left on it. One line per element, so the player never has
-    to arrow through all 50 spells to find the next one."""
-    import time
-    if now is None:
-        now = time.time()
-    label = element.capitalize()
-    study = study_of(fighter)
-    if study and study.get("element") == element:
-        name = study.get("name") or spell_name(
-            element, study.get("tier")) or "a spell"
-        if study.get("paused"):
-            remaining = study.get("remaining_seconds") or 0
-            return ("%s: learning %s — paused, %s left "
-                    "(press Enter)"
-                    % (label, name, _format_time(remaining)))
-        remaining = max(0.0, (study.get("finish_at") or 0) - now)
-        return "%s: learning %s, %s left." % (
-            label, name, _format_time(remaining))
-    nxt = next_spell_for_element(fighter, element)
-    if nxt is None:
-        return "%s: I do not know that spell." % label
-    tier, name, level_now, is_upgrade = nxt
-    cost = spell_cost(tier)
-    minutes = spell_minutes(tier)
-    if is_upgrade:
-        return ("%s: upgrade %s to level %d, %s, %d credits, "
-                "%d minutes (press Enter)"
-                % (label, name, level_now + 1, tier, cost, minutes))
-    return "%s: learn %s, %s, %d credits, %d minutes (press Enter)" % (
-        label, name, tier, cost, minutes)
 
 
 def study_ambience(fighter):

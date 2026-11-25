@@ -17,10 +17,13 @@ does something once; Shift plus the same letter starts the idle loop.
     S         start or stop quests (hangout, More tab)
     1 / 2     choose a free gift upgrade: weapon or armor (More tab)
 
-Study tab: arrow to a spell and press Enter to learn it, or press
-S to start or stop study quests. Learning a spell takes real time,
-like a quest: the clock only ticks while you are in the study, and
-pauses when you leave.
+Study tab: one button, "Enter study". Pressing it starts the
+study: the music plays, spell learning starts on its own with
+a spell picked at random, and study quests trigger on their
+own. Spells are learned one at a time, never all of one
+element first. Press S to stop study quests. Learning a spell
+takes real time, like a quest: the clock only ticks while you
+are in the study, and pauses when you leave.
 
 Stats live on the Home tab, in the same list as the fighter
 status: move with the arrow keys, press Enter on a stat to
@@ -466,7 +469,7 @@ class MainFrame(wx.Frame):
         "Combat": "Combat. Fight one creature, or let idle fighting keep going.",
         "Shop": "Shop. Upgrade your weapon, armor and healing, or buy as many levels as you can afford. Upgrades take time, capped at 4 hours.",
         "More": "More. Hangout, repairs, and quests.",
-        "Study": "Study. Learn elemental spells and take quests from other witches and warlocks. Learning only ticks while you are here.",
+        "Study": "Study. Press Enter study to learn spells and take quests from other witches and warlocks. Learning only ticks while you are here.",
         "Settings": "Settings. Voice, sound effects, and volume.",
     }
 
@@ -517,14 +520,14 @@ class MainFrame(wx.Frame):
         self._quest_rep = {}
         self._quest_gift_pending = None
         self._quest_last_progress_at = 0.0
-        # The study (Phase 38): _in_study is True while the
-        # player is on the Study tab. Learning only ticks while
-        # in the study — leaving the tab freezes the remaining
-        # time on the server, coming back resumes it.
-        # _study_quest_active is True from Start until Stop for
-        # the study quest loop, which shares the hangout's board
-        # and active quest (a quest is a quest). The first study
-        # quest starts at once; after one ends, the next is
+        # The study (Phase 38, auto-study in Phase 38b): _in_study
+        # is True while the player is on the Study tab. Learning
+        # only ticks while in the study — leaving the tab freezes
+        # the remaining time on the server, coming back resumes
+        # it. _study_quest_active is True from Enter study until
+        # Stop for the study quest loop, which shares the hangout's
+        # board and active quest (a quest is a quest). The first
+        # study quest starts at once; after one ends, the next is
         # dealt 10 to 15 minutes later, so there is time to
         # study in between.
         self._in_study = False
@@ -838,25 +841,25 @@ class MainFrame(wx.Frame):
             ]
             return items
         if tab == "Study":
-            # The study (Phase 38): one line per element — the
-            # next spell to learn or upgrade there — plus the
-            # study status and the study quest loop. Learning is
-            # witch-only; study quests are open to everyone,
-            # robot, chef and witch alike.
+            # The study (Phase 38b, Makenna Nov 25, 2026): one
+            # button, "Enter study" — the player never picks a
+            # spell. Entering starts the music, starts learning
+            # a spell picked at random, and starts study quests
+            # on their own. Learning is witch-only; study quests
+            # are open to everyone, robot, chef and witch alike.
             items = [spells.study_status_line(fighter)]
-            kind = fighter.get("kind", "robot")
-            if kind != "witch":
+            if (spells.study_is_learning(fighter)
+                    or self._study_quest_active):
+                items.append("Studying in the study (press Enter)")
+            else:
+                items.append("Enter study (press Enter)")
+            if fighter.get("kind", "robot") != "witch":
                 items.append(
                     "Only a witch or warlock can learn spells in "
                     "the study — but study quests are open to "
                     "everyone.")
-            else:
-                for element in spells.ELEMENTS:
-                    items.append(spells.study_spell_line(fighter, element))
             if self._study_quest_active:
                 items.append("Stop study quests (press S)")
-            else:
-                items.append("Start study quests (press S)")
             items.append("Hear my quests")
             return items
         if tab == "Settings":
@@ -1116,9 +1119,10 @@ class MainFrame(wx.Frame):
         engine speaks that line in the player's voice instead
         (Phase 27), so the game never goes silent — the giver's
         name stays in the spoken text. Narration entries are
-        (text, voice) pairs, so a giver's line queued behind a
-        fight is still spoken in the giver's voice when its
-        turn comes."""
+        (text, voice, sound) triples, so a giver's line queued
+        behind a fight is still spoken in the giver's voice
+        when its turn comes; sound is the magic-sound key for
+        a creature's special (Phase 39), else None."""
         text = (text or "").strip()
         if not text:
             return
@@ -1126,7 +1130,7 @@ class MainFrame(wx.Frame):
             self.message_line.SetLabel(text)
             return
         if self._narration_busy():
-            self._narration_queue.append((text, voice_name))
+            self._narration_queue.append((text, voice_name, None))
             return
         self.message_line.SetLabel(text)
         self._cancel_narration()
@@ -1148,7 +1152,8 @@ class MainFrame(wx.Frame):
         if not self.voice.speak(text):
             self._narration_waiting = False
 
-    def announce_sequence(self, lines, pause_seconds=TURN_PAUSE_SECONDS):
+    def announce_sequence(self, lines, pause_seconds=TURN_PAUSE_SECONDS,
+                            line_sounds=None):
         """Speak lines one at a time, in order, with a short pause
         between them. This is how a fight is narrated turn by
         turn, manual or idle: the first line is spoken now, and
@@ -1157,15 +1162,26 @@ class MainFrame(wx.Frame):
         has finished the current one. The Combat text log
         already holds every line, so the log and the voice tell
         the same story. With no voice, only the last line is
-        shown, as before."""
-        lines = [line for line in (lines or []) if (line or "").strip()]
-        if not lines:
+        shown, as before. line_sounds (Phase 39) is a dict of
+        line index -> magic-sound key for the rounds a
+        creature's special fired, from the fight result's
+        "creature_magic"; those lines play the magic sound
+        instead of whatever the words alone would pick."""
+        # Keep the fight result's own line numbers: the magic
+        # keys are indexed by them, so filter blank lines only
+        # after pairing each line with its original index.
+        kept = [(index, line) for index, line in enumerate(lines or [])
+                if (line or "").strip()]
+        if not kept:
             return
         if self.voice is None:
-            self.message_line.SetLabel(lines[-1])
+            self.message_line.SetLabel(kept[-1][1])
             return
         self._cancel_narration()
-        self._narration_queue = [(line, None) for line in lines]
+        sounds = line_sounds or {}
+        self._narration_queue = [
+            (line, None, sounds.get(index))
+            for index, line in kept]
         self._narration_pause = pause_seconds
         self._narration_next_at = 0.0
         self._speak_next_narration()
@@ -1176,8 +1192,8 @@ class MainFrame(wx.Frame):
         line is currently sounding."""
         if not self._narration_queue or self.voice is None:
             return
-        line, voice_name = self._narration_queue.pop(0)
-        self._play_sound_for_line(line)
+        line, voice_name, sound_key = self._narration_queue.pop(0)
+        self._play_sound_for_line(line, sound_key)
         self.message_line.SetLabel(line)
         self._narration_waiting = True
         if voice_name:
@@ -1227,7 +1243,7 @@ class MainFrame(wx.Frame):
             return
         self._speak_next_narration()
 
-    def _play_sound_for_line(self, line):
+    def _play_sound_for_line(self, line, sound_key=None):
         """The sound effect for one narration line, or nothing
         when sounds are off or the file is missing. Robot and
         chef fighters hear different sounds for the same hit.
@@ -1237,8 +1253,21 @@ class MainFrame(wx.Frame):
         NPC appears or hits, its own sounds play; Scrap Rat
         keeps the fighter-kind sounds it always had. A
         missing creature sound simply plays nothing — the
-        fight never stops for a sound file."""
+        fight never stops for a sound file. sound_key
+        (Phase 39) is the fight's own say-so for this line:
+        when the creature's special fired, it names the magic
+        sound ("spell_<element>" or the warlock's own file),
+        and that plays instead of whatever the words alone
+        would pick — the magic IS that round's sound."""
         if not self.sound_on:
+            return
+        if sound_key:
+            # A magic round: the creature's special fired, so
+            # its magic sound plays and nothing else does.
+            # The fighter's spell-pending flag is untouched —
+            # a magic line is never the fighter's own cast or
+            # hit, so the flag is already clear by now.
+            self.sounds.play_magic_sound(sound_key)
             return
         kind = self.fighter.get("kind", "robot")
         cast_element = spells.element_for_cast_line(line)
@@ -1540,7 +1569,19 @@ class MainFrame(wx.Frame):
                 self.fighter, rng=self.random,
                 npc_id=npc_id or "scrap_rat")
         self.log(result["lines"])
-        self.announce_sequence(result["lines"])
+        # The rounds the creature's special fired (Phase 39):
+        # line index -> magic-sound key. The server sends the
+        # keys as text (JSON object keys are always text); the
+        # offline fight uses plain ints. Normalise to ints so
+        # announce_sequence can match them to the lines.
+        magic = result.get("creature_magic") or {}
+        line_sounds = {}
+        for key, value in magic.items():
+            try:
+                line_sounds[int(key)] = value
+            except (TypeError, ValueError):
+                continue
+        self.announce_sequence(result["lines"], line_sounds=line_sounds)
         self.refresh_all()
 
     def toggle_keep_signed_in(self):
@@ -2065,15 +2106,18 @@ class MainFrame(wx.Frame):
     # -- the study (Phase 38) ----------------------------------------
 
     def start_study_quests(self):
-        """Press Start in the study: quests from the witch
+        """Start the study quest loop: quests from the witch
         givers (Hazel, Rowan, Wren, Bram) run in the study
         loop, one after another, while you stay in the study.
-        The first quest starts at once; after one ends, the
-        next is dealt 10 to 15 minutes later, so there is time
-        to study in between. Study quests share the hangout's
-        board and active quest — a quest is a quest — and are
-        open to every fighter kind, robot, chef and witch
-        alike. The study music plays while the loop runs."""
+        Called on its own by Enter study (Phase 38b) — the
+        player never presses Start any more; entering the
+        study starts the quests. The first quest starts at
+        once; after one ends, the next is dealt 10 to 15
+        minutes later, so there is time to study in between.
+        Study quests share the hangout's board and active
+        quest — a quest is a quest — and are open to every
+        fighter kind, robot, chef and witch alike. The study
+        music plays while the loop runs."""
         if not self._in_study:
             self.announce(
                 "Go to the study first. It is its own tab, after More.")
@@ -2193,76 +2237,79 @@ class MainFrame(wx.Frame):
                     game_logic.repair_left_seconds(self.fighter)))
         self._study_last_progress_at = now
 
-    def do_start_study(self, element):
+    def do_start_study(self, element, auto=False):
         """Learn — or upgrade one level of — the next spell for
-        one element. The cost is paid up front, so the game asks
-        first and says the cost, the time, and the study rule:
-        the clock only ticks while you are in the study. A
-        paused spell is picked up again free, with the same
-        time left. One spell at a time: a spell already being
-        learned blocks any other. Only a witch or warlock can
-        learn spells; study quests are open to everyone."""
+        one element. Learning costs NO credits at all — it is
+        time-based only, not credit-based (Makenna, Nov 25,
+        2026) — so the game asks first and says the time and
+        the study rule: the clock only ticks while you are in
+        the study. A paused spell is picked up again, with the
+        same time left. One spell at a time: a spell already
+        being learned blocks any other. Only a witch or warlock
+        can learn spells; study quests are open to everyone.
+        auto=True is the study picking the next spell on its own
+        after one finishes (Phase 38b): no second question,
+        because entering the study already said yes to learning
+        one spell at a time, in a random order, while staying
+        here — the start is still announced, with the trainer's
+        line and the server's line naming the spell."""
         fighter = self.fighter
         if fighter.get("kind", "robot") != "witch":
             self.announce(
                 "Only a witch or warlock can learn spells in the study.")
-            return
+            return False
         if not self.online_config:
             self.announce(
                 "Learning spells needs the server, and I am not "
                 "signed in right now.")
-            return
+            return False
         nxt = spells.next_spell_for_element(fighter, element)
         if nxt is None:
             self.announce("I do not know that spell.")
-            return
+            return False
         tier, name, level_now, is_upgrade = nxt
         study = spells.study_of(fighter)
         if study and (study.get("element"), study.get("tier")) != (element, tier):
             self.announce(
                 "I am already learning %s. Finish it first, in the study."
                 % (study.get("name") or "a spell"))
-            return
+            return False
         if study and not study.get("paused"):
             # Already learning this very spell: say where it stands.
             self.announce(spells.study_status_line(fighter))
-            return
+            return False
         resume = bool(study and study.get("paused"))
-        if not resume:
+        if not resume and not auto:
             ok, reason = spells.can_learn(fighter, element, tier)
             if not ok:
                 self.announce(reason)
-                return
-            cost = spells.spell_cost(tier)
+                return False
             minutes = spells.spell_minutes(tier)
-            credits = game_logic.credits_of(fighter)
-            if cost > credits:
-                self.announce(
-                    "Learning %s costs %d credits and I have %d credits."
-                    % (name, cost, credits))
-                return
             if is_upgrade:
                 what = "Upgrade %s to level %d" % (name, level_now + 1)
             else:
                 what = "Learn %s" % name
             question = (
-                "%s? It costs %d credits and takes %d minutes. I have "
-                "%d credits. The clock only ticks while I am in the "
-                "study — leaving pauses it, coming back picks it up "
-                "where I left off. Do you want to do it?"
-                % (what, cost, minutes, credits))
+                "%s? It takes %d minutes, and it costs no credits — "
+                "learning is time-based only. The clock only ticks "
+                "while I am in the study — leaving pauses it, coming "
+                "back picks it up where I left off. Once this one is "
+                "learned, the study will pick the next spell on its "
+                "own, one at a time, in a random order, while I stay "
+                "here. Do you want to do it?"
+                % (what, minutes))
             if not self._confirm(question):
                 self.announce("I keep studying what I have.")
-                return
-        # A resume costs nothing and keeps the same time left;
-        # a fresh start pays the tier price up front. The server
+                return False
+        # A resume keeps the same time left, and a fresh start
+        # costs nothing — learning is time-based only. The server
         # decides either way, and sends the study back.
         data, error = online_save.study_start(
             self.online_config, element, tier)
         if error:
             self.announce(error)
             self.refresh_all()
-            return
+            return False
         if data.get("fighter"):
             self.use_server_fighter(data["fighter"])
         # The trainer teaches the spell, in their own voice,
@@ -2284,6 +2331,95 @@ class MainFrame(wx.Frame):
         self._refresh_music()
         self._refresh_ambience()
         self.refresh_all()
+        return True
+
+    def enter_study(self):
+        """The one study button (Phase 38b, Makenna Nov 25,
+        2026): the player never picks a spell. Pressing Enter
+        study starts the study — the music, a spell picked at
+        random, and study quests on their own. One spell at a
+        time, in a random order, never all of one element
+        first. A paused spell is picked up again, with the
+        same time left. Study quests are open to everyone, so
+        a robot or chef entering the study gets quests, just
+        no spell learning. Entering the study is the one yes:
+        the first spell asks once, with its time, and
+        after that the study keeps teaching on its own while
+        the player stays here. Leaving the tab pauses the
+        learning clock and stops the quest loop, as before."""
+        if not self.online_config:
+            self.announce(
+                "The study needs the server, and I am not signed "
+                "in right now.")
+            return
+        fighter = self.fighter
+        if fighter.get("kind", "robot") != "witch":
+            if not self._study_quest_active:
+                self.start_study_quests()
+            self.announce(
+                "Only a witch or warlock can learn spells in the "
+                "study — but the study quests are open to "
+                "everyone, so I will do those.")
+            return
+        study = spells.study_of(fighter)
+        if study and not study.get("paused"):
+            # Already learning: say where it stands, and make
+            # sure the quests are running too.
+            if not self._study_quest_active:
+                self.start_study_quests()
+            self.announce(spells.study_status_line(fighter))
+            return
+        if study and study.get("paused"):
+            # Pick up the paused spell again, free, with the
+            # same time left — then start the quests, when the
+            # pick-up worked.
+            if self.do_start_study(study.get("element")):
+                if not self._study_quest_active:
+                    self.start_study_quests()
+            return
+        pick = spells.pick_next_study_spell(fighter, rng=self.random)
+        if pick is None:
+            if not self._study_quest_active:
+                self.start_study_quests()
+            self.announce(
+                "I have learned every spell there is to learn.")
+            return
+        element = pick[0]
+        # Saying no to the one question stops the whole enter:
+        # no spell, no quests, no music — the player stays out
+        # of the study until they press Enter study again.
+        if not self.do_start_study(element):
+            return
+        if not self._study_quest_active:
+            self.start_study_quests()
+
+    def _auto_start_next_study(self):
+        """After a spell finishes, the study picks the next one
+        on its own (Phase 38b) — one at a time, in a random
+        order — while the player is still in the study. No
+        second question: entering the study already said yes.
+        The start is still announced, with the trainer's line
+        and the server's line naming the spell. Learning costs
+        no credits, so nothing ever stops it for money — it
+        keeps going while the player stays here."""
+        if not self._in_study:
+            return
+        if self.fighter.get("kind", "robot") != "witch":
+            return
+        if not self.online_config:
+            return
+        if spells.study_of(self.fighter) is not None:
+            # Something is already being learned — one at a
+            # time, always — so there is nothing to start.
+            return
+        pick = spells.pick_next_study_spell(
+            self.fighter, rng=self.random)
+        if pick is None:
+            return
+        element, _tier, _name, _level_now, _is_upgrade = pick
+        # No credit check: learning costs no credits at all,
+        # it is time-based only (Makenna, Nov 25, 2026).
+        self.do_start_study(element, auto=True)
 
     def _pause_study(self):
         """Freeze the spell being learned, on the server, so its
@@ -2339,6 +2475,11 @@ class MainFrame(wx.Frame):
         self._refresh_music()
         self._refresh_ambience()
         self.refresh_all()
+        # Phase 38b: the study picks the next spell on its own
+        # while the player is still here — one at a time, in a
+        # random order — so learning never stalls on a finished
+        # spell. Leaving the study pauses it instead.
+        self._auto_start_next_study()
 
     def choose_quest_gift(self, slot):
         """Take a free gift upgrade from a quest giver (Friend
@@ -2856,8 +2997,10 @@ class MainFrame(wx.Frame):
                 self.announce("You do not have an account yet.")
         elif tab == "More" and item.startswith("Online"):
             self.announce(self.online_status)
-        elif tab == "Study" and item.startswith("Start study quests"):
-            self.start_study_quests()
+        elif tab == "Study" and item.startswith("Enter study"):
+            self.enter_study()
+        elif tab == "Study" and item.startswith("Studying in the study"):
+            self.announce(spells.study_status_line(fighter))
         elif tab == "Study" and item.startswith("Stop study quests"):
             self.stop_study_quests()
         elif tab == "Study" and item.startswith("Hear my quests"):
@@ -2866,16 +3009,6 @@ class MainFrame(wx.Frame):
             self.announce(item)
         elif tab == "Study" and item.startswith("Only a witch"):
             self.announce(item)
-        elif tab == "Study" and item.endswith("(press Enter)"):
-            # A spell line: the element is the word before the
-            # colon — "Fire: learn Ember Spark..." — and Enter
-            # learns it, or picks up the same paused spell.
-            for element in spells.ELEMENTS:
-                if item.startswith(element.capitalize() + ":"):
-                    self.do_start_study(element)
-                    break
-        elif tab == "Study" and "learning" in item:
-            self.announce(spells.study_status_line(fighter))
         elif tab == "Settings" and item.startswith("Voice:"):
             gender = "female" if self.fighter.get("gender", "male") == "male" else "male"
             if self.online_config:
@@ -3090,7 +3223,12 @@ class MainFrame(wx.Frame):
                 if self._study_quest_active:
                     self.stop_study_quests()
                 else:
-                    self.start_study_quests()
+                    # Quests start on their own when you enter
+                    # the study (Phase 38b) — there is no Start
+                    # any more. Pressing Enter study starts them.
+                    self.announce(
+                        "Study quests start on their own when I "
+                        "enter the study.")
                 return
         event.Skip()
 

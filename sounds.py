@@ -67,6 +67,45 @@ SOUND_FILES = {
     "npc_zap_fox_hit": ("npc_zap_fox_hit.ogg", None),
     "npc_ember_owl_appear": ("npc_ember_owl_appear.ogg", None),
     "npc_ember_owl_hit": ("npc_ember_owl_hit.ogg", None),
+    # The 12 magical creatures (Phase 39): each keeps its own
+    # appear and hit sounds from MAGICAL_CREATURES_DESIGN.md
+    # (Kenney CC0, from the packs already downloaded for
+    # Phase 38). Their magic is NOT a separate file — an
+    # elemental's magic IS its own element's spell sound
+    # (spell_<element>.ogg, already in the game, see
+    # play_magic_sound), and the Rival Witch's magic is a
+    # random spell sound each cast — so no npc_*_magic
+    # entries for them. Only the Rival Warlock has his own
+    # magic file (his curse sound, Sci-fi spaceEngineLow_002,
+    # 5.00 s, so it plays only its first 2 seconds like the
+    # other 5-second files). These 25 files go up via the
+    # GitHub website like Phase 38's; until they are there a
+    # creature with a missing file simply plays no sound.
+    "npc_ember_sprite_appear": ("npc_ember_sprite_appear.ogg", 2000),
+    "npc_ember_sprite_hit": ("npc_ember_sprite_hit.ogg", None),
+    "npc_tide_wisp_appear": ("npc_tide_wisp_appear.ogg", 2000),
+    "npc_tide_wisp_hit": ("npc_tide_wisp_hit.ogg", None),
+    "npc_frost_faerie_appear": ("npc_frost_faerie_appear.ogg", None),
+    "npc_frost_faerie_hit": ("npc_frost_faerie_hit.ogg", None),
+    "npc_gale_sylph_appear": ("npc_gale_sylph_appear.ogg", 2000),
+    "npc_gale_sylph_hit": ("npc_gale_sylph_hit.ogg", None),
+    "npc_bog_toad_appear": ("npc_bog_toad_appear.ogg", None),
+    "npc_bog_toad_hit": ("npc_bog_toad_hit.ogg", None),
+    "npc_dawn_moth_appear": ("npc_dawn_moth_appear.ogg", None),
+    "npc_dawn_moth_hit": ("npc_dawn_moth_hit.ogg", None),
+    "npc_shade_stalker_appear": ("npc_shade_stalker_appear.ogg", 2000),
+    "npc_shade_stalker_hit": ("npc_shade_stalker_hit.ogg", None),
+    "npc_void_imp_appear": ("npc_void_imp_appear.ogg", None),
+    "npc_void_imp_hit": ("npc_void_imp_hit.ogg", None),
+    "npc_pebble_golem_appear": ("npc_pebble_golem_appear.ogg", None),
+    "npc_pebble_golem_hit": ("npc_pebble_golem_hit.ogg", None),
+    "npc_storm_roc_appear": ("npc_storm_roc_appear.ogg", None),
+    "npc_storm_roc_hit": ("npc_storm_roc_hit.ogg", None),
+    "npc_rival_witch_appear": ("npc_rival_witch_appear.ogg", None),
+    "npc_rival_witch_hit": ("npc_rival_witch_hit.ogg", None),
+    "npc_rival_warlock_appear": ("npc_rival_warlock_appear.ogg", None),
+    "npc_rival_warlock_hit": ("npc_rival_warlock_hit.ogg", None),
+    "npc_rival_warlock_magic": ("npc_rival_warlock_magic.ogg", 2000),
     # Witch sounds (Phase 38): one cast sound per element, the
     # wand's own swish for melee hits, the study music track,
     # and the three new quest ambience loops (brewing, storm,
@@ -307,6 +346,21 @@ class SoundBank:
                            "lightning"):
             return False
         return self.play("spell_" + element)
+
+    def play_magic_sound(self, sound_key):
+        """A creature's magic sound, by the sound key the fight
+        carries (Phase 39): "spell_<element>" plays that
+        element's cast sound — an elemental's magic IS its own
+        spell sound, and the Rival Witch's magic is a random
+        one — while any other key (the Rival Warlock's
+        "npc_rival_warlock_magic") plays that file directly.
+        Returns False for an unknown key or a missing file —
+        the fight never stops for a sound."""
+        if not sound_key:
+            return False
+        if sound_key.startswith("spell_"):
+            return self.play_spell(sound_key[len("spell_"):])
+        return self.play(sound_key)
 
     def play_win(self):
         return self.play("win")

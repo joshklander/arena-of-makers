@@ -828,15 +828,12 @@ def main():
               and spells.cast_line(element).startswith("I ")
               and spells.cast_line(element).endswith("!")
               for element in spells.ELEMENTS))
-    check("spell costs double each tier",
-          [spells.spell_cost(tier) for tier in spells.TIERS]
-          == [25, 50, 100, 200, 400])
+    check("learning spells costs no credits at all",
+          not hasattr(spells, "spell_cost")
+          and not hasattr(spells, "SPELL_COSTS"))
     check("spell times double each tier",
           [spells.spell_minutes(tier) for tier in spells.TIERS]
           == [15, 30, 60, 120, 240])
-    check("learning all fifty spells once costs 7750 credits",
-          sum(spells.spell_cost(tier) for tier in spells.TIERS) * 10
-          == 7750)
     check("learning all fifty spells once takes 77 and a half hours",
           sum(spells.spell_minutes(tier) for tier in spells.TIERS) * 10
           == 4650)
@@ -877,7 +874,8 @@ def main():
 
     # Study learning, offline mirror: start, pause, resume,
     # finish, upgrade — and the blocks (kind, prerequisite,
-    # one spell at a time, broke).
+    # one spell at a time). Learning costs no credits, so being
+    # broke is never a block (Makenna, Nov 25, 2026).
     student = game_logic.new_fighter("Student", "witch", "female")
     student["credits"] = 500
     check("a new witch has no spells and no study",
@@ -897,11 +895,11 @@ def main():
               game_logic.study_start(
                   game_logic.new_fighter("Cook", "chef"),
                   "fire", "common") or ""))
-    check("learning starts when affordable",
+    check("learning starts",
           game_logic.study_start(student, "fire", "common",
                                  now=1000000.0) is None)
-    check("learning costs 25 credits up front",
-          student["credits"] == 475)
+    check("learning costs no credits",
+          student["credits"] == 500)
     check("the study records the spell and its finish",
           student["study"]["element"] == "fire"
           and student["study"]["tier"] == "common"
@@ -928,10 +926,10 @@ def main():
     check("a paused study never finishes",
           game_logic.finish_study_if_ready(student, now=1000000.0 + 100000)
           is None)
-    check("resuming the same spell is free",
+    check("resuming the same spell leaves credits alone",
           game_logic.study_start(student, "fire", "common",
                                  now=1000000.0 + 120) is None
-          and student["credits"] == 475)
+          and student["credits"] == 500)
     check("resuming keeps the same remaining time",
           student["study"]["finish_at"] == 1000000.0 + 120 + 840)
     line = game_logic.finish_study_if_ready(
@@ -945,19 +943,18 @@ def main():
           game_logic.study_start(student, "fire", "common",
                                  now=2000000.0) is None
           and student["study"]["level"] == 2
-          and student["credits"] == 450)
+          and student["credits"] == 500)
     line = game_logic.finish_study_if_ready(student, now=2000000.0 + 901)
     check("the upgrade finishes at level 2",
           line is not None and "My Ember Spark is now level 2." in line
           and student["spells"]["fire"]["common"] == 2)
     broke = game_logic.new_fighter("Broke", "witch", "female")
     broke["credits"] = 10
-    broke_error = game_logic.study_start(broke, "fire", "common",
-                                         now=1000000.0)
-    check("a broke witch cannot start learning",
-          broke_error is not None
-          and "25 credits" in broke_error
-          and "10 credits" in broke_error)
+    check("a broke witch can still start learning",
+          game_logic.study_start(broke, "fire", "common",
+                                 now=1000000.0) is None
+          and broke["credits"] == 10
+          and broke["study"]["name"] == "Ember Spark")
     # Spell trainers (Phase 38, Makenna Nov 25, 2026): learning
     # is taught by another warlock or witch, in the trainer's
     # own voice — Hazel for brewing, Rowan for storm, Wren for
@@ -1105,26 +1102,330 @@ def main():
           not any(line in spells.CAST_LINES.values()
                   for line in robot_fight["lines"]))
 
-    # The Study-tab lines: one per element, cost and time in
-    # plain words, and the learning/paused states.
-    check("the fire line offers Ember Spark for 25 credits, 15 minutes",
-          spells.study_spell_line(
-              game_logic.new_fighter("Lister", "witch", "female"), "fire")
-          == "Fire: learn Ember Spark, common, 25 credits, "
-             "15 minutes (press Enter)")
-    liner = game_logic.new_fighter("Liner", "witch", "female")
-    liner["credits"] = 500
-    game_logic.study_start(liner, "fire", "common", now=1000000.0)
-    check("the line for a learning spell says how long is left",
-          spells.study_spell_line(liner, "fire", now=1000000.0 + 60)
-          .startswith("Fire: learning Ember Spark,")
-          and "about 14 minutes" in spells.study_spell_line(
-              liner, "fire", now=1000000.0 + 60))
-    game_logic.study_pause(liner, now=1000000.0 + 60)
-    check("the line for a paused spell offers to pick it up",
-          "paused" in spells.study_spell_line(liner, "fire")
-          and spells.study_spell_line(liner, "fire").endswith(
-              "(press Enter)"))
+    # The auto-pick (Phase 38b, Makenna Nov 25, 2026): the
+    # player never chooses a spell. The study picks the next
+    # one at random from all the spells not yet learned,
+    # across all ten elements — never all of one element
+    # first — and within one element the tiers still go in
+    # order. Once all 50 are learned, the pick is an upgrade,
+    # picked at random the same way. A seeded pick is
+    # deterministic, so the tests can pin it exactly.
+    picker = game_logic.new_fighter("Picker", "witch", "female")
+    check("the auto-pick has one candidate per element",
+          len(spells.next_study_candidates(picker)) == 10
+          and [c[0] for c in spells.next_study_candidates(picker)]
+          == list(spells.ELEMENTS))
+    check("every candidate starts at its element's common spell",
+          all(c[1] == "common" and c[3] == 0 and c[4] is False
+              for c in spells.next_study_candidates(picker)))
+    check("a seeded pick is deterministic",
+          spells.pick_next_study_spell(picker, rng=random.Random(7))
+          == spells.pick_next_study_spell(picker, rng=random.Random(7)))
+    check("a seeded pick can be any element, not one element first",
+          spells.pick_next_study_spell(picker, rng=random.Random(7))[0]
+          == "light")
+    seen_elements = set()
+    for seed in range(50):
+        seen_elements.add(
+            spells.pick_next_study_spell(
+                picker, rng=random.Random(seed))[0])
+    check("the auto-pick spans all ten elements",
+          seen_elements == set(spells.ELEMENTS))
+    # Tier order within one element: with fire common learned,
+    # fire's candidate is uncommon, never rare or legendary —
+    # and the pick still never offers an upgrade while any
+    # first learning is left anywhere.
+    picker["spells"] = {"fire": {"common": 1}}
+    check("with common learned, the element's candidate is uncommon",
+          [c for c in spells.next_study_candidates(picker)
+           if c[0] == "fire"][0][1] == "uncommon")
+    check("no upgrade is picked while a first learning is left",
+          all(spells.pick_next_study_spell(
+                  picker, rng=random.Random(seed))[4] is False
+              for seed in range(50)))
+    picker["spells"] = {
+        element: {tier: 1 for tier in spells.TIERS}
+        for element in spells.ELEMENTS}
+    check("with all 50 learned, the pick is an upgrade",
+          spells.pick_next_study_spell(
+              picker, rng=random.Random(7))[4] is True)
+    check("with all 50 learned, the upgrade is the lowest level",
+          spells.pick_next_study_spell(
+              picker, rng=random.Random(7))[3] == 1)
+
+    # Battle spells and affinities (Phase 39, Makenna Nov 25,
+    # 2026): the Pokemon-style matchup chart, the ranked
+    # auto-pick, and the twelve magical creatures. The chart
+    # lives only in spells.py — nothing else hard-codes it.
+    check("water beats fire", spells.spell_multiplier("water", "fire") == 2)
+    check("fire is weak against water",
+          spells.spell_multiplier("fire", "water") == 0.5)
+    check("fire beats ice", spells.spell_multiplier("fire", "ice") == 2)
+    check("ice is weak against fire",
+          spells.spell_multiplier("ice", "fire") == 0.5)
+    check("earth beats fire, lightning and poison",
+          spells.spell_multiplier("earth", "fire") == 2
+          and spells.spell_multiplier("earth", "lightning") == 2
+          and spells.spell_multiplier("earth", "poison") == 2)
+    check("lightning does no damage to an earth creature",
+          spells.spell_multiplier("lightning", "earth") == 0)
+    check("earth does no damage to a wind creature",
+          spells.spell_multiplier("earth", "wind") == 0)
+    check("those are the only two no-damage pairs",
+          sum(1 for a in spells.ELEMENTS for b in spells.ELEMENTS
+              if spells.spell_multiplier(a, b) == 0) == 2)
+    check("wind is weak against lightning, lightning strong vs wind",
+          spells.spell_multiplier("wind", "lightning") == 0.5
+          and spells.spell_multiplier("lightning", "wind") == 2)
+    check("shadow beats itself, like Ghost in Pokemon",
+          spells.spell_multiplier("shadow", "shadow") == 2)
+    check("an element with no element is neutral",
+          spells.spell_multiplier("fire", None) == 1
+          and spells.spell_multiplier(None, "fire") == 1
+          and spells.spell_multiplier("fire", "arcane") == 1)
+    check("every element is strong against something",
+          all(spells.STRONG_AGAINST[element]
+              for element in spells.ELEMENTS))
+    check("every element is weak against something",
+          all(spells.WEAK_AGAINST[element]
+              for element in spells.ELEMENTS))
+    check("a strong link is a weak link the other way, "
+          "except the two no-damage pairs and shadow vs itself",
+          all(spells.spell_multiplier(b, a) == 0.5
+              for a in spells.ELEMENTS
+              for b in spells.STRONG_AGAINST[a]
+              if a != b and spells.spell_multiplier(b, a) != 0))
+
+    # The ranked pick: best = most damage (level bonus times
+    # affinity); it falls down the ranking when the best is not
+    # learned, never picks a 0x spell, and the wand is used
+    # when nothing learned does any damage.
+    check("a fresh witch picks no spell",
+          spells.pick_best_spell(
+              game_logic.new_fighter("Fresh", "witch", "female"),
+              "earth") is None)
+    check("a robot picks no spell",
+          spells.pick_best_spell(
+              game_logic.new_fighter("Rob", "robot"), "earth")
+          is None)
+    only_fire = game_logic.new_fighter("OnlyFire", "witch", "female")
+    only_fire["spells"] = {"fire": {"common": 1}}
+    check("one learned spell is picked, against ice",
+          spells.pick_best_spell(only_fire, "ice")[0] == "fire"
+          and spells.spell_multiplier("fire", "ice") == 2)
+    check("against the Scrap Rat the pick ranks by level alone",
+          spells.pick_best_spell(only_fire, None)[0] == "fire"
+          and spells.spell_multiplier("fire", None) == 1)
+    mixed = game_logic.new_fighter("Mixed", "witch", "female")
+    mixed["spells"] = {"fire": {"common": 1},
+                       "water": {"common": 5}}
+    check("a high-level neutral spell beats a low-level strong one",
+          spells.pick_best_spell(mixed, "ice")[0] == "water")
+    even = game_logic.new_fighter("Even", "witch", "female")
+    even["spells"] = {"fire": {"common": 1},
+                      "water": {"common": 1}}
+    check("against earth, water beats fire",
+          spells.pick_best_spell(even, "earth")[0] == "water")
+    tie = game_logic.new_fighter("Tie", "witch", "female")
+    tie["spells"] = {"fire": {"common": 1},
+                     "light": {"common": 2}}
+    check("fire level 1 at 2x ties light level 2 at 1x, fire wins",
+          spells.pick_best_spell(tie, "ice")[0] == "fire")
+    only_lightning = game_logic.new_fighter(
+        "OnlyLightning", "witch", "female")
+    only_lightning["spells"] = {"lightning": {"common": 5}}
+    check("a 0x spell is never picked, even at level 5",
+          spells.pick_best_spell(only_lightning, "earth") is None)
+    fallback = game_logic.new_fighter("Fallback", "witch", "female")
+    fallback["spells"] = {"lightning": {"common": 5},
+                          "fire": {"common": 1}}
+    check("with the best doing 0x, the second best is picked",
+          spells.pick_best_spell(fallback, "earth")[0] == "fire")
+    check("the pick is deterministic, no dice involved",
+          spells.pick_best_spell(mixed, "ice")
+          == spells.pick_best_spell(mixed, "ice"))
+    check("a creature casts its own element's spell",
+          spells.creature_spell("fire")
+          == ("fire", "common", "Ember Spark"))
+    check("a creature with no element casts nothing",
+          spells.creature_spell(None) is None)
+    check("a 2x hit does double",
+          spells.spell_hit_damage(11, 5, "water", "earth") == 38)
+    check("a half hit does half",
+          spells.spell_hit_damage(12, 5, "water", "lightning") == 10)
+    check("a level 1 strong hit is just the base, doubled",
+          spells.spell_hit_damage(11, 1, "fire", "ice") == 22)
+    check("a neutral hit is unchanged",
+          spells.spell_hit_damage(11, 5, "fire", "fire") == 19)
+
+    # The twelve magical creatures (Phase 39): one per element
+    # plus the two rivals, all at the fighter's own level.
+    check("the creature pool is 21, plus the Scrap Rat",
+          len(game_logic.NPCS) == 21
+          and len(game_logic.NPC_POOL) == 22)
+    new_ids = ["ember_sprite", "tide_wisp", "frost_faerie",
+               "gale_sylph", "bog_toad", "dawn_moth",
+               "shade_stalker", "void_imp", "pebble_golem",
+               "storm_roc", "rival_witch", "rival_warlock"]
+    check("all twelve magical creatures are in the pool",
+          all(npc_id in game_logic.NPCS for npc_id in new_ids))
+    check("each magical creature has its element",
+          all(game_logic.NPCS[npc_id].get("element")
+              == element
+              for npc_id, element in zip(
+                  new_ids,
+                  ["fire", "water", "ice", "wind", "poison",
+                   "light", "shadow", "dark", "earth",
+                   "lightning", "witch", "witch"])))
+    check("the nine Phase 24 creatures have no element",
+          all("element" not in game_logic.NPCS[npc_id]
+              or game_logic.NPCS[npc_id].get("element") is None
+              for npc_id in game_logic.NPCS
+              if npc_id not in new_ids))
+    check("every creature's stats add up to ten",
+          all(sum(npc["profile"].values()) == 10
+              for npc in game_logic.NPCS.values()))
+    check("random_spell is the only new ability",
+          game_logic.NPCS["rival_witch"]["ability"] == "random_spell"
+          and all(npc["ability"] in
+                  ("double_hit", "shield", "self_repair", "vanish",
+                   "flare", "sugar_trap", "shock", "dodge",
+                   "random_spell")
+                  for npc in game_logic.NPCS.values()))
+    check("an elemental's magic is its own element's spell sound",
+          all(game_logic.NPCS[npc_id].get("magic_sound")
+              == "spell:" + element
+              for npc_id, element in zip(
+                  new_ids[:10],
+                  ["fire", "water", "ice", "wind", "poison",
+                   "light", "shadow", "dark", "earth",
+                   "lightning"])))
+    check("the Rival Witch's magic is a random spell sound",
+          game_logic.NPCS["rival_witch"].get("magic_sound")
+          == "random_spell")
+    check("the Rival Warlock keeps his own curse sound",
+          game_logic.NPCS["rival_warlock"].get("magic_sound")
+          == "npc_rival_warlock_magic")
+    check("the Phase 24 creatures have no magic sound",
+          all("magic_sound" not in game_logic.NPCS[npc_id]
+              for npc_id in game_logic.NPCS
+              if npc_id not in new_ids))
+    check("a creature is at the fighter's own level",
+          game_logic.creature_for_level(5, "ember_sprite")["level"] == 5
+          and game_logic.creature_for_level(5, "ember_sprite")["hp"]
+          > game_logic.creature_for_level(1, "ember_sprite")["hp"]
+          and game_logic.creature_for_level(5, "ember_sprite")["damage"]
+          > game_logic.creature_for_level(1, "ember_sprite")["damage"])
+    check("the creature carries its element into the fight",
+          game_logic.creature_for_level(5, "ember_sprite")["element"]
+          == "fire"
+          and game_logic.creature_for_level(5, "zip_scout")["element"]
+          is None
+          and game_logic.creature_for_level(5, "scrap_rat").get("element")
+          is None)
+    check("the creature carries its magic sound into the fight",
+          game_logic.creature_for_level(5, "ember_sprite")["magic_sound"]
+          == "spell:fire"
+          and game_logic.creature_for_level(5, "zip_scout")[
+              "magic_sound"] is None)
+    seen_npcs = set()
+    for seed in range(200):
+        seen_npcs.add(game_logic.random_npc_id(random.Random(seed)))
+    check("the random pick can reach the new creatures",
+          "ember_sprite" in seen_npcs
+          and "rival_witch" in seen_npcs
+          and "rival_warlock" in seen_npcs)
+
+    # The 0x rule in a real fight: a witch who knows only
+    # lightning never casts against a Pebble Golem (earth) —
+    # the wand is used instead — and never casts lightning
+    # when she also knows a spell that does damage there.
+    bolt_only = game_logic.new_fighter("BoltOnly", "witch", "female")
+    bolt_only["level"] = 5
+    bolt_only["spells"] = {"lightning": {"common": 5}}
+    no_cast = True
+    for seed in range(20):
+        result = game_logic.fight(bolt_only, npc_id="pebble_golem",
+                                  rng=random.Random(seed))
+        if any(line in spells.CAST_LINES.values()
+               for line in result["lines"]):
+            no_cast = False
+    check("a 0x spell is never cast in a real fight", no_cast)
+    bolt_and_fire = game_logic.new_fighter(
+        "BoltAndFire", "witch", "female")
+    bolt_and_fire["level"] = 5
+    bolt_and_fire["spells"] = {"lightning": {"common": 5},
+                               "fire": {"common": 1}}
+    cast_elements = set()
+    for seed in range(20):
+        result = game_logic.fight(bolt_and_fire, npc_id="pebble_golem",
+                                  rng=random.Random(seed))
+        for line in result["lines"]:
+            element = spells.element_for_cast_line(line)
+            if element is not None:
+                cast_elements.add(element)
+    check("against earth only the spell that does damage is cast",
+          cast_elements == {"fire"})
+
+    # The creature_magic flag: the rounds a creature's special
+    # fired are marked with the sound to play, so the magic
+    # sounds like that creature's spell. The fights run at
+    # level 5: at level 1 the creature dies in two rounds,
+    # before any 3rd/4th-round special can fire.
+    def _level5_witch(name):
+        fighter = game_logic.new_fighter(name, "witch", "female")
+        fighter["level"] = 5
+        return fighter
+
+    ember_magic = {}
+    for seed in range(30):
+        result = game_logic.fight(
+            _level5_witch("EmberFight"),
+            npc_id="ember_sprite", rng=random.Random(seed))
+        ember_magic.update(result.get("creature_magic") or {})
+        if ember_magic:
+            break
+    check("an Ember Sprite's magic is its fire spell sound",
+          bool(ember_magic)
+          and all(key == "spell_fire"
+                  for key in ember_magic.values()))
+    check("the magic flag points at the creature's hit line",
+          bool(ember_magic)
+          and all("Ember Sprite" in result["lines"][int(index)]
+                  for index in ember_magic))
+    witch_magic = {}
+    for seed in range(30):
+        result = game_logic.fight(
+            _level5_witch("WitchFight"),
+            npc_id="rival_witch", rng=random.Random(seed))
+        witch_magic.update(result.get("creature_magic") or {})
+        if witch_magic:
+            break
+    check("the Rival Witch's magic is a spell sound",
+          bool(witch_magic)
+          and all(key.startswith("spell_")
+                  and key[6:] in spells.ELEMENTS
+                  for key in witch_magic.values()))
+    warlock_magic = {}
+    for seed in range(30):
+        result = game_logic.fight(
+            _level5_witch("WarlockFight"),
+            npc_id="rival_warlock", rng=random.Random(seed))
+        warlock_magic.update(result.get("creature_magic") or {})
+        if warlock_magic:
+            break
+    check("the Rival Warlock's magic is his curse sound",
+          bool(warlock_magic)
+          and all(key == "npc_rival_warlock_magic"
+                  for key in warlock_magic.values()))
+    zip_magic = {}
+    for seed in range(20):
+        result = game_logic.fight(
+            _level5_witch("ZipFight"),
+            npc_id="zip_scout", rng=random.Random(seed))
+        zip_magic.update(result.get("creature_magic") or {})
+    check("a Phase 24 creature has no magic sound",
+          zip_magic == {})
 
     # The givers and the board: ten givers, five male and five
     # female, and the Belle rule — every giver can be first.

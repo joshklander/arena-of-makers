@@ -591,6 +591,27 @@ def main_test():
           "Zip Scout" in frame.logs["Combat"].text)
     game_logic.random_npc_id = _real_random_npc
 
+    # Phase 39: fighting an Ember Sprite at level 5 reaches its
+    # 3rd-round flare (at level 1 the creature dies in two
+    # rounds, before the special can fire), and the flare round
+    # is narrated to the log. (The magic SOUND for that round is
+    # checked in narration_test, where a voice is on — this half
+    # of the tests runs the no-voice fallback, so no fight sounds
+    # play here at all.)
+    server["fighter"]["level"] = 5
+    server["fighter"]["hp"] = game_logic.fighter_max_hp(
+        server["fighter"])
+    fighter["hp"] = game_logic.fighter_max_hp(fighter)
+    frame.do_fight(npc_id="ember_sprite")
+    check("an Ember Sprite's flare round is narrated to the log",
+          "Ember Sprite bursts into flame!"
+          in frame.logs["Combat"].text)
+    server["fighter"]["level"] = 1
+    server["fighter"]["hp"] = game_logic.fighter_max_hp(
+        server["fighter"])
+    fighter["level"] = 1
+    fighter["hp"] = game_logic.fighter_max_hp(fighter)
+
     # Phase 24 (Makenna, Nov 18, 2026): the button says just
     # "Fight" — no creature name — and pressing it picks a
     # random creature each time, not always Scrap Rat.
@@ -1229,12 +1250,17 @@ def main_test():
     check("the second switch costs 100 credits",
           any("costs 100 credits" in item for item in settings_items))
 
-    # The study (Phase 38): the Study tab lists one spell per
-    # element, Enter learns it (asking first, since the cost
-    # is paid up front), leaving the tab pauses the study, and
-    # coming back picks it up free. The fighter is a witch by
-    # now (switched above), with 500 credits. The fake server
-    # runs the real study mirrors on its own copy.
+    # The study (Phase 38b, auto-study): the Study tab has one
+    # button, "Enter study" — the player never picks a spell.
+    # Entering starts the music, starts learning a spell
+    # picked at random, and starts study quests on their own.
+    # Spells are learned one at a time, and when one finishes
+    # the next random one starts on its own. Leaving the tab
+    # pauses the study, and coming back picks it up free. The
+    # fighter is a witch by now (switched above), with 500
+    # credits. The fake server runs the real study mirrors on
+    # its own copy. The random pick is seeded, so the test can
+    # pin it exactly: seed 7 picks Glow first, then Frost Bite.
     _online_save.study_start = _fake_study_start
     _online_save.study_pause = _fake_study_pause
     _online_save.study_complete = _fake_study_complete
@@ -1248,99 +1274,55 @@ def main_test():
     frame.refresh_list("Study")
     study_box = frame.lists["Study"]
     study_items = frame.list_items("Study")
-    check("the study lists one spell per element",
+    check("the study has one Enter study button, not a line per spell",
           sum(1 for item in study_items
-              if item.endswith("(press Enter)")) == 10)
-    check("the study list offers Ember Spark first",
-          any(item.startswith("Fire: learn Ember Spark, common, "
-                              "25 credits, 15 minutes")
-              for item in study_items))
+              if item.endswith("(press Enter)")) == 1
+          and any(item == "Enter study (press Enter)"
+                  for item in study_items))
     check("the study list says nothing is being learned yet",
           study_items[0] == "I am not learning a spell right now.")
     # Say no first: nothing changes and the server is not called.
     sys.modules["wx"].Dialog.modal_result = sys.modules["wx"].ID_NO
+    frame.random.seed(7)
     study_box.SetSelection(
         [i for i, item in enumerate(study_items)
-         if item.startswith("Fire:")][0])
+         if item.startswith("Enter study")][0])
     frame.activate_current()
-    check("saying no to learning changes nothing",
+    check("saying no to entering the study changes nothing",
           fighter.get("study") is None
-          and "study_start" not in server["calls"])
-    # Say yes: Ember Spark starts learning, 25 credits paid.
+          and "study_start" not in server["calls"]
+          and "new_study_quest" not in server["calls"]
+          and frame._study_quest_active is False)
+    # Say yes: the study picks Glow at random, free — learning
+    # costs no credits — and study quests start on their own —
+    # no Start button.
     sys.modules["wx"].Dialog.modal_result = sys.modules["wx"].ID_YES
+    frame.random.seed(7)
     frame.activate_current()
     sys.modules["wx"].Dialog.modal_result = 1  # back to ID_OK
-    check("learning went to the server",
+    check("entering the study went to the server",
           "study_start" in server["calls"])
-    check("learning costs 25 credits",
-          fighter["credits"] == 475)
-    check("the study records Ember Spark",
-          (fighter.get("study") or {}).get("name") == "Ember Spark")
-    check("the study list shows the learning line",
-          any(item.startswith("Fire: learning Ember Spark,")
+    check("entering the study costs no credits",
+          fighter["credits"] == 500)
+    check("the study records the randomly picked spell, Glow",
+          (fighter.get("study") or {}).get("name") == "Glow")
+    check("the study list shows it is studying",
+          any(item.startswith("Studying in the study")
               for item in frame.list_items("Study")))
     check("the study music plays while learning",
           frame.sounds.current_music_track == "study")
-    check("the study ambience is the brewing loop",
-          frame.sounds.current_ambience == "brewing")
-    # Leaving the Study tab pauses the study on the server.
-    frame.notebook.SetSelection(0)  # Home tab
-    frame.on_tab_changed(types.SimpleNamespace(Skip=lambda: None))
-    check("leaving the study pauses it on the server",
-          "study_pause" in server["calls"]
-          and (server["fighter"].get("study") or {}).get("paused") is True)
-    check("the study music stops when leaving",
-          frame.sounds.current_music_track is None)
-    # Coming back and pressing Enter on the paused line picks
-    # it up again, free, with the same time left.
-    frame.notebook.SetSelection(4)  # Study tab
-    frame.on_tab_changed(types.SimpleNamespace(Skip=lambda: None))
-    frame.refresh_list("Study")
-    study_items = frame.list_items("Study")
-    check("the paused line offers to pick it up",
-          any("paused" in item and item.endswith("(press Enter)")
-              for item in study_items))
-    study_box.SetSelection(
-        [i for i, item in enumerate(study_items)
-         if item.startswith("Fire:")][0])
-    frame.activate_current()
-    check("picking up a paused spell is free",
-          fighter["credits"] == 475)
-    check("the study is learning again",
-          (fighter.get("study") or {}).get("paused") is False)
-    # Move the finish time into the past, then the one-second
-    # timer completes the study: the spell is learned, and its
-    # own sound plays.
-    server["fighter"]["study"]["finish_at"] = time.time() - 1
-    fighter["study"]["finish_at"] = time.time() - 1
-    frame.on_tick(mock.MagicMock())
-    check("the study completes on the timer",
-          "study_complete" in server["calls"])
-    check("Ember Spark is learned at level 1",
-          (fighter.get("spells") or {}).get("fire", {}).get("common") == 1)
-    check("the spell's own sound plays when it is learned",
-          frame.sounds._sounds["spell_fire"].played >= 1)
-    check("learning is announced",
-          "I learned Ember Spark!" in frame.message_line.GetLabel())
-    # A cast line plays its elemental sound, and the hit line
-    # right after it stays quiet — the spell IS the hit, and
-    # the wand is only backup.
-    frame._play_sound_for_line(
-        "I call the fire, and it bursts from my wand!")
-    check("a cast line plays its elemental sound",
-          frame.sounds._sounds["spell_fire"].played >= 2)
-    wand_before = frame.sounds._sounds["wand_swish"].played
-    frame._play_sound_for_line("Round 1: I hit the Scrap Rat for 12.")
-    check("the hit after a cast stays quiet, no wand sound",
-          frame.sounds._sounds["wand_swish"].played == wand_before)
-    frame._play_sound_for_line("Round 2: I hit the Scrap Rat for 11.")
-    check("the next hit plays the wand sound again",
-          frame.sounds._sounds["wand_swish"].played == wand_before + 1)
-    # A study quest comes from a witch giver, and is dealt
-    # exactly once on the board — the server's answer already
-    # carries it, so adding it again would list it twice.
-    frame.start_study_quests()
-    check("study quests start",
+    # The quest's ambience replaces the study ambience while a
+    # quest runs (the decided layering, Nov 25, 2026): the
+    # seed-38 quest is "Brew the Calming Draught", brewing, so
+    # the loop is the brewing loop — not the moonlight loop of
+    # the Glow being learned. The moonlight loop is heard when
+    # no quest is running (see the stop check below). In
+    # Phase 38 quests did not auto-start on entering, so the
+    # moonlight loop was heard here; the 38b auto-start changed
+    # that, and this expectation was never updated.
+    check("the study ambience is the quest's loop while a quest runs",
+          frame.sounds.current_ambience == "ambience_brewing")
+    check("study quests start on their own when entering",
           frame._study_quest_active is True)
     check("a study quest comes from a witch giver",
           frame._quest_current is not None
@@ -1349,9 +1331,123 @@ def main_test():
     check("a dealt study quest is on the board exactly once",
           sum(1 for q in frame._quest_board
               if q.get("id") == frame._quest_current.get("id")) == 1)
+    # Pressing Enter study again while learning starts nothing
+    # new: one spell at a time, always.
+    study_starts = server["calls"].count("study_start")
+    frame.activate_current()  # still on the Studying line
+    check("entering again while learning starts no second spell",
+          server["calls"].count("study_start") == study_starts)
+    # Leaving the Study tab pauses the study on the server.
+    frame.notebook.SetSelection(0)  # Home tab
+    frame.on_tab_changed(types.SimpleNamespace(Skip=lambda: None))
+    check("leaving the study pauses it on the server",
+          "study_pause" in server["calls"]
+          and (server["fighter"].get("study") or {}).get("paused") is True)
+    check("the study music stops when leaving",
+          frame.sounds.current_music_track is None)
+    # Coming back and pressing Enter study picks it up again,
+    # free, with the same time left.
+    frame.notebook.SetSelection(4)  # Study tab
+    frame.on_tab_changed(types.SimpleNamespace(Skip=lambda: None))
+    frame.refresh_list("Study")
+    study_items = frame.list_items("Study")
+    check("the paused study offers Enter study again",
+          any(item == "Enter study (press Enter)"
+              for item in study_items))
+    study_box.SetSelection(
+        [i for i, item in enumerate(study_items)
+         if item.startswith("Enter study")][0])
+    frame.activate_current()
+    check("picking up a paused spell costs nothing either",
+          fighter["credits"] == 500)
+    check("the study is learning again",
+          (fighter.get("study") or {}).get("paused") is False)
+    # Move the finish time into the past, then the one-second
+    # timer completes the study: the spell is learned, its own
+    # sound plays, and the next random spell — Frost Bite —
+    # starts on its own while still in the study. (The resume
+    # above also called study_start, so the count is taken
+    # fresh here, just before the tick.)
+    study_starts_before_complete = server["calls"].count("study_start")
+    server["fighter"]["study"]["finish_at"] = time.time() - 1
+    fighter["study"]["finish_at"] = time.time() - 1
+    frame.on_tick(mock.MagicMock())
+    check("the study completes on the timer",
+          "study_complete" in server["calls"])
+    check("Glow is learned at level 1",
+          (fighter.get("spells") or {}).get("light", {}).get("common") == 1)
+    check("the spell's own sound plays when it is learned",
+          frame.sounds._sounds["spell_light"].played >= 1)
+    # The completion IS announced — but this half of the tests
+    # runs the no-voice fallback, so the announcement is the
+    # message line, not a voice log line (the 38b draft waited
+    # for "I learned Glow!" in the log capture, where it can
+    # never appear without a voice). And the auto-start runs
+    # in the same tick, so by now the label names the next
+    # spell, Frost Bite — which is itself the proof the
+    # completion was announced and the study carried on.
+    check("learning is announced, then the next spell starts",
+          "I started learning Frost Bite."
+          in frame.message_line.GetLabel())
+    check("the next random spell starts on its own",
+          server["calls"].count("study_start")
+          == study_starts_before_complete + 1
+          and (fighter.get("study") or {}).get("name") == "Frost Bite")
+    check("the next spell costs no credits either",
+          fighter["credits"] == 500)
+    # Being broke never blocks learning now: with no credits
+    # at all, the next spell after Frost Bite — Shade Touch,
+    # the third pick at seed 7 — still starts on its own.
+    fighter["credits"] = 0
+    server["fighter"]["credits"] = 0
+    study_starts_before_broke = server["calls"].count("study_start")
+    server["fighter"]["study"]["finish_at"] = time.time() - 1
+    fighter["study"]["finish_at"] = time.time() - 1
+    frame.on_tick(mock.MagicMock())
+    check("a broke witch still auto-starts the next spell",
+          server["calls"].count("study_start")
+          == study_starts_before_broke + 1
+          and (fighter.get("study") or {}).get("name") == "Shade Touch"
+          and fighter["credits"] == 0)
+    # A cast line plays its elemental sound, and the hit line
+    # right after it stays quiet — the spell IS the hit, and
+    # the wand is only backup.
+    frame._play_sound_for_line(
+        "I call the fire, and it bursts from my wand!")
+    check("a cast line plays its elemental sound",
+          frame.sounds._sounds["spell_fire"].played >= 1)
+    wand_before = frame.sounds._sounds["wand_swish"].played
+    frame._play_sound_for_line("Round 1: I hit the Scrap Rat for 12.")
+    check("the hit after a cast stays quiet, no wand sound",
+          frame.sounds._sounds["wand_swish"].played == wand_before)
+    frame._play_sound_for_line("Round 2: I hit the Scrap Rat for 11.")
+    check("the next hit plays the wand sound again",
+          frame.sounds._sounds["wand_swish"].played == wand_before + 1)
+    # Study quests stop with Stop.
     frame.stop_study_quests()
     check("study quests stop",
           frame._study_quest_active is False)
+    check("with no quest running, the ambience is the spell's loop",
+          frame.sounds.current_ambience == "moonlight")
+    # A robot entering the study gets quests, not spells:
+    # learning is witch-only, quests are open to everyone.
+    study_starts_before = server["calls"].count("study_start")
+    fighter["kind"] = "robot"
+    server["fighter"]["kind"] = "robot"
+    frame.notebook.SetSelection(0)  # Home tab — leaving pauses Frost Bite
+    frame.on_tab_changed(types.SimpleNamespace(Skip=lambda: None))
+    frame.notebook.SetSelection(4)  # Study tab
+    frame.on_tab_changed(types.SimpleNamespace(Skip=lambda: None))
+    frame.refresh_list("Study")
+    study_items = frame.list_items("Study")
+    study_box.SetSelection(
+        [i for i, item in enumerate(study_items)
+         if item.startswith("Enter study")][0])
+    frame.activate_current()
+    check("a robot entering the study starts no spell",
+          server["calls"].count("study_start") == study_starts_before)
+    check("a robot entering the study still gets quests",
+          frame._study_quest_active is True)
 
     check("still no local save file at the end",
           not os.path.exists(os.path.join(
@@ -2280,6 +2376,49 @@ def currency_wording_test():
     check("the null fix never leaves credits null",
           "'credits', 0" in hotfix
           and "phase30_repair" in hotfix)
+    # Phase 38b/39 (Makenna, Nov 25, 2026): learning spells
+    # costs no credits at all — time-based only. The free
+    # learning migration re-issues arena_study_start with the
+    # charge and the check removed, and drops spell_cost.
+    check("a study free learning migration exists",
+          any("study_free_learning" in name for name in names))
+    free_mig = open(os.path.join(
+        mig_dir, [n for n in names if "study_free_learning" in n][0]),
+        encoding="utf-8").read()
+    check("the free learning migration re-issues the study start",
+          "arena_study_start" in free_mig)
+    check("the free learning migration drops the spell cost",
+          "drop function if exists arena_private.spell_cost(text);"
+          in free_mig)
+    check("the free learning migration charges no credits",
+          "No credit charge" in free_mig)
+    # Phase 39: the battle-spell affinities migration adds the
+    # matchup table and the ranked pick, the twelve magical
+    # creatures, and the creature_magic flag — and drops the
+    # old random spell_pick.
+    check("a battle spell affinities migration exists",
+          any("battle_spell_affinities" in name for name in names))
+    aff_mig = open(os.path.join(
+        mig_dir,
+        [n for n in names if "battle_spell_affinities" in n][0]),
+        encoding="utf-8").read()
+    check("the affinities migration adds the multiplier",
+          "arena_private.spell_multiplier(" in aff_mig)
+    check("the affinities migration adds the ranked pick",
+          "arena_private.spell_pick_best(" in aff_mig)
+    check("the affinities migration drops the random pick",
+          "drop function if exists arena_private.spell_pick(jsonb);"
+          in aff_mig)
+    check("the affinities migration adds the magic key",
+          "arena_private.npc_magic_key(" in aff_mig)
+    check("the affinities migration returns the creature magic",
+          "'creature_magic', v_magic" in aff_mig)
+    check("the affinities migration adds the twelve creatures",
+          "'ember_sprite'" in aff_mig
+          and "'rival_witch'" in aff_mig
+          and "'rival_warlock'" in aff_mig)
+    check("the affinities migration adds the element column",
+          "add column if not exists element text" in aff_mig)
     check("the healing skill migration redefines the upgrade functions",
           "arena_start_upgrade" in healing_mig
           and "arena_max_upgrade" in healing_mig)
@@ -2340,7 +2479,8 @@ def narration_test():
     check("manual fight speaks the first line first",
           _wait_spoken(frame, lines[0]))
     check("manual fight queues the rest in order",
-          [text for text, _voice in frame._narration_queue] == lines[1:])
+          [text for text, _voice, _key in frame._narration_queue]
+          == lines[1:])
 
     # Finish each line in turn: the next line must be the next
     # line of the fight, never a skipped or repeated one.
@@ -2370,7 +2510,8 @@ def narration_test():
     frame.announce_as("Bolt asks: fetch the scrap.", "en-US-ChristopherNeural")
     check("a giver line queues in the giver's voice",
           frame._narration_queue[-1]
-          == ("Bolt asks: fetch the scrap.", "en-US-ChristopherNeural"))
+          == ("Bolt asks: fetch the scrap.", "en-US-ChristopherNeural",
+              None))
     frame._narration_queue.pop()  # take it back out: the drain below
     # is about the fight lines and the off line only.
     # Finish the fight's lines first, then the queued line speaks.
@@ -2443,6 +2584,37 @@ def narration_test():
     check("the next idle fight starts once the narration has finished",
           fighter["wins"] + fighter["losses"] == wins_losses + 2)
     frame.idle_fighting = False
+
+    # Phase 39: a creature's magic round plays the creature's
+    # spell sound, end to end — the fight's creature_magic flag
+    # travels from the fight result through the narration queue
+    # to the sound for that line. The fight runs at level 5: at
+    # level 1 the creature dies in two rounds, before its
+    # 3rd-round flare can fire. (Seed 3 gives a flare round at
+    # level 5.) The magic is on the flare HIT line, so the fire
+    # spell sound plays when that line is spoken — not on the
+    # ability line before it, and not on any other round.
+    fighter["level"] = 5
+    fighter["hp"] = game_logic.fighter_max_hp(fighter)
+    frame.random = random.Random(3)
+    fire_before = frame.sounds._sounds["spell_fire"].played
+    frame.do_fight(npc_id="ember_sprite")
+    check("an Ember Sprite's flare round is narrated to the log",
+          "Ember Sprite bursts into flame!"
+          in frame.logs["Combat"].text)
+    magic_played = False
+    for _ in range(13):
+        if frame.sounds._sounds["spell_fire"].played > fire_before:
+            magic_played = True
+            break
+        if not frame._narration_queue:
+            break
+        _finish_line_and_advance(frame)
+    check("an Ember Sprite's flare plays its fire spell sound",
+          magic_played)
+    check("the magic sound plays once for one magic round",
+          frame.sounds._sounds["spell_fire"].played == fire_before + 1)
+    media.finish()
 
     frame.on_close(mock.MagicMock())
     print("\nAll turn-by-turn narration tests passed.")
@@ -4248,30 +4420,34 @@ def quest_test():
 
 
 def npc_test():
-    """More creatures (Phase 24): the 9 draft NPCs are real
-    fightable opponents alongside Scrap Rat, each with its
-    own appear and hit sounds, scaled to the fighter's level
-    so fights stay fair, and a missing sound file never
-    crashes a fight. The upgrade rule is checked in
-    main_test; the free quest gift is instant by design, so
-    it needs no timer and cannot corrupt a running set."""
+    """More creatures (Phase 24, and the twelve magical ones in
+    Phase 39): the NPCs are real fightable opponents alongside
+    Scrap Rat, each with its own appear and hit sounds, scaled
+    to the fighter's level so fights stay fair, and a missing
+    sound file never crashes a fight. The upgrade rule is
+    checked in main_test; the free quest gift is instant by
+    design, so it needs no timer and cannot corrupt a running
+    set."""
     import re
     import tempfile
     import sounds as sounds_module
 
-    # The table: 9 NPCs, none of them Scrap Rat, each with
-    # its own ability and its own two sounds.
-    check("there are nine new creatures besides scrap rat",
-          len(game_logic.NPCS) == 9 and "scrap_rat" not in game_logic.NPCS)
+    # The table: 21 NPCs (9 from Phase 24, 12 magical from
+    # Phase 39), none of them Scrap Rat, each with its own
+    # ability and its own two sounds.
+    check("there are twenty-one creatures besides scrap rat",
+          len(game_logic.NPCS) == 21 and "scrap_rat" not in game_logic.NPCS)
     check("every creature has an appear and a hit sound",
           all(npc["appear_sound"] and npc["hit_sound"]
               for npc in game_logic.NPCS.values()))
     check("no two creatures share an appear sound",
           len({npc["appear_sound"]
-               for npc in game_logic.NPCS.values()}) == 9)
+               for npc in game_logic.NPCS.values()})
+          == len(game_logic.NPCS))
     check("no two creatures share a hit sound",
           len({npc["hit_sound"]
-               for npc in game_logic.NPCS.values()}) == 9)
+               for npc in game_logic.NPCS.values()})
+          == len(game_logic.NPCS))
     check("no creature uses a scrap rat sound",
           not any(npc["appear_sound"] in ("robot_servo", "chef_sizzle")
                   or npc["hit_sound"] in ("robot_clank", "pan_clang",
@@ -4281,9 +4457,38 @@ def npc_test():
           all(npc["appear_sound"] in sounds_module.SOUND_FILES
               and npc["hit_sound"] in sounds_module.SOUND_FILES
               for npc in game_logic.NPCS.values()))
-    check("the fight pool is scrap rat plus the nine",
+    check("the fight pool is scrap rat plus the twenty-one",
           set(game_logic.NPC_POOL)
           == {"scrap_rat"} | set(game_logic.NPCS))
+    # Phase 39: the twelve magical creatures — one per element
+    # plus the two rivals — and their magic sounds. An
+    # elemental's magic IS its own element's spell sound
+    # (Makenna, Nov 25, 2026); the Rival Witch's is a random
+    # spell sound; the Rival Warlock keeps his own curse.
+    check("the twelve magical creatures are in the table",
+          all(npc_id in game_logic.NPCS
+              for npc_id in
+              ["ember_sprite", "tide_wisp", "frost_faerie",
+               "gale_sylph", "bog_toad", "dawn_moth",
+               "shade_stalker", "void_imp", "pebble_golem",
+               "storm_roc", "rival_witch", "rival_warlock"]))
+    check("an elemental's magic sound is its element's spell sound",
+          all(game_logic.NPCS[npc_id].get("magic_sound")
+              == "spell:" + element
+              for npc_id, element in
+              [("ember_sprite", "fire"), ("tide_wisp", "water"),
+               ("frost_faerie", "ice"), ("gale_sylph", "wind"),
+               ("bog_toad", "poison"), ("dawn_moth", "light"),
+               ("shade_stalker", "shadow"), ("void_imp", "dark"),
+               ("pebble_golem", "earth"), ("storm_roc", "lightning")]))
+    check("the Rival Witch's magic is a random spell sound",
+          game_logic.NPCS["rival_witch"].get("magic_sound")
+          == "random_spell")
+    check("the Rival Warlock's magic is his own curse sound",
+          game_logic.NPCS["rival_warlock"].get("magic_sound")
+          == "npc_rival_warlock_magic")
+    check("the warlock's curse sound is in the sound bank",
+          "npc_rival_warlock_magic" in sounds_module.SOUND_FILES)
     check("a random pick only ever names a real creature",
           all(game_logic.random_npc_id(random.Random(i))
               in game_logic.NPC_POOL for i in range(20)))
@@ -4349,7 +4554,10 @@ def npc_test():
 
     # Every creature's ability actually fires in a fight:
     # a weak fighter (level 50, weapon and armor level 1)
-    # keeps the fight going long enough for it to trigger.
+    # keeps the fight going long enough for it to trigger —
+    # with a big health pool, so a hard-hitting creature
+    # (Gale Sylph's dodge is not until round 5) cannot kill
+    # the fighter before its round comes.
     for npc_id in game_logic.NPC_ORDER:
         npc = game_logic.NPCS[npc_id]
         found = False
@@ -4358,7 +4566,7 @@ def npc_test():
             fighter["level"] = 50
             fighter["weapon_level"] = 1
             fighter["armor_level"] = 1
-            fighter["hp"] = game_logic.fighter_max_hp(fighter)
+            fighter["hp"] = 100000
             result = game_logic.fight(fighter,
                                       rng=random.Random(100 + seed),
                                       npc_id=npc_id)
@@ -4425,6 +4633,27 @@ def npc_test():
     frame._play_sound_for_line("A Scrap Rat appears! Level 5.")
     check("scrap rat appear still plays the fighter-kind sound",
           full_bank._sounds["robot_servo"].played == 1)
+    # Phase 39: a magic round plays the magic sound — an
+    # elemental's own spell sound, the Rival Witch's random
+    # spell, the Rival Warlock's own curse — and a normal
+    # round plays the creature's hit sound, never the magic.
+    frame._play_sound_for_line(
+        "Round 3: The Ember Sprite hits me for 25.", "spell_fire")
+    check("an ember sprite magic round plays its fire spell sound",
+          full_bank._sounds["spell_fire"].played == 1)
+    frame._play_sound_for_line(
+        "Round 4: The Rival Witch casts a spell!", "spell_light")
+    check("a rival witch magic round plays a spell sound",
+          full_bank._sounds["spell_light"].played == 1)
+    frame._play_sound_for_line(
+        "Round 4: The Rival Warlock curses me!",
+        "npc_rival_warlock_magic")
+    check("a rival warlock magic round plays his curse sound",
+          full_bank._sounds["npc_rival_warlock_magic"].played == 1)
+    frame._play_sound_for_line("The Ember Sprite hits me for 10.")
+    check("a normal round plays the creature's hit sound, not magic",
+          full_bank._sounds["npc_ember_sprite_hit"].played == 1
+          and full_bank._sounds["spell_fire"].played == 1)
     print("\nAll creature tests passed.")
 
 
