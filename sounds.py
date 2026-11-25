@@ -41,8 +41,7 @@ SOUND_FILES = {
     # those quests simply play no loop.
     "ambience_gathering": ("ambience_gathering.mp3", None),
     "ambience_cleaning": ("ambience_cleaning.mp3", None),
-    # NPC creature sounds (Phase 24): every creature gets its
-    # OWN appear sound and its OWN hit sound, different from
+    # NPC creature sounds (Phase 24): every creature gets its    # OWN appear sound and its OWN hit sound, different from
     # Scrap Rat and from each other, so you can tell who it is
     # by sound alone (Makenna's per-creature sound rule, Nov 18,
     # 2026). All Kenney, CC0. The two 5-second clips are
@@ -68,15 +67,52 @@ SOUND_FILES = {
     "npc_zap_fox_hit": ("npc_zap_fox_hit.ogg", None),
     "npc_ember_owl_appear": ("npc_ember_owl_appear.ogg", None),
     "npc_ember_owl_hit": ("npc_ember_owl_hit.ogg", None),
-    # The music. Two tracks, one per place: the cozy cafe track for
-    # the hangout (Jazz Brunch) and the sci-fi track for fights
-    # (Mesmerizing Galaxy Loop). "music" is the old single name and
+    # Witch sounds (Phase 38): one cast sound per element, the
+    # wand's own swish for melee hits, the study music track,
+    # and the three new quest ambience loops (brewing, storm,
+    # moonlight). All Kenney CC0 except the study music
+    # (Kevin MacLeod, CC-BY 4.0 — credit in SOUNDS.md) and
+    # the three ambience loops (Eric Matyas, soundimage.org —
+    # free with attribution, credit in SOUNDS.md). The two
+    # trimmed files (fire 5.0s -> 1.5s, poison 4.7s -> 1.2s)
+    # were cut with ffmpeg from the CC0 originals; trimming
+    # a CC0 file needs no permission. A missing file plays
+    # nothing and never stops the game, exactly like the
+    # other sounds — the cast line still speaks.
+    "spell_fire": ("spell_fire.ogg", None),
+    "spell_water": ("spell_water.ogg", None),
+    "spell_ice": ("spell_ice.ogg", None),
+    "spell_wind": ("spell_wind.ogg", None),
+    "spell_poison": ("spell_poison.ogg", None),
+    "spell_light": ("spell_light.ogg", None),
+    "spell_shadow": ("spell_shadow.ogg", None),
+    "spell_dark": ("spell_dark.ogg", None),
+    "spell_earth": ("spell_earth.ogg", None),
+    "spell_lightning": ("spell_lightning.ogg", None),
+    "wand_swish": ("wand_swish.ogg", None),
+    "ambience_brewing": ("ambience_brewing.mp3", None),
+    "ambience_storm": ("ambience_storm.mp3", None),
+    "ambience_moonlight": ("ambience_moonlight.mp3", None),
+    # Aliases (Phase 38 fix): spells.study_ambience() returns the
+    # family name ("brewing" / "storm" / "moonlight") and
+    # main.py:_refresh_ambience passes it straight to
+    # start_ambience, so the family names must be playable too.
+    # Without these the study ambience loop silently never played
+    # while learning a spell. Same files as above, just extra names.
+    "brewing": ("ambience_brewing.mp3", None),
+    "storm": ("ambience_storm.mp3", None),
+    "moonlight": ("ambience_moonlight.mp3", None),
+    # The music. Three tracks, one per place: the cozy cafe track for
+    # the hangout (Jazz Brunch), the sci-fi track for fights
+    # (Mesmerizing Galaxy Loop), and the mystical track for the
+    # study (Spellbound). "music" is the old single name and
     # stays as an alias for the hangout track, so older code and
     # tests keep working: music_loop.mp3 is the same file as
     # music_hangout.mp3.
     "music": ("music_loop.mp3", None),
     "music_hangout": ("music_hangout.mp3", None),
     "music_fight": ("music_fight.mp3", None),
+    "music_study": ("music_study.mp3", None),
 }
 
 MUSIC_VOLUME_FACTOR = 0.5  # Music plays at half the effects volume.
@@ -168,6 +204,8 @@ class SoundBank:
                 self._music = sound
             elif name == "music_fight":
                 self._tracks["fight"] = sound
+            elif name == "music_study":
+                self._tracks["study"] = sound
         logging.info(
             "Sounds: loaded %d of %d: %s.",
             len(self._sounds),
@@ -183,7 +221,8 @@ class SoundBank:
         for name, sound in self._sounds.items():
             try:
                 level = self._volume
-                if name in ("music", "music_hangout", "music_fight"):
+                if name in ("music", "music_hangout", "music_fight",
+                            "music_study"):
                     level *= MUSIC_VOLUME_FACTOR
                 elif name == self._ambience_name:
                     level *= AMBIENCE_VOLUME_FACTOR
@@ -226,24 +265,48 @@ class SoundBank:
 
     def play_hit(self, kind):
         """The fighter's own attack sound: laser for a robot, a
-        chopping sound for a chef."""
+        chopping sound for a chef, the wand's swish for a witch.
+        A witch hit that follows a cast line does not play here
+        at all — the cast line already played the spell's sound
+        (see main.py: the spell is the hit, the wand is only
+        backup)."""
         if kind == "chef":
             return self.play("chef_chop")
+        if kind == "witch":
+            return self.play("wand_swish")
         return self.play("robot_laser")
 
     def play_creature_hit(self, kind):
         """The Scrap Rat hitting back: metal for a robot fighter,
-        a pan clang for a chef fighter."""
+        a pan clang for a chef fighter, a dull rock thud for a
+        witch fighter (the earth spell sound — a thud that fits
+        any fighter, as the witch draft proposes)."""
         if kind == "chef":
             return self.play("pan_clang")
+        if kind == "witch":
+            return self.play("spell_earth")
         return self.play("robot_clank")
 
     def play_intro(self, kind):
         """A short sound when a creature appears: a servo whirr
-        for a robot fighter, a sizzle for a chef fighter."""
+        for a robot fighter, a sizzle for a chef fighter, a
+        bright shimmer for a witch fighter (the light spell
+        sound)."""
         if kind == "chef":
             return self.play("chef_sizzle")
+        if kind == "witch":
+            return self.play("spell_light")
         return self.play("robot_servo")
+
+    def play_spell(self, element):
+        """One elemental cast sound, by element name ("fire",
+        "water", ...). Returns False for an unknown element or
+        a missing file — the cast line still speaks."""
+        if element not in ("fire", "water", "ice", "wind", "poison",
+                           "light", "shadow", "dark", "earth",
+                           "lightning"):
+            return False
+        return self.play("spell_" + element)
 
     def play_win(self):
         return self.play("win")
@@ -254,20 +317,21 @@ class SoundBank:
     @property
     def current_music_track(self):
         """Which music track is looping now: "hangout", "fight",
-        or None when nothing is playing."""
+        "study", or None when nothing is playing."""
         return self._music_name
 
     def start_music(self, track="hangout"):
         """Start one background music loop. track is "hangout"
-        (the cafe track) or "fight" (the sci-fi track); with no
-        track given it plays the hangout track, as before.
+        (the cafe track), "fight" (the sci-fi track) or "study"
+        (the mystical track, Phase 38); with no track given it
+        plays the hangout track, as before.
         Returns False when there is no music file for that
         track, sounds are off, or the mixer cannot play it.
         Asking for the track that is already playing just
         returns True, so switching tabs or starting another
         fight never restarts the loop. The music uses its own
         channel, so it never interrupts the voice narration."""
-        if track not in ("hangout", "fight"):
+        if track not in ("hangout", "fight", "study"):
             track = "hangout"
         if not self.enabled:
             return False

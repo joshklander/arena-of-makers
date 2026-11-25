@@ -5,7 +5,7 @@ small stand-in module built from real classes (a bare Mock cannot be
 a base class). The real game logic still runs underneath:
     python test_main_smoke.py
 
-Covers: the window builds with all five tabs, every tab's list is
+Covers: the window builds with all six tabs, every tab's list is
 plain text, Enter on a fight item runs a real fight, Enter on a shop
 item starts a real upgrade, idle fighting toggles, and the timer
 finishes upgrades and repairs. It does NOT prove anything about NVDA,
@@ -432,6 +432,95 @@ def main_test():
         server["fighter"]["gender"] = gender
         return copy.deepcopy(server["fighter"]), None
 
+    def _fake_study_start(config, element, tier):
+        server["calls"].append("study_start")
+        was_paused = bool(
+            (server["fighter"].get("study") or {}).get("paused"))
+        error = game_logic.study_start(server["fighter"], element, tier)
+        if error:
+            return {}, error
+        study = server["fighter"]["study"]
+        if was_paused:
+            message = "I picked up learning %s again." % study["name"]
+        else:
+            message = "I started learning %s." % study["name"]
+        return {"message": message,
+                "fighter": copy.deepcopy(server["fighter"]),
+                "study": copy.deepcopy(study)}, None
+
+    def _fake_study_pause(config):
+        server["calls"].append("study_pause")
+        remaining = game_logic.study_pause(server["fighter"])
+        return {"fighter": copy.deepcopy(server["fighter"]),
+                "study": copy.deepcopy(server["fighter"].get("study")),
+                "remaining_seconds": remaining}, None
+
+    def _fake_study_complete(config):
+        server["calls"].append("study_complete")
+        study = server["fighter"].get("study") or {}
+        line = game_logic.finish_study_if_ready(server["fighter"])
+        if line is None:
+            return {}, "That spell is not learned yet."
+        learned = server["fighter"].get("spells") or {}
+        spell = {"element": study.get("element"),
+                 "tier": study.get("tier"),
+                 "name": study.get("name"),
+                 "level": (learned.get(study.get("element")) or {}).get(
+                     study.get("tier"), 0)}
+        return {"message": line,
+                "fighter": copy.deepcopy(server["fighter"]),
+                "spell": spell}, None
+
+    def _fake_new_study_quest(config):
+        server["calls"].append("new_study_quest")
+        import quests as _quests
+        names = [t["name"] for t in _quests.QUEST_TEMPLATES]
+        witch_names = ["Gather Moonpetal", "Brew the Calming Draught",
+                       "Calm the Storm", "Charge the Moonstone",
+                       "Mend the Shadow", "The Witch's Fair"]
+        quest = _quests.generate_quest(
+            random.Random(38),
+            existing_names=[n for n in names if n not in witch_names])
+        board = server["fighter"].setdefault("quests_board", [])
+        board.append(copy.deepcopy(quest))
+        return {"fighter": copy.deepcopy(server["fighter"]),
+                "quest": copy.deepcopy(quest),
+                "quests": copy.deepcopy(board)}, None
+
+    def _fake_get_quests(config):
+        server["calls"].append("get_quests")
+        return {"fighter": copy.deepcopy(server["fighter"]),
+                "quests": copy.deepcopy(
+                    server["fighter"].get("quests_board", [])),
+                "active": copy.deepcopy(
+                    server["fighter"].get("quests_active")),
+                "reputation": dict(
+                    server["fighter"].get("quests_rep", {})),
+                "gift_pending": server["fighter"].get(
+                    "quests_gift_pending")}, None
+
+    def _fake_start_quest(config, quest_id):
+        server["calls"].append("start_quest")
+        quest = next((q for q in server["fighter"].get("quests_board", [])
+                      if q["id"] == quest_id), None)
+        if quest is None:
+            return {}, "That quest is not on your board."
+        started = copy.deepcopy(quest)
+        started["started_at"] = time.time()
+        started["finish_at"] = (started["started_at"]
+                                + started["duration_minutes"] * 60)
+        return {"fighter": copy.deepcopy(server["fighter"]),
+                "quest": started}, None
+
+    def _fake_join_quest(config, quest_id):
+        server["calls"].append("join_quest")
+        return {"fighter": copy.deepcopy(server["fighter"]),
+                "message": "You joined the quest."}, None
+
+    def _fake_pause_quest(config):
+        server["calls"].append("pause_quest")
+        return {"fighter": copy.deepcopy(server["fighter"])}, None
+
     _online_save.fight = _fake_fight
     _online_save.fight_npc = _fake_fight_npc
     _online_save.start_upgrade = _fake_upgrade
@@ -451,8 +540,8 @@ def main_test():
         player_account={"username": "Bolt", "player_code": "4242"},
     )
 
-    check("five tabs exist", main.MainFrame.TAB_NAMES == [
-        "Home", "Combat", "Shop", "More", "Settings"])
+    check("six tabs exist", main.MainFrame.TAB_NAMES == [
+        "Home", "Combat", "Shop", "More", "Study", "Settings"])
     for tab in main.MainFrame.TAB_NAMES:
         items = frame.list_items(tab)
         check("list for %s is plain text" % tab,
@@ -1019,7 +1108,7 @@ def main_test():
     check("no local save function in main.py", "save_game" not in source)
 
     # Settings: Enter on the Voice item switches the voice and saves it.
-    frame.notebook.SetSelection(4)  # Settings tab
+    frame.notebook.SetSelection(5)  # Settings tab
     frame.refresh_list("Settings")
     settings_box = frame.lists["Settings"]
     check("settings first item is the voice",
@@ -1140,6 +1229,130 @@ def main_test():
     check("the second switch costs 100 credits",
           any("costs 100 credits" in item for item in settings_items))
 
+    # The study (Phase 38): the Study tab lists one spell per
+    # element, Enter learns it (asking first, since the cost
+    # is paid up front), leaving the tab pauses the study, and
+    # coming back picks it up free. The fighter is a witch by
+    # now (switched above), with 500 credits. The fake server
+    # runs the real study mirrors on its own copy.
+    _online_save.study_start = _fake_study_start
+    _online_save.study_pause = _fake_study_pause
+    _online_save.study_complete = _fake_study_complete
+    _online_save.new_study_quest = _fake_new_study_quest
+    _online_save.get_quests = _fake_get_quests
+    _online_save.start_quest = _fake_start_quest
+    _online_save.join_quest = _fake_join_quest
+    _online_save.pause_quest = _fake_pause_quest
+    frame.notebook.SetSelection(4)  # Study tab
+    frame.on_tab_changed(types.SimpleNamespace(Skip=lambda: None))
+    frame.refresh_list("Study")
+    study_box = frame.lists["Study"]
+    study_items = frame.list_items("Study")
+    check("the study lists one spell per element",
+          sum(1 for item in study_items
+              if item.endswith("(press Enter)")) == 10)
+    check("the study list offers Ember Spark first",
+          any(item.startswith("Fire: learn Ember Spark, common, "
+                              "25 credits, 15 minutes")
+              for item in study_items))
+    check("the study list says nothing is being learned yet",
+          study_items[0] == "I am not learning a spell right now.")
+    # Say no first: nothing changes and the server is not called.
+    sys.modules["wx"].Dialog.modal_result = sys.modules["wx"].ID_NO
+    study_box.SetSelection(
+        [i for i, item in enumerate(study_items)
+         if item.startswith("Fire:")][0])
+    frame.activate_current()
+    check("saying no to learning changes nothing",
+          fighter.get("study") is None
+          and "study_start" not in server["calls"])
+    # Say yes: Ember Spark starts learning, 25 credits paid.
+    sys.modules["wx"].Dialog.modal_result = sys.modules["wx"].ID_YES
+    frame.activate_current()
+    sys.modules["wx"].Dialog.modal_result = 1  # back to ID_OK
+    check("learning went to the server",
+          "study_start" in server["calls"])
+    check("learning costs 25 credits",
+          fighter["credits"] == 475)
+    check("the study records Ember Spark",
+          (fighter.get("study") or {}).get("name") == "Ember Spark")
+    check("the study list shows the learning line",
+          any(item.startswith("Fire: learning Ember Spark,")
+              for item in frame.list_items("Study")))
+    check("the study music plays while learning",
+          frame.sounds.current_music_track == "study")
+    check("the study ambience is the brewing loop",
+          frame.sounds.current_ambience == "brewing")
+    # Leaving the Study tab pauses the study on the server.
+    frame.notebook.SetSelection(0)  # Home tab
+    frame.on_tab_changed(types.SimpleNamespace(Skip=lambda: None))
+    check("leaving the study pauses it on the server",
+          "study_pause" in server["calls"]
+          and (server["fighter"].get("study") or {}).get("paused") is True)
+    check("the study music stops when leaving",
+          frame.sounds.current_music_track is None)
+    # Coming back and pressing Enter on the paused line picks
+    # it up again, free, with the same time left.
+    frame.notebook.SetSelection(4)  # Study tab
+    frame.on_tab_changed(types.SimpleNamespace(Skip=lambda: None))
+    frame.refresh_list("Study")
+    study_items = frame.list_items("Study")
+    check("the paused line offers to pick it up",
+          any("paused" in item and item.endswith("(press Enter)")
+              for item in study_items))
+    study_box.SetSelection(
+        [i for i, item in enumerate(study_items)
+         if item.startswith("Fire:")][0])
+    frame.activate_current()
+    check("picking up a paused spell is free",
+          fighter["credits"] == 475)
+    check("the study is learning again",
+          (fighter.get("study") or {}).get("paused") is False)
+    # Move the finish time into the past, then the one-second
+    # timer completes the study: the spell is learned, and its
+    # own sound plays.
+    server["fighter"]["study"]["finish_at"] = time.time() - 1
+    fighter["study"]["finish_at"] = time.time() - 1
+    frame.on_tick(mock.MagicMock())
+    check("the study completes on the timer",
+          "study_complete" in server["calls"])
+    check("Ember Spark is learned at level 1",
+          (fighter.get("spells") or {}).get("fire", {}).get("common") == 1)
+    check("the spell's own sound plays when it is learned",
+          frame.sounds._sounds["spell_fire"].played >= 1)
+    check("learning is announced",
+          "I learned Ember Spark!" in frame.message_line.GetLabel())
+    # A cast line plays its elemental sound, and the hit line
+    # right after it stays quiet — the spell IS the hit, and
+    # the wand is only backup.
+    frame._play_sound_for_line(
+        "I call the fire, and it bursts from my wand!")
+    check("a cast line plays its elemental sound",
+          frame.sounds._sounds["spell_fire"].played >= 2)
+    wand_before = frame.sounds._sounds["wand_swish"].played
+    frame._play_sound_for_line("Round 1: I hit the Scrap Rat for 12.")
+    check("the hit after a cast stays quiet, no wand sound",
+          frame.sounds._sounds["wand_swish"].played == wand_before)
+    frame._play_sound_for_line("Round 2: I hit the Scrap Rat for 11.")
+    check("the next hit plays the wand sound again",
+          frame.sounds._sounds["wand_swish"].played == wand_before + 1)
+    # A study quest comes from a witch giver, and is dealt
+    # exactly once on the board — the server's answer already
+    # carries it, so adding it again would list it twice.
+    frame.start_study_quests()
+    check("study quests start",
+          frame._study_quest_active is True)
+    check("a study quest comes from a witch giver",
+          frame._quest_current is not None
+          and frame._quest_current.get("giver")
+          in ("Hazel", "Rowan", "Wren", "Bram"))
+    check("a dealt study quest is on the board exactly once",
+          sum(1 for q in frame._quest_board
+              if q.get("id") == frame._quest_current.get("id")) == 1)
+    frame.stop_study_quests()
+    check("study quests stop",
+          frame._study_quest_active is False)
+
     check("still no local save file at the end",
           not os.path.exists(os.path.join(
               os.path.dirname(os.path.abspath(__file__)), "arena_save.json")))
@@ -1207,7 +1420,7 @@ def voice_test():
     # every tab must speak nothing and queue nothing, while
     # still showing the hint as text.
     spoken_before = len(media.loaded)
-    for _tab in (1, 2, 3, 4, 0):
+    for _tab in (1, 2, 3, 4, 5, 0):
         frame.notebook.SetSelection(_tab)
         frame.on_tab_changed(types.SimpleNamespace(Skip=lambda: None))
     time.sleep(0.5)
@@ -1266,7 +1479,7 @@ def voice_test():
           last_spoken() == b"fake-mp3:new line")
 
     # Switching voice in Settings changes the engine voice too.
-    frame.notebook.SetSelection(4)
+    frame.notebook.SetSelection(5)
     frame.refresh_list("Settings")
     frame.lists["Settings"].SetSelection(0)
     frame.activate_current()
@@ -1449,6 +1662,16 @@ def phase27_voice_test():
             _finish_line_and_advance(frame)
         return ('Voice: speaking "' + text) in LOG_CAPTURE.getvalue()[after:]
 
+    def _made_with(log, preview, voice):
+        """True when one log line shows this preview made with
+        this voice — the preview and the voice are on the same
+        line, so a line made with a different voice cannot
+        pass. The preview must fit inside the voice log's
+        40-character preview, like the Gus check above."""
+        return any('Voice: made "' + preview in line
+                   and ("with " + voice) in line
+                   for line in log.splitlines())
+
     fighter = game_logic.new_fighter("Katprincess", "robot", "male")
     fighter["credits"] = 100
     fighter["player_code"] = "2169"
@@ -1558,9 +1781,167 @@ def phase27_voice_test():
           'Voice: made "Belle asks: Katprincess, oh, thank you' in new_log
           and "with en-US-EmmaNeural" in new_log)
     _drain(frame)
+    # 4. The study 5-minute update speaks in the PLAYER's voice
+    #    (Makenna's correction, Nov 25, 2026) — spell, quest
+    #    and repair together, never a giver's voice. The giver
+    #    still speaks their own quest lines (section 3 above);
+    #    only the periodic update is the player's voice.
+    now = time.time()
+    fighter["kind"] = "witch"
+    fighter["spells"] = {"fire": {"common": 1}}
+    fighter["study"] = {"element": "fire", "tier": "uncommon",
+                        "name": "Flame Lash", "level": 1,
+                        "finish_at": now + 900, "paused": False,
+                        "remaining_seconds": 900}
+    fighter["repair_until"] = now + 600
+    fighter["hp"] = 50
+    frame._quest_current = {
+        "id": "q-study", "name": "Brew the Calming Draught",
+        "giver": "Hazel", "giver_voice": "en-US-AvaNeural",
+        "ambience": "brewing", "duration_minutes": 30,
+        "started_at": now - 900, "finish_at": now + 900}
+    log_before = LOG_CAPTURE.getvalue()
+    frame._study_progress_update(now)
+    _drain(frame)
+    new_log = LOG_CAPTURE.getvalue()[len(log_before):]
+    check("the study update speaks the spell line in the player's voice",
+          _made_with(new_log, "I am learning Flame Lash, about 15 minu",
+                     "en-US-GuyNeural"))
+    check("the study update speaks the quest line in the player's voice",
+          _made_with(new_log, "My quest, Brew the Calming Draught",
+                     "en-US-GuyNeural"))
+    # The last line's "made" log comes from the voice worker
+    # thread, a moment after the line starts speaking — wait
+    # for it, like section 3 does for the Gus and Belle lines,
+    # or the check reads the log before the worker writes it.
+    deadline = time.time() + 5
+    while time.time() < deadline:
+        time.sleep(0.05)
+        new_log = LOG_CAPTURE.getvalue()[len(log_before):]
+        if 'Voice: made "I\'m still repairing, about 10 minutes' \
+                in new_log:
+            break
+    check("the study update speaks the repair line in the player's voice",
+          _made_with(new_log, "I'm still repairing, about 10 minutes",
+                     "en-US-GuyNeural"))
+    check("no study-giver voice speaks in the study update",
+          all(voice not in new_log for voice in
+              ("en-US-AvaNeural", "en-US-RogerNeural",
+               "en-US-AnaNeural", "en-US-SteffanNeural")))
+    # 6. Spell trainers (Makenna, Nov 25, 2026): learning is
+    #    taught by another warlock or witch, and the teaching
+    #    lines speak in the trainer's voice, talking to the
+    #    player directly by name — like the hangout quest
+    #    givers. Hazel teaches fire, Rowan wind, Wren ice,
+    #    Bram teaches upgrades. The cast line in a fight and
+    #    the 5-minute study update stay in the player's voice
+    #    (section 4 above); only the teaching is the trainer's.
+    import spells as spells_module
+    trainer_server = {"fighter": copy.deepcopy(fighter)}
+
+    def _fake_trainer_study_start(config, element, tier):
+        error = game_logic.study_start(
+            trainer_server["fighter"], element, tier)
+        if error:
+            return {}, error
+        study = trainer_server["fighter"]["study"]
+        return {"message": "I started learning %s." % study["name"],
+                "fighter": copy.deepcopy(trainer_server["fighter"]),
+                "study": copy.deepcopy(study)}, None
+
+    def _fake_trainer_study_complete(config):
+        study = trainer_server["fighter"].get("study") or {}
+        line = game_logic.finish_study_if_ready(
+            trainer_server["fighter"])
+        if line is None:
+            return {}, "That spell is not learned yet."
+        learned = trainer_server["fighter"].get("spells") or {}
+        spell = {"element": study.get("element"),
+                 "tier": study.get("tier"),
+                 "name": study.get("name"),
+                 "level": (learned.get(study.get("element")) or {}).get(
+                     study.get("tier"), 0)}
+        return {"message": line,
+                "fighter": copy.deepcopy(trainer_server["fighter"]),
+                "spell": spell}, None
+
+    main.online_save.study_start = _fake_trainer_study_start
+    main.online_save.study_complete = _fake_trainer_study_complete
+    frame.online_config = {"url": "https://example.supabase.co",
+                           "token": "test", "player_code": "2169"}
+    sys.modules["wx"].Dialog.modal_result = sys.modules["wx"].ID_YES
+    fighter["kind"] = "witch"
+    fighter["spells"] = {}
+    fighter["study"] = None
+    fighter["credits"] = 100
+    fighter["hp"] = fighter["max_hp"]
+    fighter["repair_until"] = 0
+    trainer_server["fighter"] = copy.deepcopy(fighter)
+    log_before = LOG_CAPTURE.getvalue()
+    frame.do_start_study("fire")
+    _drain(frame)
+    new_log = LOG_CAPTURE.getvalue()[len(log_before):]
+    expected_opening = spells_module.trainer_opening_line(
+        "Hazel", "Katprincess", "Ember Spark")
+    check("learning starts with Hazel's line in Ava's voice",
+          _made_with(new_log, expected_opening[:40],
+                     "en-US-AvaNeural"))
+    check("Hazel's line talks to Katprincess by name",
+          "Katprincess" in expected_opening
+          and "Ember Spark" in expected_opening)
+    check("Hazel's line is not in the player's voice",
+          not _made_with(new_log, expected_opening[:40],
+                         "en-US-GuyNeural"))
+    trainer_server["fighter"]["study"]["finish_at"] = time.time() - 1
+    fighter["study"]["finish_at"] = time.time() - 1
+    log_before = LOG_CAPTURE.getvalue()
+    frame._complete_study()
+    _drain(frame)
+    new_log = LOG_CAPTURE.getvalue()[len(log_before):]
+    expected_learn = spells_module.trainer_learn_line(
+        "Hazel", "Katprincess", "Ember Spark")
+    check("learning finishes with Hazel's line in Ava's voice",
+          _made_with(new_log, expected_learn[:40], "en-US-AvaNeural"))
+    check("Ember Spark is learned at level 1",
+          (fighter.get("spells") or {}).get("fire", {}).get("common")
+          == 1)
+    # An upgrade is Bram's: all five fire tiers learned, so the
+    # next fire spell is an upgrade, taught by the old warlock.
+    fighter["spells"] = {"fire": {"common": 1, "uncommon": 1,
+                                  "rare": 1, "epic": 1,
+                                  "legendary": 1}}
+    fighter["study"] = None
+    fighter["credits"] = 100
+    trainer_server["fighter"] = copy.deepcopy(fighter)
+    log_before = LOG_CAPTURE.getvalue()
+    frame.do_start_study("fire")
+    _drain(frame)
+    new_log = LOG_CAPTURE.getvalue()[len(log_before):]
+    expected_bram_opening = spells_module.trainer_opening_line(
+        "Bram", "Katprincess", "Ember Spark")
+    check("an upgrade starts with Bram's line in Steffan's voice",
+          _made_with(new_log, expected_bram_opening[:40],
+                     "en-US-SteffanNeural"))
+    trainer_server["fighter"]["study"]["finish_at"] = time.time() - 1
+    fighter["study"]["finish_at"] = time.time() - 1
+    log_before = LOG_CAPTURE.getvalue()
+    frame._complete_study()
+    _drain(frame)
+    new_log = LOG_CAPTURE.getvalue()[len(log_before):]
+    expected_upgrade = spells_module.trainer_upgrade_line(
+        "Katprincess", "Ember Spark", 2)
+    check("an upgrade finishes with Bram's line in Steffan's voice",
+          _made_with(new_log, expected_upgrade[:40],
+                     "en-US-SteffanNeural"))
+    check("Bram's line names the spell and its new level",
+          "Ember Spark" in expected_upgrade
+          and "level 2" in expected_upgrade)
+    check("Ember Spark is upgraded to level 2",
+          (fighter.get("spells") or {}).get("fire", {}).get("common")
+          == 2)
     frame.on_close(mock.MagicMock())
 
-    # 4. When every voice fails, the failed line does not leave
+    # 5. When every voice fails, the failed line does not leave
     #    the narration stuck waiting — the next line is still
     #    attempted, not queued forever.
     sys.modules["edge_tts"] = _make_failing_edge_tts()
@@ -2391,6 +2772,36 @@ def sounds_test():
           bank.play_win() and bank._sounds["win"].played == 1)
     check("loss plays the loss sound",
           bank.play_loss() and bank._sounds["loss"].played == 1)
+    # Witch sounds (Phase 38): the wand's swish for a witch
+    # hit, the earth thud when the Scrap Rat hits a witch
+    # back, the light shimmer when a creature appears for a
+    # witch, and one sound per element for the spells.
+    check("a witch hit plays the wand swish",
+          bank.play_hit("witch")
+          and bank._sounds["wand_swish"].played == 1)
+    check("a creature hit on a witch plays the earth thud",
+          bank.play_creature_hit("witch")
+          and bank._sounds["spell_earth"].played == 1)
+    check("a creature appearing for a witch plays the light shimmer",
+          bank.play_intro("witch")
+          and bank._sounds["spell_light"].played == 1)
+    check("a fire spell plays its own sound",
+          bank.play_spell("fire")
+          and bank._sounds["spell_fire"].played == 1)
+    check("every element has its own spell sound",
+          all(bank.play_spell(element)
+              for element in ("water", "ice", "wind", "poison", "light",
+                              "shadow", "dark", "earth", "lightning")))
+    check("an unknown element plays no spell sound",
+          bank.play_spell("arcane") is False)
+    check("the study track starts",
+          bank.start_music("study") is True
+          and bank.current_music_track == "study"
+          and bank._music_channel.played
+          is bank._sounds["music_study"])
+    check("a brewing ambience loop starts",
+          bank.start_ambience("brewing") is True
+          and bank.current_ambience == "brewing")
     check("music starts and loops",
           bank.start_music() is True
           and bank._music_channel is not None
@@ -2699,13 +3110,13 @@ def quest_test():
     import quests as quests_module
     import online_save as _online_save
 
-    check("quest givers are three male and three female",
+    check("quest givers are five male and five female",
           sum(1 for g in quests_module.GIVERS
-              if g["gender"] == "male") == 3
+              if g["gender"] == "male") == 5
           and sum(1 for g in quests_module.GIVERS
-                  if g["gender"] == "female") == 3)
+                  if g["gender"] == "female") == 5)
     check("every giver has their own Edge voice",
-          len({g["voice"] for g in quests_module.GIVERS}) == 6)
+          len({g["voice"] for g in quests_module.GIVERS}) == 10)
     check("no quest is restricted by fighter kind",
           all("kind" not in q for q in quests_module.QUEST_TEMPLATES)
           and all("kind" not in q

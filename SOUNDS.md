@@ -37,6 +37,11 @@ the same pages without checking its licence first.
   commercial games, but a credit line is required. The credit
   lines are at the bottom of this file and must stay with the
   game (for example in the credits screen or here in SOUNDS.md).
+- **Soundimage (Eric Matyas)** — free for commercial use,
+  including games, but **attribution is required in the actual
+  game**: "Music by Eric Matyas www.soundimage.org". (A paid
+  non-attribution licence costs $30 per track and is NOT used
+  here — the game uses attribution, so the cost is $0.)
 - **DailySounds** — free for personal and commercial use, no
   sign-up, no credit required.
 
@@ -78,6 +83,21 @@ sound is used anywhere.
 | `npc_zap_fox_hit.ogg` | Electric zap (a different zap from `robot_laser.wav`), 1.23 s, 9.8 KB | Zap Fox hits | Kenney Digital Audio pack, `Audio/zap2.ogg` — https://kenney.nl/assets/digital-audio | Kenney | CC0 |
 | `npc_ember_owl_appear.ogg` | Low three-tone hoot, 0.83 s, 7.4 KB | Ember Owl appears | Kenney Digital Audio pack, `Audio/threeTone1.ogg` — https://kenney.nl/assets/digital-audio | Kenney | CC0 |
 | `npc_ember_owl_hit.ogg` | Soft cloth rustle (a wing buffet), 0.42 s, 12 KB | Ember Owl hits | Kenney RPG Audio pack, `Audio/cloth2.ogg` — https://kenney.nl/assets/rpg-audio | Kenney | CC0 |
+| `spell_fire.ogg` | Burst of flame, trimmed 5.00 s → 1.50 s, 17 KB | Fire spell cast | Kenney Sci-fi Sounds pack, `Audio/thrusterFire_000.ogg` — https://kenney.nl/assets/sci-fi-sounds | Kenney | CC0 |
+| `spell_water.ogg` | Wet slime bubble, 0.50 s, 20 KB | Water spell cast | Kenney Sci-fi Sounds pack, `Audio/slime_000.ogg` — https://kenney.nl/assets/sci-fi-sounds | Kenney | CC0 |
+| `spell_ice.ogg` | Glass shatter, 0.54 s, 8.2 KB | Ice spell cast | Kenney Impact Sounds pack, `Audio/impactGlass_medium_000.ogg` — https://kenney.nl/assets/impact-sounds | Kenney | CC0 |
+| `spell_wind.ogg` | Cloth rustle, 0.66 s, 16 KB | Wind spell cast | Kenney RPG Audio pack, `Audio/cloth1.ogg` — https://kenney.nl/assets/rpg-audio | Kenney | CC0 |
+| `spell_poison.ogg` | Wet slime bubble, trimmed 4.70 s → 1.20 s, 20 KB | Poison spell cast | Kenney Sci-fi Sounds pack, `Audio/slime_001.ogg` — https://kenney.nl/assets/sci-fi-sounds | Kenney | CC0 |
+| `spell_light.ogg` | Small bright laser, 0.24 s, 7.1 KB | Light spell cast; also the shimmer when a creature appears for a witch fighter | Kenney Sci-fi Sounds pack, `Audio/laserSmall_000.ogg` — https://kenney.nl/assets/sci-fi-sounds | Kenney | CC0 |
+| `spell_shadow.ogg` | Low rumble explosion, 1.00 s, 9.2 KB | Shadow spell cast | Kenney Sci-fi Sounds pack, `Audio/lowFrequency_explosion_001.ogg` — https://kenney.nl/assets/sci-fi-sounds | Kenney | CC0 |
+| `spell_dark.ogg` | Shimmering force field, 0.95 s, 25 KB | Dark spell cast | Kenney Sci-fi Sounds pack, `Audio/forceField_000.ogg` — https://kenney.nl/assets/sci-fi-sounds | Kenney | CC0 |
+| `spell_earth.ogg` | Rock impact, 0.94 s, 12 KB | Earth spell cast; also the dull thud when the Scrap Rat hits a witch fighter back | Kenney Impact Sounds pack, `Audio/impactMining_000.ogg` — https://kenney.nl/assets/impact-sounds | Kenney | CC0 |
+| `spell_lightning.ogg` | Big laser zap, 0.68 s, 25 KB | Lightning spell cast | Kenney Sci-fi Sounds pack, `Audio/laserLarge_000.ogg` — https://kenney.nl/assets/sci-fi-sounds | Kenney | CC0 |
+| `wand_swish.ogg` | Knife slice, 0.60 s, 15 KB | Witch/warlock wand hit in fights (the wand is the melee weapon until spells are learned) | Kenney RPG Audio pack, `Audio/knifeSlice.ogg` — https://kenney.nl/assets/rpg-audio | Kenney | CC0 |
+| `music_study.mp3` | Spellbound, 3:50, 7.0 MB | Study music track | Incompetech — https://incompetech.com/music/royalty-free/mp3-royaltyfree/Spellbound.mp3 | Kevin MacLeod | CC-BY 4.0 — credit required, see below |
+| `ambience_brewing.mp3` | "Spells-a-Brewin", about 1:21, 1.9 MB | Study ambience loop for brewing quests and for learning fire, water and poison spells | soundimage.org — Eric Matyas, "Spells-a-Brewin" | Eric Matyas | Free with attribution — credit required, see below |
+| `ambience_moonlight.mp3` | "Moonlight-Flying", about 1:32, 2.1 MB | Study ambience loop for moonlight quests and for learning ice, light, shadow and dark spells | soundimage.org — Eric Matyas, "Moonlight-Flying" | Eric Matyas | Free with attribution — credit required, see below |
+| `ambience_storm.mp3` | "Rain and Thunder Outside", about 8:04, 11 MB | Study ambience loop for storm quests and for learning wind, lightning and earth spells | soundimage.org — Eric Matyas, "Rain and Thunder Outside" | Eric Matyas | Free with attribution — credit required, see below |
 
 ## Quest ambience loops (Phase 23, 2026-11-19)
 
@@ -123,6 +143,41 @@ they are there, that creature simply plays no sound — the
 fight carries on silently, and the sounds start working on
 the next launch after the upload.
 
+## Witch study sounds (Phase 38, 2026-11-25)
+
+The study is the witch's own place, and it sounds like it:
+it has its own music track (`music_study.mp3`, "Spellbound"),
+its own ambience loops, and one cast sound per element. The
+layers stack the same way the hangout does: the study music
+plays underneath, and while the player is learning a spell
+they hear the ambience loop for that spell's family — brewing
+for fire, water and poison; storm for wind, lightning and
+earth; moonlight for ice, light, shadow and dark. When a study
+quest starts, the quest's own ambience replaces the learning
+ambience until the quest ends. When a spell finishes learning,
+that spell's own sound plays. The wand swish is the witch's
+melee hit sound — a witch attacks only with her wand until
+she has learned a spell; once a spell is learned it is cast
+instead, and the wand is only backup if a spell does not work.
+
+The 15 Phase 38 files are the 10 `spell_<element>.ogg` files,
+`wand_swish.ogg`, `music_study.mp3` and the 3
+`ambience_*.mp3` files in the table above — 11 Kenney CC0
+sounds (fire and poison trimmed shorter, noted in the table),
+1 Kevin MacLeod CC-BY 4.0 track (credit required) and 3 Eric
+Matyas loops (attribution required in the game). No Mixkit
+music is used anywhere, and no CC BY-NC sound is used
+anywhere.
+
+**To upload through the GitHub website** (Maren's tools
+cannot upload audio): the 15 files are prepared in
+`~/workspace/arena-of-makers-work/phase38-witch-study/sounds/`
+— upload them into `sounds/` on main with those exact
+filenames. Until they are there, the study still works: a
+missing cast sound just means the cast line speaks without
+its sound, and a missing music or ambience file just means
+that layer stays silent.
+
 ## Music — how it works now (two tracks, wired in 2026-11-18)
 
 - The game now has **two tracks** (`sounds.py`, `SOUND_FILES`):
@@ -155,6 +210,8 @@ the next launch after the upload.
 
 - Music: Jazz Brunch by Kevin MacLeod (incompetech.com), CC BY 4.0.
 - Music: Mesmerizing Galaxy Loop by Kevin MacLeod (incompetech.com), CC BY 4.0.
+- Music: Spellbound by Kevin MacLeod (incompetech.com), CC BY 4.0.
+- Study ambience: "Spells-a-Brewin", "Moonlight-Flying" and "Rain and Thunder Outside" — Music by Eric Matyas, www.soundimage.org.
 
 ## Notes on the replacements
 

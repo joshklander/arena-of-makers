@@ -17,6 +17,8 @@ import tempfile
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import game_logic
+import quests
+import spells
 
 
 def check(name, condition):
@@ -811,6 +813,363 @@ def main():
           plan_short["time_scale"] == 1
           and plan_short["seconds"] == 900
           and plan_short["raw_seconds"] == 900)
+
+    # The witch study (Phase 38, Makenna Nov 25, 2026): the
+    # spell table, study learning, casting in fights, the
+    # Study-tab lines, and the Belle rule for the board.
+    check("there are ten elements", len(spells.ELEMENTS) == 10)
+    check("there are five tiers", len(spells.TIERS) == 5)
+    all_names = [name for names in spells.SPELL_NAMES.values()
+                 for name in names]
+    check("there are fifty spells", len(all_names) == 50)
+    check("every spell name is different", len(set(all_names)) == 50)
+    check("every element has a first-person cast line",
+          all(spells.cast_line(element)
+              and spells.cast_line(element).startswith("I ")
+              and spells.cast_line(element).endswith("!")
+              for element in spells.ELEMENTS))
+    check("spell costs double each tier",
+          [spells.spell_cost(tier) for tier in spells.TIERS]
+          == [25, 50, 100, 200, 400])
+    check("spell times double each tier",
+          [spells.spell_minutes(tier) for tier in spells.TIERS]
+          == [15, 30, 60, 120, 240])
+    check("learning all fifty spells once costs 7750 credits",
+          sum(spells.spell_cost(tier) for tier in spells.TIERS) * 10
+          == 7750)
+    check("learning all fifty spells once takes 77 and a half hours",
+          sum(spells.spell_minutes(tier) for tier in spells.TIERS) * 10
+          == 4650)
+    check("legendary is the four-hour cap",
+          spells.spell_seconds("legendary") == 4 * 3600)
+    check("a level 1 spell adds no damage",
+          spells.spell_damage_bonus(1) == 0)
+    check("a level 2 spell adds 2 damage",
+          spells.spell_damage_bonus(2) == 2)
+    check("a level 5 spell adds 8 damage",
+          spells.spell_damage_bonus(5) == 8)
+    check("a cast line names its element",
+          spells.element_for_cast_line(
+              "I call the fire, and it bursts from my wand!") == "fire")
+    check("a hit line names no element",
+          spells.element_for_cast_line("I hit the Scrap Rat for 12.")
+          is None)
+
+    # The next spell per element, and the tier prerequisite.
+    check("a fresh witch's next fire spell is Ember Spark",
+          spells.next_spell_for_element(witch, "fire")
+          == ("common", "Ember Spark", 0, False))
+    check("common has no prerequisite",
+          spells.can_learn(witch, "fire", "common") == (True, None))
+    check("uncommon needs common first",
+          spells.can_learn(witch, "fire", "uncommon")[0] is False
+          and "Ember Spark"
+          in spells.can_learn(witch, "fire", "uncommon")[1])
+    check("an unknown element is refused",
+          spells.can_learn(witch, "arcane", "common")[0] is False)
+    learned_all_fire = game_logic.new_fighter("Learned", "witch", "female")
+    learned_all_fire["spells"] = {"fire": {
+        "common": 1, "uncommon": 1, "rare": 1, "epic": 1,
+        "legendary": 1}}
+    check("after all five fire tiers the next is an upgrade",
+          spells.next_spell_for_element(learned_all_fire, "fire")
+          == ("common", "Ember Spark", 1, True))
+
+    # Study learning, offline mirror: start, pause, resume,
+    # finish, upgrade — and the blocks (kind, prerequisite,
+    # one spell at a time, broke).
+    student = game_logic.new_fighter("Student", "witch", "female")
+    student["credits"] = 500
+    check("a new witch has no spells and no study",
+          spells.spells_of(student) == {}
+          and spells.study_of(student) is None
+          and game_logic.study_is_learning(student) is False)
+    check("a new fighter starts with no spells and no study",
+          game_logic.new_fighter("New", "witch")["spells"] == {}
+          and game_logic.new_fighter("New", "witch")["study"] is None)
+    check("a robot cannot learn spells",
+          "only a witch" in (
+              game_logic.study_start(
+                  game_logic.new_fighter("Rob", "robot"),
+                  "fire", "common") or ""))
+    check("a chef cannot learn spells",
+          "only a witch" in (
+              game_logic.study_start(
+                  game_logic.new_fighter("Cook", "chef"),
+                  "fire", "common") or ""))
+    check("learning starts when affordable",
+          game_logic.study_start(student, "fire", "common",
+                                 now=1000000.0) is None)
+    check("learning costs 25 credits up front",
+          student["credits"] == 475)
+    check("the study records the spell and its finish",
+          student["study"]["element"] == "fire"
+          and student["study"]["tier"] == "common"
+          and student["study"]["name"] == "Ember Spark"
+          and student["study"]["level"] == 1
+          and student["study"]["finish_at"] == 1000000.0 + 900)
+    check("the study status names the spell and the time",
+          "Ember Spark" in (
+              game_logic.study_status(student, now=1000000.0) or "")
+          and "about 15 minutes" in (
+              game_logic.study_status(student, now=1000000.0) or ""))
+    check("a second spell is blocked while learning",
+          "already learning" in (
+              game_logic.study_start(student, "water", "common",
+                                     now=1000001.0) or ""))
+    check("the study is not ready early",
+          game_logic.finish_study_if_ready(student, now=1000000.0 + 60)
+          is None)
+    check("pausing freezes 14 minutes",
+          game_logic.study_pause(student, now=1000000.0 + 60) == 840)
+    check("a paused study says paused",
+          "paused" in (
+              game_logic.study_status(student, now=1000000.0 + 60) or ""))
+    check("a paused study never finishes",
+          game_logic.finish_study_if_ready(student, now=1000000.0 + 100000)
+          is None)
+    check("resuming the same spell is free",
+          game_logic.study_start(student, "fire", "common",
+                                 now=1000000.0 + 120) is None
+          and student["credits"] == 475)
+    check("resuming keeps the same remaining time",
+          student["study"]["finish_at"] == 1000000.0 + 120 + 840)
+    line = game_logic.finish_study_if_ready(
+        student, now=1000000.0 + 120 + 840 + 1)
+    check("the spell finishes after its time",
+          line is not None and "I learned Ember Spark!" in line)
+    check("finishing grants level 1",
+          student["spells"] == {"fire": {"common": 1}}
+          and student["study"] is None)
+    check("learning the same spell again upgrades it",
+          game_logic.study_start(student, "fire", "common",
+                                 now=2000000.0) is None
+          and student["study"]["level"] == 2
+          and student["credits"] == 450)
+    line = game_logic.finish_study_if_ready(student, now=2000000.0 + 901)
+    check("the upgrade finishes at level 2",
+          line is not None and "My Ember Spark is now level 2." in line
+          and student["spells"]["fire"]["common"] == 2)
+    broke = game_logic.new_fighter("Broke", "witch", "female")
+    broke["credits"] = 10
+    broke_error = game_logic.study_start(broke, "fire", "common",
+                                         now=1000000.0)
+    check("a broke witch cannot start learning",
+          broke_error is not None
+          and "25 credits" in broke_error
+          and "10 credits" in broke_error)
+    # Spell trainers (Phase 38, Makenna Nov 25, 2026): learning
+    # is taught by another warlock or witch, in the trainer's
+    # own voice — Hazel for brewing, Rowan for storm, Wren for
+    # moonlight, Bram for every upgrade. The voices are the
+    # four study givers, all verified alive on Microsoft's live
+    # Edge list Nov 25, 2026.
+    check("every element has a trainer",
+          all(spells.trainer_for_spell(element)[0] is not None
+              for element in spells.ELEMENTS))
+    check("Hazel teaches fire, water and poison",
+          [spells.trainer_for_spell(element)[0]
+           for element in ("fire", "water", "poison")]
+          == ["Hazel", "Hazel", "Hazel"])
+    check("Rowan teaches wind, lightning and earth",
+          [spells.trainer_for_spell(element)[0]
+           for element in ("wind", "lightning", "earth")]
+          == ["Rowan", "Rowan", "Rowan"])
+    check("Wren teaches ice, light, shadow and dark",
+          [spells.trainer_for_spell(element)[0]
+           for element in ("ice", "light", "shadow", "dark")]
+          == ["Wren", "Wren", "Wren", "Wren"])
+    check("Bram teaches every upgrade, whatever the element",
+          all(spells.trainer_for_spell(element, True)
+              == ("Bram", "en-US-SteffanNeural")
+              for element in spells.ELEMENTS))
+    check("the trainer voices are the four study givers' voices",
+          set(voice for _trainer, voice in
+              [spells.trainer_for_spell(element)
+               for element in spells.ELEMENTS]
+              + [spells.trainer_for_spell("fire", True)])
+          == {"en-US-AvaNeural", "en-US-RogerNeural",
+              "en-US-AnaNeural", "en-US-SteffanNeural"})
+    check("an unknown element has no trainer, never a crash",
+          spells.trainer_for_spell("arcane") == (None, None))
+    check("a trainer's opening talks to the player by name",
+          "Katprincess" in spells.trainer_opening_line(
+              "Hazel", "Katprincess", "Ember Spark")
+          and "Ember Spark" in spells.trainer_opening_line(
+              "Hazel", "Katprincess", "Ember Spark"))
+    check("the opening uses the fighter's real name, not Katprincess",
+          "Katprincess" not in spells.trainer_opening_line(
+              "Hazel", "Piper", "Ember Spark")
+          and "Piper" in spells.trainer_opening_line(
+              "Hazel", "Piper", "Ember Spark"))
+    check("a trainer's learn line talks to the player by name",
+          "Katprincess" in spells.trainer_learn_line(
+              "Rowan", "Katprincess", "Gale Rush")
+          and "Gale Rush" in spells.trainer_learn_line(
+              "Rowan", "Katprincess", "Gale Rush"))
+    check("Bram's upgrade line names the spell and its new level",
+          "Ember Spark" in spells.trainer_upgrade_line(
+              "Katprincess", "Ember Spark", 2)
+          and "level 2" in spells.trainer_upgrade_line(
+              "Katprincess", "Ember Spark", 2))
+    check("the same spell always gets the same trainer line",
+          spells.trainer_opening_line("Hazel", "Katprincess",
+                                      "Ember Spark")
+          == spells.trainer_opening_line("Hazel", "Katprincess",
+                                         "Ember Spark"))
+    check("every teaching line is short enough for Alexa",
+          all(len(line.split()) < 25
+              for lines in list(spells.TRAINER_OPENINGS.values())
+              + list(spells.TRAINER_LEARN_LINES.values())
+              + [spells.TRAINER_UPGRADE_LINES]
+              for line in lines))
+    check("an unknown trainer has no teaching line",
+          spells.trainer_opening_line("Nobody", "Katprincess",
+                                      "Ember Spark") is None
+          and spells.trainer_learn_line("Nobody", "Katprincess",
+                                        "Ember Spark") is None)
+    # An old fighter made before the study has no "study" key
+    # at all: missing means nothing learning, never a crash.
+    old_study = game_logic.new_fighter("OldStudy", "robot")
+    del old_study["study"]
+    check("an old fighter with no study key is not learning",
+          game_logic.study_is_learning(old_study) is False
+          and game_logic.finish_study_if_ready(old_study, now=1000000.0)
+          is None
+          and game_logic.study_pause(old_study, now=1000000.0) is None)
+    check("status text with no study key does not crash",
+          "OldStudy" in game_logic.status_text(old_study, now=1000000.0))
+    # A broken study record (null finish) is cleared on the
+    # next tick, like the Phase 30 broken upgrade — never a
+    # crash in the once-a-second tick.
+    broken_study = game_logic.new_fighter("BrokenStudy", "witch", "female")
+    broken_study["study"] = {
+        "element": "fire", "tier": "common", "name": "Ember Spark",
+        "level": 1, "finish_at": None, "paused": False}
+    check("a broken study record is not learning",
+          game_logic.study_is_learning(broken_study) is False)
+    line = game_logic.finish_study_if_ready(broken_study, now=1000000.0)
+    check("a broken study record is cleared, not crashed",
+          line is not None and "broken study is cleared" in line
+          and broken_study["study"] is None)
+    # Switching resets spells and study, like the quest level.
+    switcher2 = game_logic.new_fighter("Switcher2", "witch", "female")
+    switcher2["spells"] = {"fire": {"common": 3}}
+    switcher2["study"] = {
+        "element": "fire", "tier": "rare", "name": "Burning Veil",
+        "level": 1, "finish_at": 1000000.0 + 3600, "paused": False,
+        "remaining_seconds": 0}
+    switched2, error = game_logic.switched_fighter(switcher2, "robot")
+    check("switching resets spells and study",
+          error is None and switched2["spells"] == {}
+          and switched2["study"] is None)
+
+    # Casting in fights: a witch with nothing learned fights
+    # wand-only, no cast line; a witch with a learned spell
+    # casts it, and the cast line comes right before its hit
+    # line. A robot never casts.
+    wand_only = game_logic.fight(
+        game_logic.new_fighter("WandOnly", "witch", "female"),
+        rng=random.Random(38))
+    check("a witch with no spells fights wand-only",
+          not any(line in spells.CAST_LINES.values()
+                  for line in wand_only["lines"]))
+
+    def _fresh_caster():
+        fighter = game_logic.new_fighter("Caster", "witch", "female")
+        fighter["spells"] = {"fire": {"common": 1}}
+        return fighter
+
+    cast_lines = []
+    cast_fight_lines = []
+    for seed in range(20):
+        result = game_logic.fight(_fresh_caster(),
+                                  rng=random.Random(seed))
+        cast_lines = [line for line in result["lines"]
+                      if line in spells.CAST_LINES.values()]
+        if cast_lines:
+            cast_fight_lines = result["lines"]
+            break
+    check("a witch with a learned spell casts it", bool(cast_lines))
+    check("the cast is the fire line",
+          bool(cast_lines)
+          and cast_lines[0] == spells.cast_line("fire"))
+    check("a cast line is followed at once by its hit line",
+          any(cast_fight_lines[i] in spells.CAST_LINES.values()
+              and "I hit the " in cast_fight_lines[i + 1]
+              for i in range(len(cast_fight_lines) - 1)))
+    robot_fight = game_logic.fight(
+        game_logic.new_fighter("RobFight", "robot"),
+        rng=random.Random(7))
+    check("a robot never casts",
+          not any(line in spells.CAST_LINES.values()
+                  for line in robot_fight["lines"]))
+
+    # The Study-tab lines: one per element, cost and time in
+    # plain words, and the learning/paused states.
+    check("the fire line offers Ember Spark for 25 credits, 15 minutes",
+          spells.study_spell_line(
+              game_logic.new_fighter("Lister", "witch", "female"), "fire")
+          == "Fire: learn Ember Spark, common, 25 credits, "
+             "15 minutes (press Enter)")
+    liner = game_logic.new_fighter("Liner", "witch", "female")
+    liner["credits"] = 500
+    game_logic.study_start(liner, "fire", "common", now=1000000.0)
+    check("the line for a learning spell says how long is left",
+          spells.study_spell_line(liner, "fire", now=1000000.0 + 60)
+          .startswith("Fire: learning Ember Spark,")
+          and "about 14 minutes" in spells.study_spell_line(
+              liner, "fire", now=1000000.0 + 60))
+    game_logic.study_pause(liner, now=1000000.0 + 60)
+    check("the line for a paused spell offers to pick it up",
+          "paused" in spells.study_spell_line(liner, "fire")
+          and spells.study_spell_line(liner, "fire").endswith(
+              "(press Enter)"))
+
+    # The givers and the board: ten givers, five male and five
+    # female, and the Belle rule — every giver can be first.
+    check("the hangout has ten givers", len(quests.GIVERS) == 10)
+    check("five male and five female givers",
+          sum(1 for giver in quests.GIVERS
+              if giver["gender"] == "male") == 5
+          and sum(1 for giver in quests.GIVERS
+                  if giver["gender"] == "female") == 5)
+    check("the four witch givers are Hazel, Rowan, Wren and Bram",
+          set(spells.STUDY_GIVERS)
+          == {"Hazel", "Rowan", "Wren", "Bram"}
+          and all(giver in [entry["name"] for entry in quests.GIVERS]
+                  for giver in spells.STUDY_GIVERS))
+    first_board = quests.starting_board(random.Random(38))
+    check("a starting board has 2 Easy, 2 Medium and 1 Hard",
+          [quest["difficulty"] for quest in first_board]
+          == ["Easy", "Easy", "Medium", "Medium", "Hard"])
+    check("a starting board mixes male and female givers",
+          len(set(quest["giver_gender"] for quest in first_board)) == 2)
+    rng = random.Random(38)
+    first_givers = set()
+    for _ in range(200):
+        first_givers.add(quests.starting_board(rng)[0]["giver"])
+    check("every giver can be first on the starting board",
+          first_givers
+          == set(entry["name"] for entry in quests.GIVERS))
+    template_names = [template["name"]
+                      for template in quests.QUEST_TEMPLATES]
+    witch_fair = quests.generate_quest(
+        random.Random(38), "Hard",
+        existing_names=[name for name in template_names
+                        if name != "The Witch's Fair"])
+    check("the Witch's Fair is a co-op quest from Hazel",
+          witch_fair["name"] == "The Witch's Fair"
+          and witch_fair["coop"] is True
+          and witch_fair["giver"] == "Hazel")
+    grand_fair = quests.generate_quest(
+        random.Random(38), "Hard",
+        existing_names=[name for name in template_names
+                        if name != "The Grand Hangout Fair"])
+    check("the Grand Hangout Fair is still a co-op quest",
+          grand_fair["name"] == "The Grand Hangout Fair"
+          and grand_fair["coop"] is True
+          and grand_fair["giver"] == "Marge")
 
     # Status text is one plain summary.
     text = game_logic.status_text(saved)

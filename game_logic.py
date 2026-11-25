@@ -32,6 +32,7 @@ import random
 import time
 
 import quests
+import spells
 
 # The Healing skill (Phase 25, Makenna Nov 18, 2026): bought
 # with credits on the Shop tab, like weapon and armor, but
@@ -337,6 +338,13 @@ def new_fighter(name, kind, gender="male"):
         "quest_xp": 0,
         "quest_points": 0,
         "quest_stats": {"charm": 0, "renown": 0, "insight": 0},
+        # Spells (Phase 38): learned spells, as
+        # {element: {tier: level}}, and the spell being
+        # learned now, or None. A fighter made before the
+        # study has neither: missing means nothing learned
+        # and nothing learning — never a crash.
+        "spells": {},
+        "study": None,
     }
 
 
@@ -377,8 +385,10 @@ def switched_fighter(fighter, new_kind):
     giver 0, no board, no active quest, no finished-quest
     history, no free gift waiting), weapon and armor upgrades
     (both back to level 1, the fresh weapon and armor for the
-    new kind, with no upgrades bought), and any upgrade or
-    repair running now (the new fighter starts at full health).
+    new kind, with no upgrades bought), learned spells and any
+    spell being learned (Phase 38: the study starts from zero,
+    like the quest level), and any upgrade or repair running
+    now (the new fighter starts at full health).
     What stays: Healing (Second Wind) at its current level,
     credits minus the switch cost, wins and losses, name,
     gender and voice. Weapon and armor start at level 1, not
@@ -432,6 +442,11 @@ def switched_fighter(fighter, new_kind):
     fighter["quests_joined"] = []
     fighter["quests_active"] = None
     fighter["quests_gift_pending"] = None
+    # Spells (Phase 38): a new fighter starts with no spells
+    # learned and nothing being learned — the study starts
+    # from zero, like the quest level does.
+    fighter["spells"] = {}
+    fighter["study"] = None
     fighter["upgrade"] = None
     fighter["upgrade_queue"] = None
     fighter["upgrade_total"] = 0
@@ -932,13 +947,24 @@ def fight(fighter, rng=None, now=None, npc_id="scrap_rat"):
 
     def fighter_hit():
         """One fighter hit: damage, maybe a crit, the creature's
-        soak, then the fairness guard. Returns (damage, crit)."""
-        hit = weapon_damage(fighter) + rng.randint(0, 3)
+        soak, then the fairness guard. Returns (damage, crit).
+        A witch with learned spells casts one at random (see
+        spells.py): the spell's level adds damage, and the
+        cast line is spoken before the hit line. A witch with
+        nothing learned yet hits with the wand only, no cast
+        line, no bonus."""
+        spell = None
+        bonus = 0
+        if fighter.get("kind") == "witch":
+            spell = spells.pick_spell(fighter, rng)
+            if spell is not None:
+                bonus = spells.spell_damage_bonus(spell[3])
+        hit = weapon_damage(fighter) + bonus + rng.randint(0, 3)
         crit = rng.random() * 100 < fighter_crit
         if crit:
             hit = int(round(hit * 1.5))
         hit = max(1, hit - creature_soak)
-        return _guarded_hit(hit, creature_max), crit
+        return _guarded_hit(hit, creature_max), crit, spell
 
     def creature_hit(power=1.0):
         """One creature hit: damage, maybe a crit, the fighter's
@@ -968,16 +994,24 @@ def fight(fighter, rng=None, now=None, npc_id="scrap_rat"):
                 % (round_no, creature["name"])
             )
             return False
-        hit, crit = fighter_hit()
+        hit, crit, spell = fighter_hit()
         if sugar_trap_armed:
             # The sugar trap makes this one hit sticky and weak.
             sugar_trap_armed = False
             hit = max(1, hit // 2)
-        return _apply_fighter_hit(hit, crit)
+        return _apply_fighter_hit(hit, crit, spell)
 
-    def _apply_fighter_hit(hit, crit):
+    def _apply_fighter_hit(hit, crit, spell=None):
         nonlocal creature_hp
         creature_hp -= hit
+        if spell is not None:
+            # The cast line comes first, then the hit line —
+            # the same order as a creature appearing, then the
+            # fighter hitting (witch draft, section 5). The
+            # element's sound plays under the cast line (see
+            # main.py), not under the hit line: the spell IS
+            # the hit, the wand is only backup.
+            lines.append(spells.cast_line(spell[0]))
         if crit:
             lines.append(
                 "Round %d: Critical hit! I hit the %s for %d."
@@ -1485,6 +1519,165 @@ def upgrade_status(fighter, now=None):
     return text
 
 
+# -- the study (Phase 38) -------------------------------------------
+# Offline mirrors of the server study functions (see the Phase 38
+# migration): the same rules, for a game with no online key. The
+# server is the judge online; these only run the local save.
+
+def study_is_learning(fighter):
+    """True only when the fighter has a real study record: an
+    element and tier the game knows, with a numeric finish time
+    (or a paused record with a frozen remaining time). Anything
+    else — missing, null, or the wrong shape — counts as not
+    learning (the Phase 30 lesson: a broken record must never
+    crash the once-a-second tick)."""
+    study = spells.study_of(fighter)
+    if study is None:
+        return False
+    if study.get("paused"):
+        remaining = study.get("remaining_seconds")
+        return isinstance(remaining, (int, float)) and not isinstance(
+            remaining, bool)
+    finish = study.get("finish_at")
+    return isinstance(finish, (int, float)) and not isinstance(
+        finish, bool)
+
+
+def study_start(fighter, element, tier, now=None):
+    """Start learning a spell, or resume the same paused one.
+    Returns a plain-words error, or None when learning started.
+
+    Only a witch or warlock can learn spells — the study teaches
+    spells, and only witches have them (a proposal from this
+    build; Makenna can open it later). A tier needs the tier
+    below it in the same element learned first. One spell at a
+    time, and no cancelling once started — like upgrades. A
+    paused study blocks a different spell: finish the one you
+    started first. Learning an already-learned spell upgrades
+    it one level. The cost is charged up front."""
+    if now is None:
+        now = time.time()
+    if fighter.get("kind") != "witch":
+        return ("The study teaches spells, and only a witch or "
+                "warlock can learn them. Switch to a witch in "
+                "Settings to study here — the study quests below "
+                "are open to everyone, though.")
+    ok, reason = spells.can_learn(fighter, element, tier)
+    if not ok:
+        return reason
+    study = spells.study_of(fighter)
+    if study is not None:
+        if (study.get("element") == element
+                and study.get("tier") == tier
+                and study.get("paused")):
+            # Resume the same paused spell: same remaining time,
+            # no second charge (the quest resume pattern).
+            remaining = max(0.0, study.get("remaining_seconds") or 0)
+            study["finish_at"] = now + remaining
+            study["paused"] = False
+            study["remaining_seconds"] = 0
+            return None
+        return (
+            "I am already learning %s. Finish it first, in the study."
+            % (study.get("name") or "a spell"))
+    level = spells.spell_level(fighter, element, tier)
+    cost = spells.spell_cost(tier)
+    if credits_of(fighter) < cost:
+        return (
+            "Learning %s costs %d credits and I have %d credits."
+            % (spells.spell_name(element, tier), cost,
+               credits_of(fighter))
+        )
+    fighter["credits"] = credits_of(fighter) - cost
+    fighter.pop("points", None)
+    fighter["study"] = {
+        "element": element,
+        "tier": tier,
+        "name": spells.spell_name(element, tier),
+        "level": level + 1,
+        "finish_at": now + spells.spell_seconds(tier),
+        "paused": False,
+        "remaining_seconds": 0,
+    }
+    return None
+
+
+def study_pause(fighter, now=None):
+    """Freeze the study's remaining time, so its clock stops
+    while the player is away from the study. Best effort, like
+    the quest pause: a study with nothing to freeze is left
+    alone. Returns the frozen remaining seconds, or None."""
+    if now is None:
+        now = time.time()
+    study = spells.study_of(fighter)
+    if study is None or study.get("paused"):
+        return None
+    remaining = max(0.0, (study.get("finish_at") or 0) - now)
+    study["paused"] = True
+    study["remaining_seconds"] = remaining
+    return remaining
+
+
+def _grant_study_level(fighter, study):
+    """Give the fighter the spell level a finished study earned:
+    first learn is level 1, a repeat is one level higher. The
+    spells map grows one tier at a time, never overwriting the
+    other elements."""
+    element = study.get("element")
+    tier = study.get("tier")
+    level = int(study.get("level") or 1)
+    learned = fighter.get("spells") or {}
+    tiers = dict(learned.get(element) or {})
+    tiers[tier] = max(int(tiers.get(tier) or 0), level)
+    learned[element] = tiers
+    fighter["spells"] = learned
+    return level
+
+
+def finish_study_if_ready(fighter, now=None):
+    """Apply a finished study. Returns its plain-words line, or
+    None when nothing is finished yet. A broken study record
+    (wrong shape, null finish) is cleared instead of crashing
+    the tick, and said once. A paused study never finishes
+    while its clock is frozen — unless its frozen time is
+    already zero, when it may finish, like a paused quest."""
+    if now is None:
+        now = time.time()
+    study = spells.study_of(fighter)
+    if study is None:
+        return None
+    if not study_is_learning(fighter):
+        fighter["study"] = None
+        return ("That broken study is cleared. "
+                "I am not learning a spell right now.")
+    if study.get("paused"):
+        if (study.get("remaining_seconds") or 0) > 0:
+            return None
+    elif now < (study.get("finish_at") or 0):
+        return None
+    level = _grant_study_level(fighter, study)
+    name = study.get("name") or spells.spell_name(
+        study.get("element"), study.get("tier")) or "a spell"
+    fighter["study"] = None
+    if level <= 1:
+        return (
+            "I learned %s! It is level 1. My spells hit a little "
+            "harder as they level up."
+            % name)
+    return "My %s is now level %d." % (name, level)
+
+
+def study_status(fighter, now=None):
+    """Plain-words line about the spell being learned, or None
+    when nothing is being learned. Said by the player, in the
+    study's 5-minute update."""
+    if now is None:
+        now = time.time()
+    if not study_is_learning(fighter):
+        return None
+    return spells.study_status_line(fighter, now)
+
+
 def status_text(fighter, now=None):
     """One plain summary of the fighter, for the Home tab."""
     if now is None:
@@ -1530,4 +1723,7 @@ def status_text(fighter, now=None):
     upgrade = upgrade_status(fighter, now)
     if upgrade:
         text += " " + upgrade
+    study = study_status(fighter, now)
+    if study:
+        text += " " + study
     return text

@@ -4,7 +4,7 @@ Quests are NOT fights: nobody gets hurt, nobody loses health,
 and no quest ever turns into a battle. They are jobs, favours
 and puzzles in the hangout — fetching, fixing, tasting, calming
 something down, helping somebody out. A quest is open to every
-fighter, robot or chef alike: fighter kind never locks anyone
+fighter, robot, chef or witch alike: fighter kind never locks anyone
 out of a quest. A robot can do chef quests, a chef can do robot
 quests, and mixed-world quests are open to everyone.
 
@@ -12,6 +12,12 @@ Six givers, three male and three female, each with their own
 Edge voice (chosen by character, never by the player's gender):
 Bolt and Pip and Gus are male; Marge and Dot and Belle are
 female. The same giver always sounds the same.
+
+Four witch givers joined in Phase 38 (Makenna, Nov 25, 2026):
+Hazel and Wren are female, Rowan and Bram are male, so the
+hangout is ten givers, five male and five female. Their quests
+are open to every fighter, robot, chef and witch alike, and
+they also give the study quests.
 
 The server is the only judge: it generates the quests, checks
 the work and pays the credits (see supabase/migrations/).
@@ -82,6 +88,16 @@ import random
 
 # Givers: name, Edge voice, gender, personality. Three male,
 # three female, kept in balance on purpose (Makenna, 2026-11-18).
+# Phase 38 added four witch givers, two male and two female,
+# keeping the balance at five and five. The four voices were
+# checked against the live Edge voice list on 2026-11-25 (see
+# WITCH_FIGHTER_DESIGN.md section 7): Ava, Roger, Ana and
+# Steffan are all listed en-US voices, and none is already used
+# by a giver or by the player's Guy/Aria voices. A live
+# synthesis check from this machine was blocked by the sandbox
+# proxy (SSL), not by the voices — the game still has to be
+# confirmed by ear, like Phase 27, and a dead voice falls back
+# to the player's voice for that one line (Phase 27).
 GIVERS = [
     {"name": "Bolt", "voice": "en-US-ChristopherNeural",
      "gender": "male",
@@ -101,11 +117,23 @@ GIVERS = [
     {"name": "Belle", "voice": "en-US-EmmaNeural",
      "gender": "female",
      "personality": "the cheerful baker"},
+    {"name": "Hazel", "voice": "en-US-AvaNeural",
+     "gender": "female",
+     "personality": "the warm herb witch"},
+    {"name": "Rowan", "voice": "en-US-RogerNeural",
+     "gender": "male",
+     "personality": "the lively storm caller"},
+    {"name": "Wren", "voice": "en-US-AnaNeural",
+     "gender": "female",
+     "personality": "the bright moonlight enchanter"},
+    {"name": "Bram", "voice": "en-US-SteffanNeural",
+     "gender": "male",
+     "personality": "the slow, calm old warlock"},
 ]
 
 GIVER_BY_NAME = {giver["name"]: giver for giver in GIVERS}
 
-# The 12 example quests from the design: starting seeds, not
+# The 18 example quests from the design: starting seeds, not
 # the whole list. The generator varies their items, places and
 # helpers, so the same quest never repeats exactly.
 QUEST_TEMPLATES = [
@@ -146,6 +174,30 @@ QUEST_TEMPLATES = [
      "ambience": "cooking",
      "description": "The whole hangout is holding a fair. Robots and chefs, everyone working together, one big day.",
      "coop": True},
+    # Witch quests (Phase 38, from the witch draft section 7):
+    # the four new givers' starting seeds. Like the rest, they
+    # are open to every fighter, and the generator varies them.
+    # Their ambience kinds are the three new loops: brewing,
+    # storm and moonlight (see AMBIENCE_SOUNDS below).
+    {"name": "Gather Moonpetal", "difficulty": "Easy", "giver": "Hazel",
+     "ambience": "gathering",
+     "description": "Fetch three moonpetal leaves before dawn."},
+    {"name": "Brew the Calming Draught", "difficulty": "Medium", "giver": "Hazel",
+     "ambience": "brewing",
+     "description": "Pick the right herbs in the right order for a calming draught. A wrong herb just gets a kind word and another try."},
+    {"name": "Calm the Storm", "difficulty": "Medium", "giver": "Rowan",
+     "ambience": "storm",
+     "description": "Talk a little storm cloud down before it soaks the hangout."},
+    {"name": "Charge the Moonstone", "difficulty": "Easy", "giver": "Wren",
+     "ambience": "moonlight",
+     "description": "Hold the moonstone steady in the moonlight until it glows."},
+    {"name": "Mend the Shadow", "difficulty": "Hard", "giver": "Bram",
+     "ambience": "moonlight",
+     "description": "A shadow has torn loose and is frightening the drones. Stitch it back gently, in three steps."},
+    {"name": "The Witch's Fair", "difficulty": "Hard", "giver": "Hazel",
+     "ambience": "brewing",
+     "description": "The whole hangout holds a witch fair — potion stall, herb stall, and fortune stall — like the Grand Hangout Fair, full reward for everyone who joins.",
+     "coop": True},
 ]
 
 TEMPLATE_BY_NAME = {t["name"]: t for t in QUEST_TEMPLATES}
@@ -157,16 +209,24 @@ TEMPLATE_BY_NAME = {t["name"]: t for t in QUEST_TEMPLATES}
 # the chef's sizzle, repair reuses the robot servo, and
 # gathering and cleaning have their own loop files
 # (ambience_gathering.mp3, ambience_cleaning.mp3 — see
-# SOUNDS.md). An ambience whose file is not in sounds/ yet
-# is silent, never an error: the game carries on, and the
-# loop starts working once the file is uploaded.
-AMBIENCES = ("cooking", "repair", "gathering", "cleaning")
+# SOUNDS.md). Phase 38 added three more loops for the witch
+# quests: brewing (a bubbling potion), storm (wind and soft
+# rain) and moonlight (a quiet night) — ambience_brewing.mp3,
+# ambience_storm.mp3 and ambience_moonlight.mp3. An ambience
+# whose file is not in sounds/ yet is silent, never an error:
+# the game carries on, and the loop starts working once the
+# file is uploaded.
+AMBIENCES = ("cooking", "repair", "gathering", "cleaning",
+             "brewing", "storm", "moonlight")
 
 AMBIENCE_SOUNDS = {
     "cooking": "chef_sizzle",
     "repair": "robot_servo",
     "gathering": "ambience_gathering",
     "cleaning": "ambience_cleaning",
+    "brewing": "ambience_brewing",
+    "storm": "ambience_storm",
+    "moonlight": "ambience_moonlight",
 }
 
 
@@ -508,6 +568,30 @@ GIVER_OPENINGS = {
         ("Katprincess, I'm so glad you're here to help! ",
          " Thank you ever so much!"),
     ),
+    "Hazel": (
+        ("Katprincess, dear, my herbs need gathering. ",
+         " Thank you, love."),
+        ("Katprincess, come sit by my cauldron a moment. ",
+         " You're a dear, thank you."),
+    ),
+    "Rowan": (
+        ("Katprincess, ha! A storm is coming, and I need a hand! ",
+         " Let's catch it together!"),
+        ("Katprincess, the clouds are gathering — help me calm them. ",
+         " We'll laugh at the thunder after!"),
+    ),
+    "Wren": (
+        ("Katprincess, the moon is up, and I need your help. ",
+         " Thank you ever so much!"),
+        ("Katprincess, oh, good — the night needs us. ",
+         " Let's get to it under the moon!"),
+    ),
+    "Bram": (
+        ("Katprincess, slowly now. An old warlock needs a hand. ",
+         " Thank you, child."),
+        ("Katprincess, the shadows are restless tonight. ",
+         " Take your time. There's no hurry."),
+    ),
 }
 
 GIVER_PROGRESS_CLOSERS = {
@@ -522,6 +606,14 @@ GIVER_PROGRESS_CLOSERS = {
             "That's the way. Nearly done."),
     "Belle": ("You're doing wonderfully!",
               "Oh, you're nearly there — keep going!"),
+    "Hazel": ("Lovely work, dear. The herbs thank you.",
+              "Gently does it. You're nearly there."),
+    "Rowan": ("Ha! You're taming it! Keep going!",
+              "The storm is listening to you. Nearly there!"),
+    "Wren": ("You're glowing, just like the moonstone!",
+             "Beautiful work under the moon. Keep going!"),
+    "Bram": ("Slow and steady. Well done, child.",
+             "The shadows are settling. Nearly done."),
 }
 
 
@@ -587,13 +679,13 @@ def generate_quest(rng=None, difficulty=None, existing_ids=None,
     place and helper, so the same quest never repeats exactly.
     existing_ids are never dealt again, and a template name
     already on the board is never dealt twice on the same
-    board. Co-op quests (the Grand Hangout Fair) are only
-    dealt when coop_allowed is true, so at most one co-op
-    quest is ever on the board at once. No quest is ever
-    restricted by fighter kind: every quest here is open to
-    robots and chefs alike. The quest's duration grows with
-    the quest level (Phase 26); at quest level 1 it is the
-    plain base range.
+    board. Co-op quests (the Grand Hangout Fair and the
+    Witch's Fair) are only dealt when coop_allowed is true, so
+    at most one co-op quest is ever on the board at once. No
+    quest is ever restricted by fighter kind: every quest here
+    is open to robots, chefs and witches alike. The quest's
+    duration grows with the quest level (Phase 26); at quest
+    level 1 it is the plain base range.
     """
     rng = rng or random.Random()
     existing = set(existing_ids or [])
@@ -638,10 +730,15 @@ def generate_quest(rng=None, difficulty=None, existing_ids=None,
 def starting_board(rng=None, quest_level=1):
     """The starting board of 5: 2 Easy, 2 Medium, 1 Hard.
 
-    Givers are dealt in a shuffled order from all six, so the
-    board always holds both male and female givers — three
-    male, three female in the full set, never one gender only.
-    Durations grow with the quest level (Phase 26).
+    Givers are dealt in a shuffled order from all ten, so the
+    board always holds both male and female givers — five
+    male, five female in the full set, never one gender only.
+    Every giver can land in slot 1: the Belle rule (Makenna,
+    Nov 25, 2026) — no giver may be reachable only in a later
+    slot. A board of 5 dealt from 10 givers always leaves some
+    givers off any single board; that is fine. What must never
+    happen is a giver who can never be first. Durations grow
+    with the quest level (Phase 26).
     """
     rng = rng or random.Random()
     givers = list(GIVERS)

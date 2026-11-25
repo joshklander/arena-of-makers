@@ -295,6 +295,66 @@ def pause_quest(config, timeout=15):
     return data, error
 
 
+def new_study_quest(config, timeout=15):
+    """Deal one fresh study quest, on the server — a quest
+    from one of the four witch givers (Hazel, Rowan, Wren,
+    Bram), for the study loop. The study loop calls this
+    when the board has no witch-giver quest waiting. Returns
+    (data, error). data has quest, the one new quest, and
+    the fighter."""
+    data, error = rpc(config, "arena_new_study_quest",
+                      _session_args(config), timeout)
+    data = data or {}
+    return data, error
+
+
+# -- the study (Phase 38) -------------------------------------------
+# The server is the only judge of study learning, exactly as
+# it is of fights and upgrades: the game never grants itself
+# a spell, it only shows what the server sends back.
+
+def study_start(config, element, tier, timeout=15):
+    """Start learning a spell in the study, on the server —
+    or resume the same paused spell from its frozen remaining
+    time. Returns (data, error). data has study (with
+    finish_at), the spell's name and level, and the fighter.
+    Only a witch or warlock can learn spells; a tier needs
+    the tier below it learned first; one spell at a time, and
+    the cost is charged up front."""
+    args = _session_args(config)
+    args["p_element"] = element
+    args["p_tier"] = tier
+    data, error = rpc(config, "arena_study_start", args, timeout)
+    data = data or {}
+    return data, error
+
+
+def study_pause(config, timeout=15):
+    """Freeze the study's remaining time on the server, when
+    the player leaves the study or closes the game. The study
+    clock only runs while the player is in the study: pausing
+    saves the remaining seconds, and starting again resumes
+    from them. Returns (data, error). data has the paused
+    study and its remaining seconds."""
+    args = _session_args(config)
+    data, error = rpc(config, "arena_study_pause", args, timeout)
+    data = data or {}
+    return data, error
+
+
+def study_complete(config, timeout=15):
+    """Finish the spell being learned, on the server. The
+    server checks its time is up and it is not paused — a
+    paused study never completes while its clock is frozen.
+    Returns (data, error). data has the spell, its new level,
+    a spoken line, and the fighter. When a spell finishes
+    learning, the game plays that spell's own sound effect."""
+    args = _session_args(config)
+    data, error = rpc(config, "arena_study_complete", args, timeout)
+    data = data or {}
+    return data, error
+
+
 def choose_quest_gift(config, slot, timeout=15):
     """Take a free gift upgrade from a quest giver (Friend
     tier): weapon or armor, your choice, instant. Returns

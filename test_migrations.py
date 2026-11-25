@@ -181,6 +181,193 @@ def main_test():
     check("a null balance adds nothing and does not fail",
           second[0]["detail"] == {"x": 1})
 
+    # Behaviour: the witch study (Phase 38). A witch learns
+    # spells in real time, pausing outside the study; the
+    # server is the judge, and the Python table in spells.py
+    # must stay word-for-word the same as the SQL table.
+    sys.path.insert(0, HERE)
+    import spells
+
+    # The SQL spell table matches spells.py exactly: names,
+    # costs, times and cast lines.
+    for element in spells.ELEMENTS:
+        cursor.execute(
+            "select array[%s]" % ", ".join(
+                "arena_private.spell_name('%s', '%s')"
+                % (element, tier) for tier in spells.TIERS))
+        check("the server knows the %s spells" % element,
+              cursor.fetchone()[0]
+              == list(spells.SPELL_NAMES[element]))
+    cursor.execute(
+        "select array[%s]" % ", ".join(
+            "arena_private.spell_cost('%s')" % tier
+            for tier in spells.TIERS))
+    check("the server spell costs are 25, 50, 100, 200, 400",
+          cursor.fetchone()[0] == [25, 50, 100, 200, 400])
+    cursor.execute(
+        "select array[%s]" % ", ".join(
+            "arena_private.spell_seconds('%s')" % tier
+            for tier in spells.TIERS))
+    check("the server spell times are 15, 30, 60, 120, 240 minutes",
+          cursor.fetchone()[0] == [900, 1800, 3600, 7200, 14400])
+    cursor.execute(
+        "select array[%s]" % ", ".join(
+            "arena_private.spell_cast_line('%s')" % element
+            for element in spells.ELEMENTS))
+    check("the server cast lines match spells.py",
+          cursor.fetchone()[0]
+          == [spells.CAST_LINES[element]
+              for element in spells.ELEMENTS])
+
+    # spell_level and spell_pick, without any session.
+    cursor.execute(
+        "select arena_private.spell_level("
+        "'{\"spells\": {\"fire\": {\"common\": 2}}}'::jsonb, "
+        "'fire', 'common')")
+    check("spell_level reads a learned spell",
+          cursor.fetchone()[0] == 2)
+    cursor.execute(
+        "select arena_private.spell_level('{}'::jsonb, 'fire', 'common')")
+    check("spell_level is 0 when nothing is learned",
+          cursor.fetchone()[0] == 0)
+    cursor.execute(
+        "select arena_private.spell_pick("
+        "'{\"kind\": \"witch\", \"spells\": {\"fire\": {\"common\": 1}, "
+        "\"water\": {\"common\": 1}}}'::jsonb)")
+    picked = cursor.fetchone()[0]
+    check("spell_pick returns one learned spell",
+          picked is not None and picked["element"] in ("fire", "water")
+          and picked["level"] == 1)
+    cursor.execute(
+        "select arena_private.spell_pick("
+        "'{\"kind\": \"robot\", \"spells\": {\"fire\": {\"common\": 1}}}'::jsonb)")
+    check("spell_pick returns nothing for a robot",
+          cursor.fetchone()[0] is None)
+    cursor.execute(
+        "select arena_private.spell_pick("
+        "'{\"kind\": \"witch\", \"spells\": {}}'::jsonb)")
+    check("spell_pick returns nothing with no spells learned",
+          cursor.fetchone()[0] is None)
+
+    # A new witch starts with no spells and no study.
+    cursor.execute(
+        "select arena_private.new_fighter('Test', 'witch', 'female')")
+    fresh = cursor.fetchone()[0]
+    check("a new witch starts with no spells and no study",
+          fresh["spells"] == {} and fresh["study"] is None)
+
+    # The study RPCs, through real sessions: a player row and
+    # a session row, made directly in the throwaway database
+    # (the sign-in password path is not what is being tested).
+    witch_token = "a" * 64
+    cursor.execute(
+        "insert into arena_private.players (player_code, username, "
+        "password_hash, gender, kind, fighter) values "
+        "('9101', 'studytester', 'x', 'female', 'witch', "
+        "arena_private.new_fighter('Study', 'witch', 'female') "
+        "|| jsonb_build_object('credits', 500))")
+    cursor.execute(
+        "insert into arena_private.sessions (token_hash, player_code) "
+        "values (arena_private.hash_token(%s), '9101')", (witch_token,))
+    cursor.execute(
+        "select public.arena_study_start(%s, 'water', 'uncommon')",
+        (witch_token,))
+    check("a tier needs the tier below it first",
+          "Splash" in (cursor.fetchone()[0].get("error") or ""))
+    cursor.execute(
+        "select public.arena_study_start(%s, 'fire', 'common')",
+        (witch_token,))
+    started = cursor.fetchone()[0]
+    check("study_start learns Ember Spark",
+          started.get("error") is None
+          and started["study"]["name"] == "Ember Spark"
+          and started["study"]["tier"] == "common"
+          and started["study"]["level"] == 1)
+    check("study_start charges 25 credits up front",
+          started["fighter"]["credits"] == 475)
+    cursor.execute(
+        "select public.arena_study_start(%s, 'water', 'common')",
+        (witch_token,))
+    check("a second spell is blocked while learning",
+          "already learning" in (cursor.fetchone()[0].get("error") or ""))
+    cursor.execute(
+        "select public.arena_study_pause(%s)", (witch_token,))
+    paused = cursor.fetchone()[0]
+    check("study_pause freezes the remaining time",
+          paused["study"]["paused"] is True
+          and 0 < paused["study"]["remaining_seconds"] <= 900)
+    cursor.execute(
+        "select public.arena_study_complete(%s)", (witch_token,))
+    check("a paused study never completes",
+          "paused" in (cursor.fetchone()[0].get("error") or ""))
+    cursor.execute(
+        "select public.arena_study_start(%s, 'fire', 'common')",
+        (witch_token,))
+    resumed = cursor.fetchone()[0]
+    check("resuming the same spell is free",
+          resumed.get("error") is None
+          and resumed["fighter"]["credits"] == 475)
+    # Move the finish time into the past, as if 15 minutes
+    # had gone by in the study, then complete it.
+    cursor.execute(
+        "update arena_private.players set fighter = jsonb_set("
+        "fighter, '{study,finish_at}', "
+        "to_jsonb(arena_private.now_epoch() - 10)) "
+        "where player_code = '9101'")
+    cursor.execute(
+        "select public.arena_study_complete(%s)", (witch_token,))
+    done = cursor.fetchone()[0]
+    check("completing a study grants level 1",
+          done.get("error") is None
+          and "I learned Ember Spark!" in (done.get("message") or "")
+          and done["fighter"]["spells"] == {"fire": {"common": 1}})
+    # A robot cannot learn spells.
+    robot_token = "b" * 64
+    cursor.execute(
+        "insert into arena_private.players (player_code, username, "
+        "password_hash, gender, kind, fighter) values "
+        "('9102', 'robotester', 'x', 'male', 'robot', "
+        "arena_private.new_fighter('Rob', 'robot', 'male') "
+        "|| jsonb_build_object('credits', 500))")
+    cursor.execute(
+        "insert into arena_private.sessions (token_hash, player_code) "
+        "values (arena_private.hash_token(%s), '9102')", (robot_token,))
+    cursor.execute(
+        "select public.arena_study_start(%s, 'fire', 'common')",
+        (robot_token,))
+    check("a robot cannot learn spells on the server",
+          "only a witch" in (cursor.fetchone()[0].get("error") or ""))
+    # A study quest comes from a witch giver.
+    cursor.execute(
+        "select public.arena_new_study_quest(%s)", (witch_token,))
+    study_quest = cursor.fetchone()[0]
+    check("a study quest comes from a witch giver",
+          study_quest.get("error") is None
+          and study_quest["quest"]["giver"] in spells.STUDY_GIVERS)
+
+    # The board (Belle rule, server side): 200 boards dealt by
+    # quest_board_ensure, and every giver shows up somewhere —
+    # no giver is locked out of the board, or out of slot 1.
+    all_givers = set()
+    first_givers = set()
+    boards_ok = True
+    for _ in range(200):
+        cursor.execute(
+            "select arena_private.quest_board_ensure("
+            "'{\"quest_level\": 1}'::jsonb)")
+        board = cursor.fetchone()[0]["quests_board"]
+        if len(board) != 5:
+            boards_ok = False
+        all_givers.update(quest["giver"] for quest in board)
+        first_givers.add(board[0]["giver"])
+    check("every starting board has 5 quests", boards_ok)
+    check("every giver shows up on the board",
+          all_givers
+          == {"Bolt", "Marge", "Pip", "Dot", "Gus", "Belle",
+              "Hazel", "Rowan", "Wren", "Bram"})
+    check("many givers land first on the board",
+          len(first_givers) >= 8)
+
     print("\nAll migration tests passed.")
 
 
