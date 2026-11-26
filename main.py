@@ -534,6 +534,13 @@ class MainFrame(wx.Frame):
         self._study_quest_active = False
         self._study_last_progress_at = 0.0
         self._study_quest_next_at = 0.0
+        # A refused study completion, retried (Phase 39c):
+        # when the server says a spell is not done yet, the
+        # game asks again at most every 10 seconds, and says
+        # the refusal once per spell — never once a second.
+        self._last_study_complete_try_at = 0.0
+        self._study_complete_try_key = None
+        self._study_complete_error_key = None
         # A cast line is always followed at once by its hit
         # line: this remembers that the last line spoken was a
         # cast, so the hit line skips the wand sound — the spell
@@ -1130,6 +1137,13 @@ class MainFrame(wx.Frame):
             self.message_line.SetLabel(text)
             return
         if self._narration_busy():
+            # Phase 39c: never queue the same line twice —
+            # a once-a-second announcer must not flood the
+            # queue with identical lines and bury the trainer
+            # and giver lines that come after them.
+            if any(text == queued[0]
+                   for queued in self._narration_queue):
+                return
             self._narration_queue.append((text, voice_name, None))
             return
         self.message_line.SetLabel(text)
@@ -2462,13 +2476,51 @@ class MainFrame(wx.Frame):
         voice (Makenna, Nov 25, 2026) — Hazel, Rowan or Wren
         for a first learning, Bram for an upgrade — then the
         server's own line, and the game plays that spell's own
-        sound effect, so you hear the spell you just learned."""
+        sound effect, so you hear the spell you just learned.
+        Phase 39c (Makenna, Nov 25, 2026): her PC clock runs
+        a little ahead of the server's, so the client can
+        think a spell is due a minute or two before the
+        server does. A refused completion is therefore
+        retried at most every 10 seconds, and its refusal is
+        said once per spell — never once a second, which
+        flooded the narration queue with identical lines and
+        buried the next spell's trainer line (and the quest
+        giver's line) behind them."""
+        study = spells.study_of(self.fighter)
+        now = time.time()
+        key = None
+        if study is not None:
+            key = (study.get("element"), study.get("tier"),
+                   study.get("finish_at"))
+            if (key == self._study_complete_try_key
+                    and now - self._last_study_complete_try_at < 10.0):
+                return
+            self._study_complete_try_key = key
+            self._last_study_complete_try_at = now
         data, error = online_save.study_complete(self.online_config)
         if error:
             # The server's clock says it is not done yet.
-            # Keep the study and say so, in plain words.
-            self.announce(error)
+            # Its own fighter comes back even with a
+            # plain-words error (online_save.rpc): take it, so
+            # a local study record the server has already
+            # moved on from stops being retried at all.
+            if data and data.get("fighter"):
+                self.use_server_fighter(data["fighter"])
+                self.refresh_all()
+            # Say the refusal once per spell, not once a
+            # second: the retries in between are silent.
+            if key != self._study_complete_error_key:
+                self._study_complete_error_key = key
+                self.announce(error)
             return
+        # The spell IS learned now: drop any queued "not
+        # learned yet" lines — they are stale, and they must
+        # not drown the trainer's line that follows.
+        self._study_complete_error_key = None
+        self._study_complete_try_key = None
+        self._narration_queue = [
+            entry for entry in self._narration_queue
+            if "not learned yet" not in (entry[0] or "")]
         if data.get("fighter"):
             self.use_server_fighter(data["fighter"])
         spell = data.get("spell") or {}

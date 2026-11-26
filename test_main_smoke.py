@@ -359,6 +359,7 @@ def main_test():
     # no local save file is ever written.
     import copy
     import online_save as _online_save
+    import spells
     fighter = game_logic.new_fighter("Bolt", "robot")
     fighter["credits"] = 500
     fighter["player_code"] = "4242"
@@ -1414,6 +1415,71 @@ def main_test():
           == study_starts_before_broke + 1
           and (fighter.get("study") or {}).get("name") == "Shade Touch"
           and fighter["credits"] == 0)
+    # Phase 39c (Makenna, Nov 25, 2026 — live bug): her PC
+    # clock runs a little ahead of the server's, so the client
+    # thinks a spell is due before the server does — and the
+    # once-a-second tick then asked the server every second
+    # and announced its "not learned yet" refusal every time,
+    # flooding the narration queue and burying the next
+    # spell's trainer line (and the quest giver's line)
+    # behind dozens of repeats. Simulate that skew: the
+    # server's study is still 2 minutes out, the client's
+    # copy says it is due. Shade Touch is the spell learning.
+    announced = []
+    _orig_announce = frame.announce
+    _orig_announce_as = frame.announce_as
+
+    def _record_announce(text, _orig=_orig_announce):
+        # No append here: announce() dispatches to
+        # announce_as(), so _record_announce_as below already
+        # records the line once, with its voice.
+        return _orig(text)
+
+    def _record_announce_as(text, voice_name, _orig=_orig_announce_as):
+        announced.append((text, voice_name))
+        return _orig(text, voice_name)
+
+    frame.announce = _record_announce
+    frame.announce_as = _record_announce_as
+    completes_before = server["calls"].count("study_complete")
+    server["fighter"]["study"]["finish_at"] = time.time() + 120
+    fighter["study"]["finish_at"] = time.time() - 1
+    for _ in range(5):
+        frame.on_tick(mock.MagicMock())
+    check("a not-yet-due study is not asked about every second",
+          server["calls"].count("study_complete")
+          == completes_before + 1)
+    check("the not-learned-yet refusal is said once, not every second",
+          sum(1 for text, _voice in announced
+              if "not learned yet" in text) == 1)
+    # The skew passes — pretend two minutes went by, so the
+    # retry back-off has elapsed — and the server's clock
+    # catches up: Shade Touch completes, and the next spell
+    # starts on its own, with its trainer's line spoken in a
+    # trainer's voice, not buried behind the refusal.
+    frame._last_study_complete_try_at -= 120
+    server["fighter"]["study"]["finish_at"] = time.time() - 1
+    fighter["study"]["finish_at"] = time.time() - 1
+    frame.on_tick(mock.MagicMock())
+    check("the spell completes once the server agrees",
+          (fighter.get("spells") or {}).get("shadow", {}).get("common")
+          == 1)
+    check("the next spell starts on its own after the skew",
+          (fighter.get("study") or {}).get("name") not in
+          (None, "Shade Touch"))
+    check("the next spell's trainer line is spoken, in a trainer voice",
+          any(voice in ("en-US-AvaNeural", "en-US-RogerNeural",
+                        "en-US-AnaNeural", "en-US-SteffanNeural")
+              and (fighter.get("study") or {}).get("name", "") in text
+              for text, voice in announced))
+    check("no not-learned-yet line is said after the spell completes",
+          sum(1 for text, _voice in announced
+              if "not learned yet" in text) == 1)
+    check("no not-learned-yet line is left queued behind the trainer",
+          not any("not learned yet" in (entry[0] or "")
+                  for entry in frame._narration_queue))
+    frame.announce = _orig_announce
+    frame.announce_as = _orig_announce_as
     # A cast line plays its elemental sound, and the hit line
     # right after it stays quiet — the spell IS the hit, and
     # the wand is only backup.
@@ -1432,8 +1498,13 @@ def main_test():
     frame.stop_study_quests()
     check("study quests stop",
           frame._study_quest_active is False)
+    # The loop is the spell being learned now — after the
+    # Phase 39c skew test above, that is the fourth spell
+    # (not Shade Touch's moonlight any more), so expect its
+    # own family, whatever the seeded pick was.
     check("with no quest running, the ambience is the spell's loop",
-          frame.sounds.current_ambience == "moonlight")
+          frame.sounds.current_ambience
+          == spells.study_ambience(fighter))
     # A robot entering the study gets quests, not spells:
     # learning is witch-only, quests are open to everyone.
     study_starts_before = server["calls"].count("study_start")
