@@ -1698,12 +1698,14 @@ class MainFrame(wx.Frame):
         only when sound effects and background music are both
         on, at a low volume under the music and the voice.
         A quest whose ambience has no sound file in sounds/
-        yet plays nothing — the game carries on silently
-        until the file is uploaded. Asking for the loop that
-        is already playing does not restart it, so the next
-        quest with the same kind of work keeps the same loop
-        going. Every place that ends a quest must stop the
-        loop, or it keeps playing after the activity stops:
+        yet plays nothing in the hangout — in the study the
+        spell loop plays instead (Phase 39b). Asking for the
+        loop that is already playing does not restart it, so
+        the next quest with the same kind of work keeps the
+        same loop going, and the once-a-second tick can
+        re-assert the loop for free (Phase 39b). Every place
+        that ends a quest must stop the loop, or it keeps
+        playing after the activity stops:
         complete, Stop, pause, leaving the hangout, closing
         the game, and turning sounds or music off. In the
         study the loop is the ambience of the spell being
@@ -1718,11 +1720,17 @@ class MainFrame(wx.Frame):
             if name and self.sounds.start_ambience(name):
                 return
             # No loop for this quest — its file is not in
-            # sounds/ yet, or playback failed — so stop the old
+            # sounds/ yet, or playback failed. In the study,
+            # fall through to the spell being learned instead
+            # of going silent (Phase 39b, Nov 25, 2026:
+            # Makenna heard no ambience at all while learning
+            # Gloom Bolt on a quest). In the hangout there is
+            # no spell loop to fall back to, so stop the old
             # loop instead of letting it carry on into a quest
             # it does not belong to.
-            self.sounds.stop_ambience()
-            return
+            if not self._in_study:
+                self.sounds.stop_ambience()
+                return
         # In the study with no quest running, the loop is the
         # ambience of the spell being learned (Phase 38): the
         # brewing loop for fire, water and poison, the storm
@@ -2139,6 +2147,11 @@ class MainFrame(wx.Frame):
         self._quests_active = True
         self._study_quest_next_at = 0.0
         self._refresh_music()
+        # Start the spell loop at once too (Phase 39b): the
+        # quest's own loop replaces it a moment later, when
+        # the first quest is dealt — but if no quest can be
+        # dealt, the spell loop is already playing.
+        self._refresh_ambience()
         self.announce(
             "Study quests started. The witches and warlocks here will "
             "keep giving you tasks while you study.")
@@ -2342,9 +2355,11 @@ class MainFrame(wx.Frame):
         first. A paused spell is picked up again, with the
         same time left. Study quests are open to everyone, so
         a robot or chef entering the study gets quests, just
-        no spell learning. Entering the study is the one yes:
-        the first spell asks once, with its time, and
-        after that the study keeps teaching on its own while
+        no spell learning. Entering the study is the yes
+        (Phase 39b, Makenna Nov 25, 2026): the first spell
+        starts at once, with no question at all — just the
+        trainer's line and the spell and its time — and after
+        that the study keeps teaching on its own while
         the player stays here. Leaving the tab pauses the
         learning clock and stops the quest loop, as before."""
         if not self.online_config:
@@ -2385,10 +2400,14 @@ class MainFrame(wx.Frame):
                 "I have learned every spell there is to learn.")
             return
         element = pick[0]
-        # Saying no to the one question stops the whole enter:
-        # no spell, no quests, no music — the player stays out
-        # of the study until they press Enter study again.
-        if not self.do_start_study(element):
+        # No question at all (Phase 39b, Makenna Nov 25,
+        # 2026): entering the study IS the yes, so the first
+        # spell starts the same way the study auto-starts the
+        # next one after a spell finishes — auto=True skips
+        # the Yes/No in do_start_study and just announces the
+        # trainer's line and the spell and its time. If the
+        # start fails, nothing else starts either.
+        if not self.do_start_study(element, auto=True):
             return
         if not self._study_quest_active:
             self.start_study_quests()
@@ -3102,6 +3121,15 @@ class MainFrame(wx.Frame):
         # it belongs to (or keeps the fight track while
         # auto-fighting).
         self._refresh_music()
+        # And the ambience loop is re-asserted on every tab
+        # switch (Phase 39b): leaving the Study tab stops it,
+        # and coming back used to leave it silent even though
+        # the music came back — the loop only ever started
+        # again on the next quest or spell event, and the
+        # once-a-second tick never re-asserted it. Asking for
+        # the loop that is already playing does not restart
+        # it, so this costs nothing when it is already playing.
+        self._refresh_ambience()
         # Tab switching is silent (2026-11-18, Makenna):
         # NVDA already announces the tab and its list, so
         # Edge speaking the tab hint as well talks over it.
@@ -3311,6 +3339,14 @@ class MainFrame(wx.Frame):
                 self.announce("My repairs are finished. I'm back to full health.")
                 self.refresh_all()
         self.was_repairing = game_logic.is_repairing(self.fighter, now)
+        # The ambience loop is re-asserted once a second
+        # (Phase 39b): if it was stopped, or never started,
+        # it comes back within a second — in the study the
+        # spell loop or the quest loop, in the hangout the
+        # quest loop. Asking for the loop that is already
+        # playing does not restart it, so this costs nothing
+        # when it is already playing.
+        self._refresh_ambience()
         self.SetStatusText(game_logic.status_text(self.fighter, now))
 
     def _tick_online(self, now):

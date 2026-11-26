@@ -1281,27 +1281,21 @@ def main_test():
                   for item in study_items))
     check("the study list says nothing is being learned yet",
           study_items[0] == "I am not learning a spell right now.")
-    # Say no first: nothing changes and the server is not called.
+    # No question at all (Phase 39b, Makenna Nov 25, 2026):
+    # entering the study IS the yes — the first spell starts
+    # at once, just announced, and study quests start on
+    # their own. The dialog is rigged to answer No, to prove
+    # no question is ever shown: learning starts anyway.
     sys.modules["wx"].Dialog.modal_result = sys.modules["wx"].ID_NO
     frame.random.seed(7)
     study_box.SetSelection(
         [i for i, item in enumerate(study_items)
          if item.startswith("Enter study")][0])
     frame.activate_current()
-    check("saying no to entering the study changes nothing",
-          fighter.get("study") is None
-          and "study_start" not in server["calls"]
-          and "new_study_quest" not in server["calls"]
-          and frame._study_quest_active is False)
-    # Say yes: the study picks Glow at random, free — learning
-    # costs no credits — and study quests start on their own —
-    # no Start button.
-    sys.modules["wx"].Dialog.modal_result = sys.modules["wx"].ID_YES
-    frame.random.seed(7)
-    frame.activate_current()
     sys.modules["wx"].Dialog.modal_result = 1  # back to ID_OK
-    check("entering the study went to the server",
-          "study_start" in server["calls"])
+    check("entering the study asks no question, learning starts anyway",
+          "study_start" in server["calls"]
+          and (fighter.get("study") or {}).get("name") == "Glow")
     check("entering the study costs no credits",
           fighter["credits"] == 500)
     check("the study records the randomly picked spell, Glow",
@@ -1345,10 +1339,21 @@ def main_test():
           and (server["fighter"].get("study") or {}).get("paused") is True)
     check("the study music stops when leaving",
           frame.sounds.current_music_track is None)
+    check("the study ambience stops when leaving",
+          frame.sounds.current_ambience is None)
     # Coming back and pressing Enter study picks it up again,
     # free, with the same time left.
     frame.notebook.SetSelection(4)  # Study tab
     frame.on_tab_changed(types.SimpleNamespace(Skip=lambda: None))
+    # Phase 39b: coming back restores the loop at once — the
+    # spell loop while no quest is running (Glow is light, so
+    # moonlight), even before Enter study is pressed again.
+    # The spell loop is named by its family ("moonlight"),
+    # not by its file ("ambience_moonlight") — the Fix A
+    # aliases in sounds.py (Phase 38); the quest loops are
+    # named by file, e.g. "ambience_brewing" above.
+    check("coming back to the study restores the spell loop",
+          frame.sounds.current_ambience == "moonlight")
     frame.refresh_list("Study")
     study_items = frame.list_items("Study")
     check("the paused study offers Enter study again",
