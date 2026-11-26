@@ -1710,7 +1710,8 @@ class MainFrame(wx.Frame):
         """Play the current quest's ambience loop, or stop it.
         The loop is background audio like the music: it plays
         only when sound effects and background music are both
-        on, at a low volume under the music and the voice.
+        on, a little louder than the music so it is clearly
+        noticeable, and still well under the voice (Phase 39d).
         A quest whose ambience has no sound file in sounds/
         yet plays nothing in the hangout — in the study the
         spell loop plays instead (Phase 39b). Asking for the

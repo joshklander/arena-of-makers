@@ -744,7 +744,9 @@ def study_is_learning(fighter):
 def study_ambience(fighter):
     """The ambience family for the spell being learned now, or
     None when nothing is being learned. The game plays this
-    loop under the study music; a running quest's own ambience
+    loop a little louder than the study music, so it is
+    clearly noticeable (Phase 39d — the same ambience volume
+    as a quest's loop); a running quest's own ambience
     replaces it while the quest runs."""
     study = study_of(fighter)
     if not study:

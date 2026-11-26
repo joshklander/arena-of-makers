@@ -154,10 +154,14 @@ SOUND_FILES = {
     "music_study": ("music_study.mp3", None),
 }
 
-MUSIC_VOLUME_FACTOR = 0.5  # Music plays at half the effects volume.
-AMBIENCE_VOLUME_FACTOR = 0.25  # Quest ambience loops play at a
-# quarter of the effects volume: quieter than the music, well
-# under the voice.
+MUSIC_VOLUME_FACTOR = 0.4  # Music plays at 40% of the effects volume.
+AMBIENCE_VOLUME_FACTOR = 0.6  # Quest and spell ambience loops play at
+# 60% of the effects volume: a little louder than the music
+# (1.5x), so both are clearly audible and the ambience is
+# definitely noticeable, while both stay well under the
+# voice (which plays at the full game volume). Phase 39d,
+# Nov 25, 2026 (Makenna): the music was drowning the quest
+# ambience out — it was barely audible underneath it.
 
 
 def default_sounds_dir():
@@ -254,8 +258,9 @@ class SoundBank:
 
     def set_volume(self, percent):
         """Volume in percent, like the game's volume setting. Music
-        is always quieter than the effects, so it stays in the
-        background under the voice."""
+        and ambience are always quieter than the effects, so
+        they stay in the background under the voice — and the
+        ambience is a little louder than the music (Phase 39d)."""
         self._volume = max(0.0, min(1.0, percent / 100.0))
         for name, sound in self._sounds.items():
             try:
@@ -442,8 +447,9 @@ class SoundBank:
         SOUND_FILES, e.g. "chef_sizzle" for cooking quests.
         The loop runs on its own channel (3), so it never
         interrupts the voice narration (mixer.music) or the
-        background music (channel 2), and it plays quieter
-        than the music, well under the voice. Returns False
+        background music (channel 2), and it plays a little
+        louder than the music, so it is clearly noticeable,
+        while staying well under the voice. Returns False
         when sounds are off, the file was not loaded, or
         playback failed. Asking for the loop that is already
         playing just returns True, so the next quest with

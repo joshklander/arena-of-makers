@@ -204,7 +204,8 @@ TEMPLATE_BY_NAME = {t["name"]: t for t in QUEST_TEMPLATES}
 
 # Quest ambience loops (Phase 23): the kind of work a quest
 # is, so the game can play a matching sound in a loop while
-# the quest runs, under the music and the giver's voice.
+# the quest runs, a little louder than the music (Phase 39d)
+# and still under the giver's voice.
 # Each ambience names a sound in sounds.py: cooking reuses
 # the chef's sizzle, repair reuses the robot servo, and
 # gathering and cleaning have their own loop files

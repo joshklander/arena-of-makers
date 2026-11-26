@@ -1355,6 +1355,17 @@ def main_test():
     # named by file, e.g. "ambience_brewing" above.
     check("coming back to the study restores the spell loop",
           frame.sounds.current_ambience == "moonlight")
+    # Phase 39d: the spell loop is no-quest ambience, and it
+    # goes through the very same start_ambience() path as a
+    # quest loop — same channel (3), same volume factor — so
+    # it is a little louder than the study music too, not
+    # buried under it the way the quest loop used to be.
+    import sounds as sounds_module
+    check("the spell loop is a little louder than the music too",
+          frame.sounds._sounds["moonlight"].volume
+          == frame.sounds._volume * sounds_module.AMBIENCE_VOLUME_FACTOR
+          and frame.sounds._sounds["moonlight"].volume
+          > frame.sounds._volume * sounds_module.MUSIC_VOLUME_FACTOR)
     frame.refresh_list("Study")
     study_items = frame.list_items("Study")
     check("the paused study offers Enter study again",
@@ -3071,8 +3082,9 @@ def sounds_test():
     check("music is quieter than the effects",
           bank._music.volume == 0.4 * sounds_module.MUSIC_VOLUME_FACTOR)
     bank.set_volume(100)
-    check("volume turns the music up too, still at half",
-          bank._music.volume == 1.0 * sounds_module.MUSIC_VOLUME_FACTOR)
+    check("volume turns the music up too, still at its own level",
+          bank._music.volume == 1.0 * sounds_module.MUSIC_VOLUME_FACTOR
+          and bank._music.volume < 1.0)
     bank.set_enabled(False)
     check("turning sounds off stops the music",
           bank._music_channel is None)
@@ -3094,10 +3106,20 @@ def sounds_test():
           and bank.current_music_track == "hangout")
 
     # Quest ambience loops (Phase 23): one loop on its own
-    # channel, quieter than the music, that stops when the
-    # quest ends. With no such sound, nothing plays.
+    # channel, a little louder than the music (Phase 39d),
+    # that stops when the quest ends. With no such sound,
+    # nothing plays.
     bank = sounds_module.SoundBank(directory=full_dir, pygame_module=pygame)
     bank.load()
+    check("ambience is a little louder than the music",
+          sounds_module.AMBIENCE_VOLUME_FACTOR
+          > sounds_module.MUSIC_VOLUME_FACTOR)
+    check("ambience is only a little louder, not twice as loud",
+          sounds_module.AMBIENCE_VOLUME_FACTOR
+          < 2 * sounds_module.MUSIC_VOLUME_FACTOR)
+    check("music and ambience are both audible, under the voice",
+          0 < sounds_module.MUSIC_VOLUME_FACTOR < 1
+          and 0 < sounds_module.AMBIENCE_VOLUME_FACTOR < 1)
     check("ambience does not start with no such sound",
           bank.start_ambience("no_such_sound") is False)
     check("an ambience loop starts and loops",
@@ -3107,9 +3129,11 @@ def sounds_test():
           and bank.current_ambience == "chef_sizzle")
     check("the ambience loop is on its own channel, not the music channel",
           bank._ambience_channel.number == 3)
-    check("the ambience loop is quieter than the music",
+    check("the ambience loop is a little louder than the music",
           bank._sounds["chef_sizzle"].volume
-          == 0.4 * sounds_module.AMBIENCE_VOLUME_FACTOR)
+          == 0.4 * sounds_module.AMBIENCE_VOLUME_FACTOR
+          and bank._sounds["chef_sizzle"].volume
+          > 0.4 * sounds_module.MUSIC_VOLUME_FACTOR)
     channel = bank._ambience_channel
     check("asking for the same ambience again does not restart it",
           bank.start_ambience("chef_sizzle") is True
@@ -3119,9 +3143,11 @@ def sounds_test():
           and bank.current_ambience == "robot_servo"
           and channel.stopped)
     bank.set_volume(100)
-    check("volume turns the ambience up too, still quieter than the music",
+    check("volume turns the ambience up too, still a little louder than the music",
           bank._sounds["robot_servo"].volume
-          == 1.0 * sounds_module.AMBIENCE_VOLUME_FACTOR)
+          == 1.0 * sounds_module.AMBIENCE_VOLUME_FACTOR
+          and bank._sounds["robot_servo"].volume
+          > 1.0 * sounds_module.MUSIC_VOLUME_FACTOR)
     bank.stop_ambience()
     check("stopping the ambience clears it",
           bank.current_ambience is None
@@ -4330,11 +4356,12 @@ def quest_test():
 
     # Quest ambience loops (Phase 23): while a quest runs,
     # a sound matching the kind of work plays in a loop on
-    # its own channel, quieter than the music, under the
-    # voice. It stops when the quest completes, stops,
-    # pauses, or the player leaves the hangout. A quest
-    # whose ambience file is not in sounds/ yet plays no
-    # loop at all — the game carries on silently.
+    # its own channel, a little louder than the music
+    # (Phase 39d), under the voice. It stops when the quest
+    # completes, stops, pauses, or the player leaves the
+    # hangout. A quest whose ambience file is not in
+    # sounds/ yet plays no loop at all — the game carries
+    # on silently.
     import sounds as sounds_module
     check("every quest template names an ambience",
           all(q.get("ambience") in quests_module.AMBIENCES
@@ -4381,9 +4408,11 @@ def quest_test():
     _finish_current_quest()
     check("starting a cooking quest starts the sizzle loop",
           frame.sounds.current_ambience == "chef_sizzle")
-    check("the ambience loop is quieter than the music",
+    check("the ambience loop is a little louder than the music",
           frame.sounds._sounds["chef_sizzle"].volume
-          == frame.sounds._volume * sounds_module.AMBIENCE_VOLUME_FACTOR)
+          == frame.sounds._volume * sounds_module.AMBIENCE_VOLUME_FACTOR
+          and frame.sounds._sounds["chef_sizzle"].volume
+          > frame.sounds._volume * sounds_module.MUSIC_VOLUME_FACTOR)
     # Completing it starts the next quest on the board; make
     # that a gathering quest. Its file is in sounds/ now
     # (uploaded 2026-11-19, commit 01bd111), so the sizzle
